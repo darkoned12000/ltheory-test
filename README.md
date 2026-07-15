@@ -96,11 +96,27 @@ This will produce the engine library and executable in `bin/`.
 
 ## Running on Linux
 
-You need to set up your environment variables before running. The engine requires both the main binary directory and the FMOD libraries from `libphx/ext/lib/linux64/`:
+The engine no longer requires `LD_LIBRARY_PATH`. The simplest way to launch is via the
+bundled launcher, which `cd`s to the project root and sets `LD_LIBRARY_PATH` as a safety
+net:
 
 ```bash
 cd <root directory where the ltheory-test code is>
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/bin:$(pwd)/libphx/ext/lib/linux64
+./run.sh LTheory
+```
+
+For a one-command setup (install dependencies, configure, build), use:
+
+```bash
+./bootstrap.sh
+./run.sh LTheory
+```
+
+You can also run the binary directly from the project root without any environment
+variables — `$ORIGIN`-based rpath resolves the shared libraries automatically:
+
+```bash
+cd <project root>
 ./bin/lt64r LTheory
 ```
 
@@ -110,8 +126,7 @@ Open a terminal and run:
 
 ```bash
 cd ~/Documents/Code_Projects/ltheory-test
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/bin:$(pwd)/libphx/ext/lib/linux64
-./bin/lt64r LTheory
+./run.sh LTheory
 ```
 
 ![LTheory App Running](./res/screenshots/Screenshot_1.png)
@@ -139,6 +154,8 @@ Based on current state and next steps:
 - **ui.glsl fix**: Updated the UI vertex shader to use explicit `mProj`/`mView` matrices instead of deprecated built-ins (`gl_ProjectionMatrix`, `gl_ModelViewMatrix`).
 - **LuaJIT runtime errors resolved**: A prior refactor broke `Game.SocketType`/`Game.Socket` (introducing a `SocketType.LTheory_SocketType` `nil` access and an undefined `GameSocket` global). Fixed by using the module tables directly. Also renamed `Game/SocketType.lua` → `Game/SocketKind.lua` and `Game/Socket.lua` → `Game/SocketObj.lua` so `Namespace.LoadInline('Game')` no longer shadows the `PHX.FFI.SocketType`/`PHX.FFI.Socket` globals (the "shadowing" warnings).
 - **LuaJIT 2.1 (not 2.0.1)**: On Linux the engine links the system `luajit-5.1` package, which is **LuaJIT 2.1.1761786044** (OpenResty-maintained branch, Lua 5.1 ABI). The bundled `lua51.dll`/headers under `libphx/ext` are Windows-only (and are 2.1.0-beta3). No Linux LuaJIT `.so` is bundled. If 2.0.1 was used originally it was a Windows-only binary; nothing in the current tree pins 2.0.1. The `dump2.lua` version assertion was disabled as a stopgap. See `AGENTS.md` → "LuaJIT Status" for the reproducible-build note.
+- **No more `LD_LIBRARY_PATH`**: Added `$ORIGIN`-based rpath to `lt64r` and `libphx64r.so` (CMake `BUILD_RPATH`/`INSTALL_RPATH`), and made `ffi.load` resolve `libphx64.so` by absolute path from the script location. Also patched the bundled `libfmod.so` executable-stack flag (`GNU_STACK` `RWE` → `RW`) that modern kernels reject on `dlopen`. Added `run.sh` (launcher) and `bootstrap.sh` (one-command setup). Bumped `cmake_minimum_required` to 3.16 and C++ standard to C++17.
+- **Build script fixes**: `configure.py` + CMake now produce a relocatable Linux build; FMOD symlinks and `libphx64.so` symlink are already tracked in git.
 - **Mesh degenerate-geometry warnings fixed**: Added `Shape:cleanup()` (welds coincident vertices and drops degenerate/bowtie polys) and call it from `Shape:finalize()`. This eliminates the `Bad normal at poly` and `BSP Incoming Mesh Error: Vertex Position Degenerate` warnings at their source. Ships build and display cleanly.
 
 ## What We Want to Try to Update

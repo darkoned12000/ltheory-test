@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 3.5)
+cmake_minimum_required (VERSION 3.16)
 project (LibPHX)
 set (CMAKE_BUILD_TYPE Release)
 include (script/build/Shared.cmake)
@@ -95,7 +95,13 @@ elseif (LINUX)
     "${CMAKE_CURRENT_SOURCE_DIR}/ext/lib/${PLATARCH}/libfmodstudio.so"
     BulletCollision BulletDynamics LinearMath)
 
-  # Add ext/lib/{$PLATARCH} to runtime library search path
-  target_link_options (phx PRIVATE "-Wl,-rpath,../ext/lib/${PLATARCH}")
+  # $ORIGIN-based rpath: resolve engine + ext libs from any working directory,
+  # so the game runs without LD_LIBRARY_PATH. $ORIGIN = dir of this .so;
+  # $ORIGIN/.. = project root (for bin/), $ORIGIN/../ext/lib/${PLATARCH} = FMOD.
+  set_target_properties (phx PROPERTIES
+    BUILD_RPATH_USE_ORIGIN TRUE
+    BUILD_RPATH "$ORIGIN;$ORIGIN/..;$ORIGIN/../ext/lib/${PLATARCH}"
+    INSTALL_RPATH_USE_ORIGIN TRUE
+    INSTALL_RPATH "$ORIGIN;$ORIGIN/..;$ORIGIN/../ext/lib/${PLATARCH}")
 
 endif ()

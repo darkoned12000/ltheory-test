@@ -70,6 +70,7 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 11. **Global shadowing warnings fixed:** `Namespace.LoadInline('Game')` (Main.lua:20) injected every `Game.*` submodule into `_G`, and `Game.SocketType`/`Game.Socket` collided with the existing `PHX.FFI.SocketType`/`PHX.FFI.Socket` globals. Renamed `Game/SocketType.lua` → `Game/SocketKind.lua` and `Game/Socket.lua` → `Game/SocketObj.lua` (and updated the `require(...)` calls) so the injected keys no longer clash.
 12. **Runtime Lua errors fixed (regression from a bad prior refactor):** `Game.SocketType` returns the `LTheory_SocketType` table directly, so `SocketType.LTheory_SocketType` was `nil`, and `Sockets.lua` referenced a non-existent `GameSocket` global. Corrected all references to use the module tables directly (e.g. `require('Game.SocketKind')`, local `LTheory_Socket`).
 13. **Mesh degenerate-geometry warnings fixed:** Added `Shape:cleanup(eps)` (welds coincident/near-coincident vertices and drops degenerate/bowtie polys) and call it from `Shape:finalize()` before triangulation. This eliminates the `Bad normal at poly` and `BSP Incoming Mesh Error: Vertex Position Degenerate` warnings at their source. The verbose `getFaceNormal` print is now gated behind `Config.gen.debug` (default `false`). Ships build and display cleanly.
+14. **`LD_LIBRARY_PATH` no longer required:** Added `$ORIGIN`-based `RUNPATH` to `lt64r` and `libphx64r.so` (CMake `BUILD_RPATH`/`INSTALL_RPATH` in `CMakeLists.txt` and `libphx/CMakeLists.txt`), and made `ffi.load` resolve `libphx64.so` via an absolute path derived from the script location (`libphx/script/ffi/libphx.lua`). Also fixed the bundled `libfmod.so`, which carried an executable-stack flag (`GNU_STACK = RWE`) that modern kernels reject on `dlopen` — its `p_flags` was patched to `RW` in place. Added `run.sh` (launcher) and `bootstrap.sh` (one-command install+configure+build) at the repo root. Bumped `cmake_minimum_required` to 3.16 and the C++ standard to C++17 (`libphx/script/build/Shared.cmake`).
 
 ### LuaJIT Status (as of July 2026)
 - **Linux runtime:** LuaJIT **2.1.1761786044** via system `libluajit-5.1-dev` (OpenResty branch). This is a 2.1.x line, **not** the original 2.0.1. If 2.0.1 was used at some point it was a Windows-only bundled binary; nothing in the current tree pins 2.0.1.
@@ -214,9 +215,12 @@ When writing or adapting shaders for this engine:
 ### How to Run
 ```bash
 cd /home/rhague/Documents/Code_Projects/ltheory-test
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/bin:$(pwd)/libphx/ext/lib/linux64
-./bin/lt64r LTheory
+./run.sh LTheory
 ```
+`run.sh` sets `LD_LIBRARY_PATH` as a safety net and `cd`s to the repo root. The engine
+no longer requires `LD_LIBRARY_PATH`: `$ORIGIN`-based `RUNPATH` resolves the C++ library
+chain, and `libphx/script/ffi/libphx.lua` loads `libphx64.so` by absolute path. You can
+also run `./bin/lt64r LTheory` directly from the repo root without any env var.
 
 ### Next Steps
 1. **Bump `#version` to 330** — Change `versionString` in `Shader.cpp:27` from `"#version 130\n"` to `"#version 330\n"` and verify all shaders compile.

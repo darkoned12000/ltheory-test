@@ -65,8 +65,8 @@ function (phx_configure_target_properties target)
     target_compile_options (${target} PRIVATE "-msse3")
     target_compile_options (${target} PRIVATE "-msse4")
 
-    # :(
-    target_compile_options (${target} PRIVATE "-std=c++11")
+    # Modern C++ standard
+    target_compile_options (${target} PRIVATE "-std=c++17")
 
   endif ()
 endfunction ()

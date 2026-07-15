@@ -2,6 +2,29 @@ local ffi = require('ffi')
 local jit = require('jit')
 
 local libphx = {}
+
+-- Make ffi.load find our shared libraries without LD_LIBRARY_PATH.
+-- ffi.load issues dlopen from inside libluajit, so $ORIGIN-based rpath on the
+-- main executable does not apply; instead we register our lib directories in
+-- package.cpath, which ffi.load consults. Only needed on Linux/Unix.
+if jit.os == 'Linux' or jit.os == 'POSIX' then
+  local src = debug.getinfo(1, 'S').source:match('^@(.+)$') or '.'
+  if src:sub(1, 1) ~= '/' then
+    src = (io.popen('pwd'):read('*l') or '.') .. '/' .. src
+  end
+  local here = src:gsub('/[^/]+$', '')            -- .../libphx/script/ffi
+  local root = here:gsub('/libphx/script/ffi$', '') -- repo root
+  _LIBPHX_ROOT = root
+  local dirs = {
+    root .. '/bin',
+    root .. '/libphx/ext/lib/linux64',
+  }
+  local extra = ''
+  for _, d in ipairs(dirs) do
+    extra = extra .. d .. '/?.so;' .. d .. '/?.so.*;'
+  end
+  package.cpath = extra .. (package.cpath or '')
+end
 do -- Basic Typedefs
   ffi.cdef [[
     typedef unsigned long  ulong;
@@ -403,7 +426,17 @@ end
 do -- Load Library
   local debug = __debug__ and 'd' or ''
   local arch = jit.arch == 'x86' and '32' or '64'
-  local path = string.format('libphx%s%s', arch, debug)
+  local name = string.format('libphx%s%s', arch, debug)
+
+  -- Prefer an absolute path so ffi.load works without LD_LIBRARY_PATH.
+  -- ffi.load (this LuaJIT build) does not consult package.cpath and issues
+  -- dlopen from libluajit, so $ORIGIN rpath on the executable does not apply.
+  -- Resolve relative to the repo root derived from this script's location;
+  -- fall back to the bare name (relying on rpath/LD_LIBRARY_PATH) if unknown.
+  local path = name
+  if _LIBPHX_ROOT then
+    path = string.format('%s/bin/%s.so', _LIBPHX_ROOT, name)
+  end
   libphx.lib = ffi.load(path, false)
   assert(libphx.lib, 'Failed to load %s', path)
 end

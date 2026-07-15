@@ -1,0 +1,23 @@
+# Build directory (CMake build artifacts)
+/build/
+
+# Regenerated binaries (produced by `python configure.py build`)
+/bin/lt64r
+/bin/lt64d
+/bin/lt64
+/bin/lt64rm
+/bin/libphx64r.so
+/bin/libphx64d.so
+/bin/libphx64.so
+/bin/libphx64d.so.*
+
+# Precompiled headers / object caches
+*.o
+*.obj
+*.gcda
+*.gcno
+
+# Editor / OS cruft
+*.swp
+*~
+.DS_Store
