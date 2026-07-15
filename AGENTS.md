@@ -5,7 +5,7 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 
 ## Technology Stack
 - **Language:** C++ (Standard C++11)
-- **Scripting:** Lua (specifically LuaJIT 5.1)
+- **Scripting:** Lua (LuaJIT 2.1.x, Lua 5.1 ABI — see LuaJIT Status note)
 - **Build System:** CMake
 - **Configuration:** Python (`configure.py`)
 - **Graphics:** OpenGL, GLEW
@@ -34,7 +34,7 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 ## Potential Challenges for Linux Build
 - **Dependencies:** Ensuring all system-level dependencies (`GL`, `GLEW`, `SDL2`, `freetype`, `luajit`) are installed and discoverable by CMake.
 - **Library Paths:** The project uses a hardcoded rpath to `../ext/lib/linux64`. We need to ensure this aligns with where the binaries are actually located at runtime.
-- **Lua Version:** The `CMakeLists.txt` specifically looks for `luajit-5.1`. Version mismatches may occur.
+- **Lua Version:** On Linux the build links the system `luajit-5.1` package (libphx/CMakeLists.txt:92), which is LuaJIT 2.1.x. The bundled `lua51.dll`/headers under `libphx/ext` are Windows-only and are 2.1.0-beta3. No Linux LuaJIT `.so` is bundled — the runtime loader finds the system library via `LD_LIBRARY_PATH`.
 - **Compiler Flags:** Aggressive optimization flags (`-O3`, `-msse4`) are used; compatibility with the host CPU must be verified.
 
 ## Recommended Roadmap
@@ -66,6 +66,16 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 8. **CProfileManager removed:** Commented out `CProfileManager::dumpAll()` in `libphx/src/Physics.cpp` (not available in system Bullet 3).
 9. **LuaJIT version check disabled:** Modified `script/jit/dump2.lua` to skip strict version check.
 
+10. **LuaJIT on Linux is 2.1.x:** The build links the system `luajit-5.1` package (libphx/CMakeLists.txt:92), which is **LuaJIT 2.1.1761786044** (OpenResty-maintained branch, Lua 5.1 ABI). The bundled `lua51.dll`/headers under `libphx/ext` are Windows-only (and are 2.1.0-beta3). There is no bundled Linux LuaJIT `.so`. See "LuaJIT Status" below.
+11. **Global shadowing warnings fixed:** `Namespace.LoadInline('Game')` (Main.lua:20) injected every `Game.*` submodule into `_G`, and `Game.SocketType`/`Game.Socket` collided with the existing `PHX.FFI.SocketType`/`PHX.FFI.Socket` globals. Renamed `Game/SocketType.lua` → `Game/SocketKind.lua` and `Game/Socket.lua` → `Game/SocketObj.lua` (and updated the `require(...)` calls) so the injected keys no longer clash.
+12. **Runtime Lua errors fixed (regression from a bad prior refactor):** `Game.SocketType` returns the `LTheory_SocketType` table directly, so `SocketType.LTheory_SocketType` was `nil`, and `Sockets.lua` referenced a non-existent `GameSocket` global. Corrected all references to use the module tables directly (e.g. `require('Game.SocketKind')`, local `LTheory_Socket`).
+13. **Mesh degenerate-geometry warnings fixed:** Added `Shape:cleanup(eps)` (welds coincident/near-coincident vertices and drops degenerate/bowtie polys) and call it from `Shape:finalize()` before triangulation. This eliminates the `Bad normal at poly` and `BSP Incoming Mesh Error: Vertex Position Degenerate` warnings at their source. The verbose `getFaceNormal` print is now gated behind `Config.gen.debug` (default `false`). Ships build and display cleanly.
+
+### LuaJIT Status (as of July 2026)
+- **Linux runtime:** LuaJIT **2.1.1761786044** via system `libluajit-5.1-dev` (OpenResty branch). This is a 2.1.x line, **not** the original 2.0.1. If 2.0.1 was used at some point it was a Windows-only bundled binary; nothing in the current tree pins 2.0.1.
+- **ABI:** Lua 5.1 ABI — the engine relies heavily on LuaJIT FFI (`ffi.cdef`, `ffi.load`) for `ShaderVar`, `Physics`, `Matrix`, etc. Standard Lua (5.4) has no FFI, so a switch would mean rewriting every binding. Not recommended.
+- **Caveat:** `dump2.lua`'s version check is disabled as a stopgap. The system OpenResty 2.1 diverges slightly from upstream Mike Pall 2.1-beta3; FFI binding behavior should be smoke-tested after any LuaJIT version change. For reproducible builds, consider building LuaJIT from a pinned source rather than depending on the distro package.
+
 ### The Bullet Physics Fix (Root Cause)
 The engine was compiling with **Bullet 2.87 headers** from `libphx/ext/include/bullet/` but linking against the **system Bullet 3.24 library** (`libbullet-dev:amd64 3.24+dfsg-5`). This ABI mismatch caused heap corruption (`malloc(): invalid size`) on every Bullet object allocation in `Physics_Create()`.
 
@@ -85,10 +95,12 @@ Nearly all texture assets in `res/` are corrupted 130-byte placeholder files (th
 
 ### Remaining Non-Fatal Warnings
 - **`envMap` in `global.glsl`:** `HIGHQ` is always defined (forced in `common.glsl:16`), so the `#else` branch using `envMap` is dead code. The GLSL compiler correctly optimizes it out. Harmless.
-- **"Bad normal at poly" warnings:** Emitted during mesh collision shape generation for certain ship models. Non-fatal.
-- **"BSP Incoming Mesh Error: Vertex Position Degenerate":** Occasional degenerate geometry warnings during BSP construction. Non-fatal.
 - **Remaining `texture2D` calls (~55):** Found in filter/UI/compute/brush shaders — deprecated but functional in GLSL 130. Low priority.
 - **Remaining `gl_FragColor` usage:** In some filter/compute shaders — deprecated but functional in GLSL 130.
+
+### Fixed Warnings (Non-Fatal, Now Resolved)
+- **"Bad normal at poly":** Was emitted by `Shape:getFaceNormal` for degenerate/bowtie polys generated during ship mesh construction. Resolved by the `Shape:cleanup()` weld + degenerate-drop pass in `Shape:finalize()` (build fix #13). The offending print is gated behind `Config.gen.debug`.
+- **"BSP Incoming Mesh Error: Vertex Position Degenerate":** Was emitted by `Mesh_Validate` (C) for coincident vertices in the finalized ship mesh. Resolved by the same vertex-welding step in `Shape:cleanup()`.
 
 ### Shader Fixes (Completed)
 The deferred rendering shaders had numerous `#autovar` declarations for uniforms that the GLSL compiler optimized out because they were unused in the final compiled shader. Each `#autovar` line registers a variable for automatic ShaderVar stack binding, but if the compiler drops the uniform, `glGetUniformLocation` returns -1 and a warning fires.
@@ -162,13 +174,16 @@ This engine is ~10 years old. The goal is to get it running reliably on modern h
 
 #### Worth Doing (High Impact, Low Risk)
 
-1. **Bump `#version` to 330** — The engine hardcodes `#version 130` in `Shader.cpp:27`. GLSL 330 gives proper `in`/`out` support, `texture()` as the standard sampler, and better compiler support on modern GPUs. All shaders are now GLSL 130+ compatible (items 1-2 below are complete).
+1. **Bump `#version` to 330** — The engine hardcodes `#version 130` in `Shader.cpp:27`. GLSL 330 gives proper `in`/`out` support, `texture()` as the standard sampler, and better compiler support on modern GPUs. All shaders are now GLSL 130+ compatible (items 2-4 below are complete).
+   - **Note:** `README.md` previously claimed "GLSL 330 already done" — that is inaccurate. `Shader.cpp` still emits `#version 130`, and shaders use `out vec4 fragData0/1/2` (G-buffer) rather than `layout(location=N)` qualifiers. The GLSL 120→130 modernization is complete; the 330 bump remains a TODO.
 
 2. **Replace corrupted texture assets** — Nearly all textures in `res/` are corrupted 130-byte placeholders. Replace with real assets or procedural generation. The engine already handles missing textures gracefully with magenta fallbacks.
 
 3. **Clean up `common.glsl` dead code** — `HIGHQ` is always force-defined (line 16), making `LOWQ` branches dead code. Either remove the `#ifdef HIGHQ` guards entirely (always use the HIGHQ path) or add a runtime toggle. This eliminates confusing GLSL warnings about unused uniforms.
 
 4. **Complete GLSL 130 cleanup** — Replace remaining ~55 `texture2D` calls and `gl_FragColor` usage in filter/UI/compute shaders (deprecated but functional in GLSL 130).
+
+5. **Pin / verify LuaJIT 2.1** — The Linux runtime is the distro's OpenResty LuaJIT 2.1.1761786044, which diverges slightly from upstream Mike Pall 2.1-beta3. For reproducible builds, build LuaJIT from a pinned source, and run an FFI smoke-test pass (Physics/Matrix/ShaderVar bindings) whenever the LuaJIT version changes. The `dump2.lua` version check is currently disabled as a stopgap.
 
 #### Not Worth Doing (High Cost, Low Benefit)
 
@@ -207,5 +222,7 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/bin:$(pwd)/libphx/ext/lib/linux64
 1. **Bump `#version` to 330** — Change `versionString` in `Shader.cpp:27` from `"#version 130\n"` to `"#version 330\n"` and verify all shaders compile.
 2. **Replace corrupted textures** with real assets or procedural generation to restore visual quality.
 3. **Clean up `common.glsl` dead code** — Remove `#ifdef HIGHQ` guards or make them runtime-toggleable.
-4. **Extend the engine** for Freelancer-style 3D space environments (procedural nebulae, dust, sectors, etc.).
-5. **Update this document** as new milestones are reached.
+4. **Complete GLSL 130 cleanup** — Replace remaining `texture2D`/`gl_FragColor` in filter/UI/compute shaders.
+5. **Extend the engine** for Freelancer-style 3D space environments (procedural nebulae, dust, sectors, etc.).
+6. **Pin LuaJIT** — Build LuaJIT 2.1 from a pinned source for reproducible Linux builds; smoke-test FFI bindings after any version bump.
+7. **Update this document** as new milestones are reached.

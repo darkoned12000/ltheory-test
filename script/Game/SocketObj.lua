@@ -1,8 +1,8 @@
-local Socket = class(function (self, type, pos, external)
+local LTheory_Socket = class(function (self, type, pos, external)
   self.type = type
   self.pos = pos
   self.external = external
   self.child = nil
 end)
 
-return Socket
+return LTheory_Socket

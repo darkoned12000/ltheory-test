@@ -6,6 +6,7 @@
 ----------------------------------------------------------------------------]]--
 
 local Ship = require('Game.Entities.Ship')
+local LTheory_SocketType = require('Game.SocketKind')
 
 local ShipType = class(function (self, seed, generator, scale)
   local rng = RNG.Create(seed)
@@ -15,23 +16,24 @@ local ShipType = class(function (self, seed, generator, scale)
   self.scale = scale
 
   self.sockets = {
-    [SocketType.Thruster] = {},
-    [SocketType.Turret] = {},
+
+[LTheory_SocketType.Thruster] = {},
+    [LTheory_SocketType.Turret] = {}
   }
 
   for i = 1, Config.gen.nTurrets do
     local p = Gen.GenUtil.FindMountPoint(self.mesh, self.bsp, rng, Vec3f(0, 1, 0), Vec3f(0, 0, 1), 1000)
     if p then
-      insert(self.sockets[SocketType.Turret], p * Vec3f( 1, 1, 1))
-      insert(self.sockets[SocketType.Turret], p * Vec3f(-1, 1, 1))
+      insert(self.sockets[LTheory_SocketType.Turret], p * Vec3f( 1, 1, 1))
+      insert(self.sockets[LTheory_SocketType.Turret], p * Vec3f(-1, 1, 1))
     end
   end
 
   for i = 1, Config.gen.nThrusters do
     local p = Gen.GenUtil.FindMountPoint(self.mesh, self.bsp, rng, Vec3f(0, 0, -1), Vec3f(0, 0, -1), 1000)
     if p then
-      insert(self.sockets[SocketType.Thruster], p * Vec3f( 1, 1, 1))
-      insert(self.sockets[SocketType.Thruster], p * Vec3f(-1, 1, 1))
+      insert(self.sockets[LTheory_SocketType.Thruster], p * Vec3f( 1, 1, 1))
+      insert(self.sockets[LTheory_SocketType.Thruster], p * Vec3f(-1, 1, 1))
     end
   end
 

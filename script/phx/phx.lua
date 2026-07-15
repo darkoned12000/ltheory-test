@@ -54,7 +54,9 @@ end
 for i = 1, #PHX.Lib.Opaques do
   local name = PHX.Lib.Opaques[i]
   local wrapperName = format('Opaque_%s', name)
-  ffi.cdef(format('typedef %s %s;', name, wrapperName));
+  ffi.cdef(string.format([[
+typedef %s %s;
+]], name, wrapperName))
   local type = Type.Create(wrapperName, true)
   local ptr  = CType.Pointer(type)
   Type.Alias(ptr.name, name)

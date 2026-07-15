@@ -218,8 +218,10 @@ function Shape:getFaceNormal (poly)
     n:inormalize()
     return n
   else
-    print("Bad normal at poly:")
-    self:printPoly(poly)
+    if Config.gen.debug then
+      print("Bad normal at poly:")
+      self:printPoly(poly)
+    end
     --assert(n:length() > 1e-6)
   end
   return nil
@@ -771,9 +773,76 @@ function Shape:polyValid (poly)
   return true
 end
 
+-- Cleanup (number eps)
+-- Reduces the common sources of degenerate geometry produced by the
+-- procedural generator (extrude/bevel/warp/tessellate/add) before the shape
+-- is baked into a mesh:
+--   1. Welds coincident / near-coincident vertices (within eps) so the C-side
+--      Mesh_Validate no longer reports 'Vertex Position Degenerate'.
+--   2. Drops polys whose vertices collapse to fewer than 3 unique points, or
+--      whose face normal is degenerate (area ~ 0), which is what triggers the
+--      'Bad normal at poly' path in getFaceNormal.
+-- polys store 0-based indices into self.verts (see getVertex).
+function Shape:cleanup (eps)
+  eps = eps or 1e-3
+
+  -- 1. Weld vertices
+  local newVerts   = {}
+  local keyToIndex = {}
+  local map        = {}
+  local function key (v)
+    return ('%d_%d_%d'):format(
+      math.floor(v.x / eps),
+      math.floor(v.y / eps),
+      math.floor(v.z / eps))
+  end
+
+  for i = 0, #self.verts - 1 do
+    local v = self.verts[i + 1]
+    local k = key(v)
+    local ni = keyToIndex[k]
+    if not ni then
+      ni = #newVerts
+      newVerts[ni + 1] = v
+      keyToIndex[k]    = ni
+    end
+    map[i] = ni
+  end
+  self.verts = newVerts
+
+  -- 2. Remap polys, dropping degenerate ones
+  local newPolys = {}
+  for i = 1, #self.polys do
+    local poly = self.polys[i]
+    local rp   = {}
+    for j = 1, #poly do
+      rp[j] = map[poly[j]]
+    end
+
+    -- skip polys with duplicate (collapsed) vertices
+    local seen = {}
+    local ok   = true
+    for j = 1, #rp do
+      if seen[rp[j]] then ok = false; break end
+      seen[rp[j]] = true
+    end
+    if not ok then goto continue end
+
+    -- skip polys with no usable face normal (degenerate / bowtie)
+    if self:getFaceNormal(rp) == nil then goto continue end
+
+    newPolys[#newPolys + 1] = rp
+    ::continue::
+  end
+  self.polys = newPolys
+
+  return self
+end
+
 -- Convert shape into native triangle mesh for external use
 function Shape:finalize ()
   local mesh = Mesh.Create()
+  self:cleanup()
   self:triangulateFan()
 
   -- Copy vertices

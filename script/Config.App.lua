@@ -24,6 +24,7 @@ local goodSeeds = {
 }
 
 Config.gen = {
+  debug      = false, -- Enable verbose mesh-generation diagnostics (bad normals, etc.)
   seedGlobal = nil, -- Set to force deterministic global RNG
   seedSystem = nil, -- Set to force deterministic system generation
 

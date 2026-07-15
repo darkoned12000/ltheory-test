@@ -27,7 +27,8 @@ Thruster = subclass(Entity, function (self)
 end)
 
 function Thruster:getSocketType ()
-  return SocketType.Thruster
+  local SocketType = require('Game.SocketKind')
+return SocketType.Thruster
 end
 
 function Thruster:render (state)

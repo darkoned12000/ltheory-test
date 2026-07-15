@@ -66,7 +66,8 @@ function ThrustController:update (e, dt)
   end
 
   -- TODO : This is terrible
-  for thruster in e:iterSocketsByType(SocketType.Thruster) do
+  local SocketType = require('Game.SocketKind')
+for thruster in e:iterSocketsByType(SocketType.Thruster) do
     thruster.activationT = self.forward
     thruster.boostT = boost
   end
@@ -75,6 +76,7 @@ end
 --------------------------------------------------------------------------------
 
 local function killThrust (self)
+  local SocketType = require('Game.SocketKind')
   for thruster in self:iterSocketsByType(SocketType.Thruster) do
     thruster.activationT = 0
     thruster.boostT = 0

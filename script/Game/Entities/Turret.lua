@@ -54,7 +54,8 @@ Turret = subclass(Entity, function (self)
 end)
 
 function Turret:getSocketType ()
-  return SocketType.Turret
+  local SocketType = require('Game.SocketKind')
+return SocketType.Turret
 end
 
 function Turret:aimAt (pos)

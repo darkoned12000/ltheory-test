@@ -65,7 +65,7 @@ to run a specific script. All top-level scripts are in the `script/App` director
 
 # Resurrection Progress & How to Run on Linux
 
-This repository has been resurrected and is now running on Linux with GLSL 330 shaders, fog re-enabled, ambient lighting added, and full deferred rendering pipeline operational. The main game app (`LTheory`) boots, generates a world, spawns ships, and runs the full game loop (rendering, physics, AI) without crashing.
+This repository has been resurrected and is now running on Linux with modernized GLSL 130 shaders (upgraded from the original GLSL 120), a refactored G-buffer, fog re-enabled, ambient lighting added, and the full deferred rendering pipeline operational. The main game app (`LTheory`) boots, generates a world, spawns ships, and runs the full game loop (rendering, physics, AI) without crashing. (Note: shaders are still `#version 130` — the planned bump to GLSL 330 has **not** yet been done; see "What Was Fixed" and "Recommended Roadmap".)
 
 ## Prerequisites for Linux
 
@@ -122,7 +122,7 @@ Replace the path with your actual project location. The `lt64r` executable is th
 
 Based on current state and next steps:
 
-1. **Bump GLSL version to 330** — Already done! All shaders now compile cleanly with proper `layout(location = N)` qualifiers.
+1. **Bump GLSL version to 330** — **NOT done yet.** `Shader.cpp` still prepends `#version 130`, and the G-buffer uses `out vec4 fragData0/1/2` (not `layout(location = N)`). All shaders were modernized GLSL 120→130 and the 330 bump is the next step (see "What We Want to Try to Update").
 2. **Replace corrupted texture assets** — Nearly all textures in `res/` are corrupted placeholder files. Replace with real assets or procedural generation. The engine already handles missing textures gracefully with magenta fallbacks.
 3. **Clean up `common.glsl` dead code** — `HIGHQ` is always force-defined, making `LOWQ` branches dead code. Either remove the `#ifdef HIGHQ` guards entirely (always use the HIGHQ path) or add a runtime toggle. This eliminates confusing GLSL warnings about unused uniforms.
 4. **Extend the engine** for Freelancer-style 3D space environments — procedural nebulae, dust clouds, sector transitions, and more. The rendering pipeline is solid; this would be pure content creation.
@@ -132,12 +132,14 @@ Based on current state and next steps:
 
 - **Bullet Physics ABI mismatch**: The engine was compiling with Bullet 2.87 headers but linking against system Bullet 3.24, causing heap corruption on every physics object allocation. This was fixed by removing the old bullet include path and using system Bullet 3 headers.
 - **Texture resilience**: Nearly all texture assets are corrupted placeholder files. The engine now creates magenta fallback textures instead of crashing with `Fatal()`.
-- **Shader fixes**: Removed unused `#autovar` declarations that were causing warnings, refactored the G-buffer to use proper GLSL 330 output variables, and modernized shaders from GLSL 120 to GLSL 130 syntax.
-- **GLSL version bump**: Upgraded all shaders to GLSL 330 with proper `layout(location = N)` qualifiers for fragment outputs.
-- **G-buffer refactor**: Changed the deferred rendering pipeline to use explicit output variables instead of deprecated `gl_FragData[]`, making it compatible with modern OpenGL.
+- **Shader fixes**: Removed unused `#autovar` declarations that were causing warnings, refactored the G-buffer to use `out vec4` output variables instead of deprecated `gl_FragData[]`, and modernized shaders from GLSL 120 to GLSL 130 syntax. (The engine still hardcodes `#version 130` in `Shader.cpp`; the planned bump to GLSL 330 is **not done**.)
+- **G-buffer refactor**: Changed the deferred rendering pipeline to use explicit `out vec4 fragData0/1/2` variables instead of deprecated `gl_FragData[]`.
 - **Fog re-enabled**: The composite shader now properly applies fog effects (was previously disabled).
 - **Ambient lighting added**: Added ambient light contribution to improve overall scene brightness and realism.
 - **ui.glsl fix**: Updated the UI vertex shader to use explicit `mProj`/`mView` matrices instead of deprecated built-ins (`gl_ProjectionMatrix`, `gl_ModelViewMatrix`).
+- **LuaJIT runtime errors resolved**: A prior refactor broke `Game.SocketType`/`Game.Socket` (introducing a `SocketType.LTheory_SocketType` `nil` access and an undefined `GameSocket` global). Fixed by using the module tables directly. Also renamed `Game/SocketType.lua` → `Game/SocketKind.lua` and `Game/Socket.lua` → `Game/SocketObj.lua` so `Namespace.LoadInline('Game')` no longer shadows the `PHX.FFI.SocketType`/`PHX.FFI.Socket` globals (the "shadowing" warnings).
+- **LuaJIT 2.1 (not 2.0.1)**: On Linux the engine links the system `luajit-5.1` package, which is **LuaJIT 2.1.1761786044** (OpenResty-maintained branch, Lua 5.1 ABI). The bundled `lua51.dll`/headers under `libphx/ext` are Windows-only (and are 2.1.0-beta3). No Linux LuaJIT `.so` is bundled. If 2.0.1 was used originally it was a Windows-only binary; nothing in the current tree pins 2.0.1. The `dump2.lua` version assertion was disabled as a stopgap. See `AGENTS.md` → "LuaJIT Status" for the reproducible-build note.
+- **Mesh degenerate-geometry warnings fixed**: Added `Shape:cleanup()` (welds coincident vertices and drops degenerate/bowtie polys) and call it from `Shape:finalize()`. This eliminates the `Bad normal at poly` and `BSP Incoming Mesh Error: Vertex Position Degenerate` warnings at their source. Ships build and display cleanly.
 
 ## What We Want to Try to Update
 

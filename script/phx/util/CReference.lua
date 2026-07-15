@@ -12,11 +12,11 @@ local Type = require('phx.util.Type')
 local cache = {}
 
 local function CreateCReference (ElemT)
-  ffi.cdef(format([[
-    typedef struct _ref_%s {
-      %s* p;
-    } _ref_%s;
-  ]], ElemT.name, ElemT.name, ElemT.name))
+  ffi.cdef([[
+    typedef struct _ref_]] .. ElemT.name .. [[ {
+      ]] .. ElemT.name .. [[* p;
+    } _ref_]] .. ElemT.name .. [[;
+  ]])
 
   local T = Type.Create('_ref_' .. ElemT.name, false)
   T.niceName = format('Reference<%s>', ElemT.niceName)
