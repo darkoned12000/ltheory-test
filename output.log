@@ -1,0 +1,62 @@
+[43m [0m [33;1mWarning: Game.SocketType is shadowing PHX.FFI.SocketType in _G[0m
+[43m [0m [33;1mWarning: Game.Socket is shadowing PHX.FFI.Socket in _G[0m
+Seed: 2274657218858883932ULL
+malloc(): invalid size (unsorted)
+Signal_Handler: Caught Abort
+Lua Backtrace:
+  <native>: Create
+    [Locals]
+      cdata      (*temporary)     = cdata<struct Physics *()>: 0x7f57f63283c0
+      function   (*temporary)     = 0x0x7f57f62b8a40
+
+  ./script/Game/Entities/System.lua(19): ctor
+    [Upvalues]
+      table      Nebula           = 0x0x7f57f2e89d68
+      table      Dust             = 0x0x7f57f2e74d90
+    [Locals]
+      table      self             = 0x0x7f57f2d2d408
+      cdata      seed             = 2274657218858883932ULL
+
+  ./script/env/util/Class.lua(47): System
+    [Upvalues]
+      table      base             = 0x0x7f57f3343b08
+      table      cls              = 0x0x7f57f2e46150
+      function   ctor             = 0x0x7f57f2e59438
+    [Locals]
+      table      T                = 0x0x7f57f2e46150
+      table      self             = 0x0x7f57f2d2d408
+
+  ./script/App/LTheory.lua(18): generate
+    [Upvalues]
+      cdata      rng              = cdata<struct RNG *>: 0x55e41fb2aec0
+      table      Entities         = 0x0x7f57f2d83098
+    [Locals]
+      table      self             = 0x0x7f57f2d54c20
+
+  ./script/App/LTheory.lua(68): onInit
+    [Upvalues]
+      table      Entities         = 0x0x7f57f2d83098
+      table      DebugControl     = 0x0x7f57f2dab828
+    [Locals]
+      table      self             = 0x0x7f57f2d54c20
+
+  ./script/phx/util/Application.lua(50): run
+    [Upvalues]
+      table      Bindings         = 0x0x7f57f32c5968
+    [Locals]
+      table      self             = 0x0x7f57f2d54c20
+
+  ./script/Main.lua(39): <null>
+    [Locals]
+      string     app              = LTheory
+
+  <native>: xpcall
+    [Locals]
+      function   (*temporary)     = 0x0x7f57f62c8a60
+
+  ./script/env/env.lua(9): Call
+    [Locals]
+      function   fn               = 0x0x7f57f62ccef0
+
+  ./script/Main.lua(8): <main>
+>

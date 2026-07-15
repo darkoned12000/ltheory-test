@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/rhague/Documents/Code_Projects/ltheory-test/build/cmake_install.cmake",
+		"/home/rhague/Documents/Code_Projects/ltheory-test/build/libphx/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
