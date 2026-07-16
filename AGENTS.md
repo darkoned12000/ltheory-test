@@ -206,6 +206,25 @@ This is the most undocumented part of the engine's graphics stack. Captured here
 3. **GLEW needs no change** — just call the new GL function; GLEW 2.3 has it. Add `glGetError()` checks via the existing `OpenGL_CheckError()` macro if unsure.
 4. **Note on linking:** GL/GLEW are linked as bare `-lGL -lGLEW` (`libphx/CMakeLists.txt:87-88`), resolved from system paths. For a more robust/self-documenting build you *could* add `find_package(OpenGL REQUIRED)` + `find_package(GLEW REQUIRED)` and use the imported targets `OpenGL::GL` / `GLEW::GLEW`, but it is not required for error-free builds.
 
+#### GLSL 330 Bump — Attempted & Reverted (July 2026)
+
+An attempt was made to bump `Engine_Init(2, 1)` → `(3, 3)` (`src/Main.cpp:15`) and `#version 130` → `#version 330` (`libphx/src/Shader.cpp:27`) together. **It builds but aborts at runtime** on the first shader compile, and has been **reverted** to keep the stable baseline. Findings, so the next attempt has a real roadmap:
+
+- **Root cause:** GLSL 330 is a *core*-profile GLSL that removes every deprecated fixed-function built-in the engine's shaders still use. The first failure is `CreateGLShader: Failed to compile shader: 'gl_MultiTexCoord0' undeclared / 'gl_Vertex' undeclared` (during `computeAO` at boot).
+- **The migration is NOT a one-line bump — it is a renderer migration.** Scope discovered:
+  - **4 vertex shaders** use fixed-function built-ins (`gl_Vertex`, `gl_MultiTexCoord0`, `gl_ModelViewMatrix`, `gl_ProjectionMatrix`): `res/shader/vertex/ui.glsl`, `identity.glsl`, `ui3D.glsl`, `worldray.glsl`. These must be rewritten to read generic `in` attributes and multiply by explicit `mView`/`mProj` uniforms.
+  - **~73 fragment shaders** use `gl_FragColor` / `gl_FragData[]` — must become explicit `out vec4`.
+  - **`libphx/src/Draw.cpp`** does all UI/debug drawing via **18 `glBegin`/`glVertex` immediate-mode blocks**, which do not exist in a core profile at all. This is a **C++ rewrite to VBOs/VAOs**, and is the hardest part.
+- **What's already modern (good news):** `libphx/src/Mesh.cpp` — the actual 3D geometry path — already submits generic attributes via `glVertexAttribPointer(0/1/2, ...)` for position/normal/uv (`Mesh.cpp:220-226`) and draws with `glDrawElements`. Only the *vertex shaders* need to switch from `gl_Vertex` to `layout(location=0) in vec3 ...` (locations 0=pos, 1=normal, 2=uv). The immediate-mode `glBegin` calls in `Mesh.cpp` are only in `Mesh_DrawNormals` (debug).
+- **Why it "builds but crashes":** we kept `SDL_GL_CONTEXT_PROFILE_COMPATIBILITY`, so the driver still grants a compatibility context (C++ `glBegin` keeps working), but the *shaders* at `#version 330` reject the legacy built-ins. Worst of both worlds.
+
+**Recommended incremental path for a future attempt (do NOT bump `#version` until all shaders are migrated):**
+1. Migrate the 4 vertex shaders to `layout(location=)` `in` attributes + `mView`/`mProj` uniforms, while still on `#version 130` (130 supports this syntax). Verify each still renders.
+2. Convert all `gl_FragColor`/`gl_FragData[]` fragment shaders to `out vec4` (the G-buffer material shaders are already done via `deferred.glsl`).
+3. Rewrite `Draw.cpp` immediate-mode drawing to a small VBO/VAO helper (position + uv + color streams).
+4. Only then bump `Shader.cpp:27` to `#version 330` **and** `src/Main.cpp:15` to `Engine_Init(3, 3)` together, and switch the profile to core if desired.
+5. Rebuild + run `LTheory`; watch stderr for `CreateGLShader: Failed to compile shader`.
+
 ### Gameplay Systems (Lua) — Asteroids, Damage, Targeting
 
 These are the systems that make "blow up an asteroid" work. They live entirely in `script/Game/`.
