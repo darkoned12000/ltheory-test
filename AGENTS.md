@@ -225,6 +225,22 @@ An attempt was made to bump `Engine_Init(2, 1)` → `(3, 3)` (`src/Main.cpp:15`)
 4. Only then bump `Shader.cpp:27` to `#version 330` **and** `src/Main.cpp:15` to `Engine_Init(3, 3)` together, and switch the profile to core if desired.
 5. Rebuild + run `LTheory`; watch stderr for `CreateGLShader: Failed to compile shader`.
 
+### Draw.cpp VBO Rewrite — DONE & Verified (July 2026)
+
+Step 3 above is **complete**. `libphx/src/Draw.cpp` no longer uses any deprecated immediate mode (`glBegin`/`glVertex`/`glTexCoord`). Every `Draw_*` function now:
+
+- Accumulates vertices into a static interleaved scratch buffer `[x, y, z, u, v]` (5 floats).
+- Uploads via `glBufferData` to a single dynamic VBO (`s_vbo`) per draw call.
+- Binds attributes with the **same pattern as `Mesh.cpp`**: `Draw_Bind()` enables `glVertexAttribArray(0)` (position) and `(2)` (uv) and points them at the VBO; `Draw_Unbind()` disables + unbinds — mirroring `Mesh_DrawBind`/`Mesh_DrawUnbind`. **No persistent VAO** (a first draft using a static VAO caused green-screen / half-black regressions because the VAO's recorded attrib state interacted badly with `Mesh_DrawUnbind`'s `glDisableVertexAttribArray(0/1/2)`; the per-draw bind/unbind pattern matches what already works in this codebase).
+- Expands `GL_QUADS` → 2×`GL_TRIANGLES` and `GL_POLYGON` → triangle fan on the CPU, exactly matching the old immediate-mode expansion.
+
+**Verified:** rebuilt + ran `LTheory` for 20s — clean boot, zero shader/GL errors/warnings, full scene renders correctly. The 4 vertex shaders (`ui`, `identity`, `worldray`, `ui3D`) are **still on `gl_Vertex`/`gl_MultiTexCoord0`** and were NOT touched: at `#version 130` (compatibility profile) the driver auto-feeds those built-ins from the VBO attributes at loc 0/2, so they keep working. The shader migration (Step 1) only becomes mandatory when `#version` is bumped to 330 (a core-profile GLSL that removes those built-ins).
+
+**Remaining for a future 330 bump:**
+- Step 1: migrate `ui`/`identity`/`worldray` (and confirm `ui3D`) to read `vertex_position`/`vertex_uv` real attributes + `mView`/`mProj` uniforms. (`ui3D` already uses `vertex_position` via `VS_BEGIN`.)
+- Step 2: convert ~73 fragment shaders from `gl_FragColor`/`gl_FragData[]` to `out vec4`.
+- Then bump `Engine_Init(2,1)`→`(3,3)` and `#version 130`→`330` together.
+
 ### Gameplay Systems (Lua) — Asteroids, Damage, Targeting
 
 These are the systems that make "blow up an asteroid" work. They live entirely in `script/Game/`.
