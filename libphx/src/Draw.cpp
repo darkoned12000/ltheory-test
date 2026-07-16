@@ -2,6 +2,7 @@
 #include "Metric.h"
 #include "OpenGL.h"
 #include "Vec4.h"
+#include <cstring>
 
 /* ----------------------------------------------------------------------------
  * Draw subsystem — modernized to VBO instead of deprecated immediate mode
@@ -72,45 +73,52 @@ static inline void Draw_Push (float x, float y, float z = 0.0f, float u = 0.0f, 
 /* Upload the scratch buffer and draw it as the given GL primitive.
  * QUADS / POLYGON are expanded into triangles on the CPU (matching the
  * previous immediate-mode expansion). */
+/* Expand buffered verts of the given primitive into a plain triangle list
+ * (GL_TRIANGLES) in a SEPARATE scratch buffer, so a single glDrawArrays can
+ * render everything. Using a second buffer avoids any in-place read/write
+ * overlap (a 4-vert quad expands to 6 verts; expanding in place corrupts
+ * later source verts). Matches the old immediate-mode expansion exactly. */
+static DrawVert s_expand[DRAW_MAX_VERTS * 2];
+static int Draw_Expand (GLenum mode) {
+  if (mode == GL_QUADS) {
+    int quads = s_count / 4;
+    int out = 0;
+    for (int q = 0; q < quads; ++q) {
+      DrawVert* v = &s_verts[q * 4];
+      /* Tri A: v0, v1, v2   Tri B: v0, v2, v3  (fan from v0). */
+      s_expand[out++] = v[0];
+      s_expand[out++] = v[1];
+      s_expand[out++] = v[2];
+      s_expand[out++] = v[0];
+      s_expand[out++] = v[2];
+      s_expand[out++] = v[3];
+    }
+    memcpy(s_verts, s_expand, (size_t)out * sizeof(DrawVert));
+    s_count = out;
+    return GL_TRIANGLES;
+  }
+  if (mode == GL_POLYGON) {
+    int out = 0;
+    for (int i = 1; i < s_count - 1; ++i) {
+      s_expand[out++] = s_verts[0];
+      s_expand[out++] = s_verts[i];
+      s_expand[out++] = s_verts[i + 1];
+    }
+    memcpy(s_verts, s_expand, (size_t)out * sizeof(DrawVert));
+    s_count = out;
+    return GL_TRIANGLES;
+  }
+  return mode; /* LINES / POINTS / TRIANGLES unchanged */
+}
+
 static void Draw_Flush (GLenum mode) {
   if (s_count == 0) return;
 
+  mode = Draw_Expand(mode);
+
   Draw_Bind();
   GLCALL(glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(s_count * (int)sizeof(DrawVert)), s_verts, GL_DYNAMIC_DRAW));
-
-  switch (mode) {
-    case GL_LINES:
-    case GL_POINTS:
-    case GL_TRIANGLES:
-      GLCALL(glDrawArrays(mode, 0, s_count));
-      break;
-
-    case GL_QUADS: {
-      /* Each quad (4 verts) -> 2 triangles (6 indices). */
-      int quads = s_count / 4;
-      for (int q = 0; q < quads; ++q) {
-        int b = q * 4;
-        GLCALL(glDrawArrays(GL_TRIANGLES, b,      3));
-        GLCALL(glDrawArrays(GL_TRIANGLES, b + 1,  3));
-      }
-      break;
-    }
-
-    case GL_POLYGON: {
-      /* Triangle fan: (0, i, i+1) for i in [1, count-2].
-       * POLYGON is only used by debug overlays, so re-uploading one
-       * triangle at a time is fine. */
-      DrawVert fan[3];
-      for (int i = 1; i < s_count - 1; ++i) {
-        fan[0] = s_verts[0];
-        fan[1] = s_verts[i];
-        fan[2] = s_verts[i + 1];
-        GLCALL(glBufferData(GL_ARRAY_BUFFER, sizeof(fan), fan, GL_DYNAMIC_DRAW));
-        GLCALL(glDrawArrays(GL_TRIANGLES, 0, 3));
-      }
-      break;
-    }
-  }
+  GLCALL(glDrawArrays(mode, 0, s_count));
 
   Draw_Unbind();
   s_count = 0;

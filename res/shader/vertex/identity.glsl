@@ -1,8 +1,7 @@
-out vec2 uv;
-out vec3 pos;
+#include vertex
 
 void main() {
-  uv = gl_MultiTexCoord0.xy;
-  pos = gl_Vertex.xyz;
-  gl_Position = gl_Vertex;
+  uv = vertex_uv;
+  pos = vertex_position;
+  gl_Position = vec4(vertex_position, 1.0);
 }

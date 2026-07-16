@@ -234,12 +234,22 @@ Step 3 above is **complete**. `libphx/src/Draw.cpp` no longer uses any deprecate
 - Binds attributes with the **same pattern as `Mesh.cpp`**: `Draw_Bind()` enables `glVertexAttribArray(0)` (position) and `(2)` (uv) and points them at the VBO; `Draw_Unbind()` disables + unbinds — mirroring `Mesh_DrawBind`/`Mesh_DrawUnbind`. **No persistent VAO** (a first draft using a static VAO caused green-screen / half-black regressions because the VAO's recorded attrib state interacted badly with `Mesh_DrawUnbind`'s `glDisableVertexAttribArray(0/1/2)`; the per-draw bind/unbind pattern matches what already works in this codebase).
 - Expands `GL_QUADS` → 2×`GL_TRIANGLES` and `GL_POLYGON` → triangle fan on the CPU, exactly matching the old immediate-mode expansion.
 
-**Verified:** rebuilt + ran `LTheory` for 20s — clean boot, zero shader/GL errors/warnings, full scene renders correctly. The 4 vertex shaders (`ui`, `identity`, `worldray`, `ui3D`) are **still on `gl_Vertex`/`gl_MultiTexCoord0`** and were NOT touched: at `#version 130` (compatibility profile) the driver auto-feeds those built-ins from the VBO attributes at loc 0/2, so they keep working. The shader migration (Step 1) only becomes mandatory when `#version` is bumped to 330 (a core-profile GLSL that removes those built-ins).
+**Verified:** rebuilt + ran `LTheory` — clean boot, no shader/GL errors/warnings, full scene renders correctly (ships, asteroids, stars, HUD; fly/shoot/blow-up-asteroids all work). 
 
-**Remaining for a future 330 bump:**
-- Step 1: migrate `ui`/`identity`/`worldray` (and confirm `ui3D`) to read `vertex_position`/`vertex_uv` real attributes + `mView`/`mProj` uniforms. (`ui3D` already uses `vertex_position` via `VS_BEGIN`.)
-- Step 2: convert ~73 fragment shaders from `gl_FragColor`/`gl_FragData[]` to `out vec4`.
-- Then bump `Engine_Init(2,1)`→`(3,3)` and `#version 130`→`330` together.
+**Step 1 (vertex shader migration) is ALSO DONE.** The 4 vertex shaders now read real attributes instead of legacy built-ins:
+- `res/shader/vertex/ui.glsl`: `gl_Vertex`/`gl_MultiTexCoord0` → `vertex_position`/`vertex_uv`.
+- `res/shader/vertex/identity.glsl`: same, plus added `#include vertex`.
+- `res/shader/vertex/worldray.glsl`: same (`vertex_position.xy` / `vertex_uv`).
+- `res/shader/vertex/ui3D.glsl`: already modern (uses `vertex_position` via `VS_BEGIN`).
+A `grep` confirms **zero** remaining `gl_Vertex`/`gl_MultiTexCoord` in `res/shader/vertex/`. These run correctly at `#version 130` (compat profile) where `Shader.cpp` binds `vertex_position→loc0`, `vertex_normal→loc1`, `vertex_uv→loc2` (`Shader.cpp:91-93`), matching `Draw_Bind`'s loc 0/2 setup.
+
+**Key bug fixed during verification:** the first `Draw_Expand` implementation expanded quads/polygons **in place** (forward, `s_verts[out++] = ...`). For a flush with multiple quads this corrupted later source vertices (write destination `6*q` overlapped unread source `4*q+3` once `q>=1`), producing "out-of-sync" triangles / picture-in-picture artifacts. Fix: expand into a **separate scratch buffer `s_expand`** then `memcpy` back (`libphx/src/Draw.cpp`), so reads never clobber writes. Required `#include <cstring>`.
+
+**Engine current state (July 2026):** runs correctly at **GLSL 130** with the OpenGL **2.1 compat context** (`Engine_Init(2,1)`, `Shader.cpp:27` = `#version 130`). This is the stable, working baseline.
+
+**Remaining for a future 330 bump (deferred — not needed for gameplay):**
+- Step 2: convert ~73 fragment shaders from `gl_FragColor`/`gl_FragData[]` to explicit `out vec4` (G-buffer material shaders via `deferred.glsl` already done; the 73 are UI/filter/effect/compute passes). ~35 of those also still call `texture2D` (deprecated but legal in 130).
+- Then bump `Engine_Init(2,1)`→`(3,3)` and `#version 130`→`330` **together** (attempted separately before and reverted — see "GLSL 330 Bump — Attempted & Reverted"). Rebuild + watch stderr for `Failed to compile shader`.
 
 ### Gameplay Systems (Lua) — Asteroids, Damage, Targeting
 
