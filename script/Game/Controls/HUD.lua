@@ -18,8 +18,18 @@ function HUD:onEnable ()
   camera:lerpFrom(pCamera.pos, pCamera.rot)
 end
 
+--[[
+  drawTargets -- target brackets + pick the lock candidate
+  ----------------------------------------------------------------------------
+  Iterates `self.targets.tracked` (every live, damageable entity in the system
+  -- see Util/TrackingList.lua) and draws a bracket around those on screen. It
+  ALSO decides which entity `self.target` is: the alive, friendly-ish tracked
+  entity closest to the screen center (within 128px). That candidate is what
+  `LockTarget` (key T) locks onto. The bracket drawing itself is gated by
+  Config.ui.showTrackers, but the `self.target` selection always runs so
+  locking works even with brackets hidden.
+]]
 function HUD:drawTargets (a)
-  if not Config.ui.showTrackers then return end
   local camera = self.gameView.camera
 
   local cTarget = Color(1.0, 0.5, 0.1, 1.0 * a)
@@ -44,24 +54,25 @@ function HUD:drawTargets (a)
       local c = Disposition.GetColor(disp)
       c.a = a * c.a
       if ndcMax <= 1.0 and ndc.z > 0 then
-        do -- Draw rounded box corners
-          local bx1, by1, bsx, bsy = camera:entityToScreenRect(target)
-          local bx2, by2 = bx1 + bsx, by1 + bsy
-          --local a = a * (1.0 - exp(-0.5 * max(0.0, max(bsx, bsy) - 2.0)))
-          UI.DrawEx.Wedge(bx2, by1, 4, 4, 0.125, 0.2, c)
-          UI.DrawEx.Wedge(bx1, by1, 4, 4, 0.375, 0.2, c)
-          UI.DrawEx.Wedge(bx1, by2, 4, 4, 0.625, 0.2, c)
-          UI.DrawEx.Wedge(bx2, by2, 4, 4, 0.875, 0.2, c)
-          if playerTarget == target then
-            UI.DrawEx.Wedge(bx2, by1, 12, 12, 0.125, 0.3, cLock)
-            UI.DrawEx.Wedge(bx1, by1, 12, 12, 0.375, 0.3, cLock)
-            UI.DrawEx.Wedge(bx1, by2, 12, 12, 0.625, 0.3, cLock)
-            UI.DrawEx.Wedge(bx2, by2, 12, 12, 0.875, 0.3, cLock)
-          elseif self.target == target then
-            UI.DrawEx.Wedge(bx2, by1, 8, 8, 0.125, 0.2, cTarget)
-            UI.DrawEx.Wedge(bx1, by1, 8, 8, 0.375, 0.2, cTarget)
-            UI.DrawEx.Wedge(bx1, by2, 8, 8, 0.625, 0.2, cTarget)
-            UI.DrawEx.Wedge(bx2, by2, 8, 8, 0.875, 0.2, cTarget)
+        if Config.ui.showTrackers then
+          do -- Draw rounded box corners
+            local bx1, by1, bsx, bsy = camera:entityToScreenRect(target)
+            local bx2, by2 = bx1 + bsx, by1 + bsy
+            UI.DrawEx.Wedge(bx2, by1, 4, 4, 0.125, 0.2, c)
+            UI.DrawEx.Wedge(bx1, by1, 4, 4, 0.375, 0.2, c)
+            UI.DrawEx.Wedge(bx1, by2, 4, 4, 0.625, 0.2, c)
+            UI.DrawEx.Wedge(bx2, by2, 4, 4, 0.875, 0.2, c)
+            if playerTarget == target then
+              UI.DrawEx.Wedge(bx2, by1, 12, 12, 0.125, 0.3, cLock)
+              UI.DrawEx.Wedge(bx1, by1, 12, 12, 0.375, 0.3, cLock)
+              UI.DrawEx.Wedge(bx1, by2, 12, 12, 0.625, 0.3, cLock)
+              UI.DrawEx.Wedge(bx2, by2, 12, 12, 0.875, 0.3, cLock)
+            elseif self.target == target then
+              UI.DrawEx.Wedge(bx2, by1, 8, 8, 0.125, 0.2, cTarget)
+              UI.DrawEx.Wedge(bx1, by1, 8, 8, 0.375, 0.2, cTarget)
+              UI.DrawEx.Wedge(bx1, by2, 8, 8, 0.625, 0.2, cTarget)
+              UI.DrawEx.Wedge(bx2, by2, 8, 8, 0.875, 0.2, cTarget)
+            end
           end
         end
 
@@ -72,27 +83,63 @@ function HUD:drawTargets (a)
           minDist = dist
         end
       else
-        ndc.x = ndc.x / ((1 + 16/camera.sx) * ndcMax)
-        ndc.y = ndc.y / ((1 + 16/camera.sy) * ndcMax)
-        local x = ( ndc.x + 1)/2 * camera.sx
-        local y = (-ndc.y + 1)/2 * camera.sy
-        if disp < 0.0 then
-          c.a = c.a * 0.5
-          UI.DrawEx.Point(x, y, 64, c)
+        if Config.ui.showTrackers then
+          ndc.x = ndc.x / ((1 + 16/camera.sx) * ndcMax)
+          ndc.y = ndc.y / ((1 + 16/camera.sy) * ndcMax)
+          local x = ( ndc.x + 1)/2 * camera.sx
+          local y = (-ndc.y + 1)/2 * camera.sy
+          if disp < 0.0 then
+            c.a = c.a * 0.5
+            UI.DrawEx.Point(x, y, 64, c)
+          end
         end
       end
     end
   end
 
+  -- Stash the best lock candidate for controlTargetLock to consume (see
+  -- HUD:onInput -> ShipBindings.LockTarget).
   self.target = closest
 end
 
+--[[
+  drawLock -- reticle arrow + health bar for the LOCKED target
+  ----------------------------------------------------------------------------
+  `self.player:getControlling():getTarget()` is the entity the player locked
+  with T. We draw a direction arrow toward it and, if it has health, a colored
+  health bar with `cur / max` text. If the locked target has been destroyed we
+  clear the lock so the HUD stops tracking a corpse.
+]]
 function HUD:drawLock (a)
   local playerShip = self.player:getControlling()
   local target = self.player:getControlling():getTarget()
-  if not target then return end
+  if not target or target:isDestroyed() then
+    -- Target died (or was swept from the world): drop the lock.
+    if target then playerShip:setTarget(nil) end
+    return
+  end
   local camera = self.gameView.camera
   local center = Vec2f(self.sx / 2, self.sy / 2)
+
+  -- Health bar for the locked target (only if it is damageable)
+  if target.health then
+    local ndc = camera:worldToNDC(target:getPos())
+    local ndcMax = max(abs(ndc.x), abs(ndc.y))
+    if ndcMax <= 1.0 and ndc.z > 0 then
+      local ss = camera:ndcToScreen(ndc)
+      local bw, bh = 120, 10
+      local bx, by = ss.x - bw / 2, ss.y - 40
+      local frac = target:getHealthNormalized()
+      UI.DrawEx.Rect(bx, by, bw, bh, Color(0.1, 0.1, 0.1, 0.7 * a))
+      UI.DrawEx.Rect(bx, by, bw * frac, bh,
+        frac > 0.5 and Color(0.2, 0.9, 0.2, a)
+        or frac > 0.25 and Color(0.9, 0.8, 0.2, a)
+        or Color(0.9, 0.2, 0.2, a))
+      UI.DrawEx.TextAdditive('NovaMono',
+        string.format('%d / %d', target:getHealth(), target.healthMax),
+        14, bx, by - 16, bw, 16, 1, 1, 1, a, 0.0, 0.0)
+    end
+  end
 
   do -- Direction indicator
     local r = 96

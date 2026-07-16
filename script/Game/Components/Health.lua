@@ -1,5 +1,20 @@
 local Entity = require('Game.Entity')
 
+--[[
+  Health component
+  ----------------------------------------------------------------------------
+  Mixin-style component: any Entity can call `self:addHealth(max, rate)` to
+  become damageable. Once health exists:
+
+    * `entity:damage(amount, source)` reduces health and, at 0, fires
+      `Event.Destroyed(source)`. That event is what lets asteroids fragment
+      (see Asteroid.lua) and ships explode (see Explodable.lua).
+    * `Entity.Damaged` is fired on EVERY hit (handy for hit-flashes / sounds).
+
+  The damage event is the ONLY way objects in this game "die". Projectiles
+  (Pulse.lua) and ramming (System.handleRamming) both just call :damage().
+]]
+
 function Entity:addHealth (max, rate)
   assert(not self.health)
   assert(max)
@@ -12,10 +27,21 @@ end
 
 function Entity:damage (amount, source)
   assert(self.health)
-  if self.health <= 0 then return end
+  if self.health <= 0 then return end          -- already dead, ignore further hits
   self.health = max(0, self.health - amount)
+  -- Flip `Config.debug.damageLog` to true in Config.App.lua to print every hit
+  -- to the console (great for verifying which entity is taking damage).
+  if Config.debug.damageLog then
+    printf('[DAMAGE] entity#%d took %.1f dmg (src=%s) -> %d/%d%s',
+      self.id,
+      amount,
+      tostring(source and source.id or 'nil'),
+      self.health, self.healthMax,
+      self.health <= 0 and ' DESTROYED' or '')
+  end
   self:send(Event.Damaged(amount, source))
   if self.health <= 0 then
+    -- Death! Every Event.Destroyed handler now runs (e.g. asteroid fragmenting).
     self:send(Event.Destroyed(source))
   end
 end
@@ -27,7 +53,7 @@ end
 
 function Entity:getHealthNormalized ()
   assert(self.health)
-  return self.health / self.healthMax
+  return self.health / self.healthMax          -- 1.0 = full, 0.0 = dead (for bars)
 end
 
 function Entity:getHealthPercent ()
@@ -60,5 +86,7 @@ end
 
 function Entity:updateHealth (state)
   if self:isDestroyed() then return end
+  -- Passive regeneration (rate is 0 for asteroids/ships, so this is a no-op
+  -- unless you give something a positive rate in addHealth).
   self.health = min(self.healthMax, self.health + state.dt * self.healthRate)
 end

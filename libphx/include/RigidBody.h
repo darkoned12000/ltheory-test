@@ -114,6 +114,7 @@ PHX_API Matrix*     RigidBody_GetToLocalMatrix             (RigidBody*);
 PHX_API Matrix*     RigidBody_GetToWorldMatrix             (RigidBody*);
 PHX_API void        RigidBody_GetVelocity                  (RigidBody*, Vec3f*);
 PHX_API void        RigidBody_GetVelocityA                 (RigidBody*, Vec3f*);
+PHX_API void        RigidBody_SetLinearVelocity             (RigidBody*, Vec3f);
 
 PHX_API void        RigidBody_SetCollidable                (RigidBody*, bool);
 PHX_API void        RigidBody_SetCollisionGroup            (RigidBody*, int);

@@ -622,6 +622,15 @@ void RigidBody_GetVelocityA (RigidBody* self, Vec3f* velocityA) {
   *velocityA = Vec3f_FromBullet(rigidBody->getAngularVelocity());
 }
 
+void RigidBody_SetLinearVelocity (RigidBody* self, Vec3f velocity) {
+  if (RigidBody_IsChild(self))
+    Fatal("RigidBody_SetLinearVelocity: Not supported on children.");
+
+  btRigidBody* rigidBody = self->handle;
+  rigidBody->activate();
+  rigidBody->setLinearVelocity(Vec3f_ToBullet(&velocity));
+}
+
 /* NOTE : We assume the parent has identity position and rotation within the
           compound. */
 

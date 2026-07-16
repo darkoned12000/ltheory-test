@@ -6,6 +6,7 @@ Config.debug = {
   windowSection   = nil,  -- Set to the name of a debug window section to
                           -- collapse all others by default
   timeAccelFactor = 10,
+  damageLog       = false, -- Print [DAMAGE] lines to console for every hit
 }
 
 Config.debug.physics = {
@@ -55,7 +56,7 @@ Config.game = {
   rateOfFire = 10,
 
   autoTarget             = false,
-  pulseDamage            = 5,
+  pulseDamage            = 40,
   pulseSize              = 64,
   pulseSpeed             = 6e2,
   pulseRange             = 1000,

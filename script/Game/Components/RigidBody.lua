@@ -211,6 +211,11 @@ function Entity:getVelocity ()
   return velocity
 end
 
+function Entity:setVelocity (velocity)
+  assert(self.body)
+  self.body:setLinearVelocity(velocity)
+end
+
 function Entity:getVelocityLocal ()
   assert(self.body)
   local velocity = Vec3f()

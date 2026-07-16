@@ -27,6 +27,7 @@ do -- C Definitions
     Matrix*    RigidBody_GetToWorldMatrix            (RigidBody*);
     void       RigidBody_GetVelocity                 (RigidBody*, Vec3f*);
     void       RigidBody_GetVelocityA                (RigidBody*, Vec3f*);
+    void       RigidBody_SetLinearVelocity           (RigidBody*, Vec3f);
     void       RigidBody_SetCollidable               (RigidBody*, bool);
     void       RigidBody_SetCollisionGroup           (RigidBody*, int);
     void       RigidBody_SetCollisionMask            (RigidBody*, int);
@@ -74,6 +75,7 @@ do -- Global Symbol Table
     GetToWorldMatrix            = libphx.RigidBody_GetToWorldMatrix,
     GetVelocity                 = libphx.RigidBody_GetVelocity,
     GetVelocityA                = libphx.RigidBody_GetVelocityA,
+    SetLinearVelocity           = libphx.RigidBody_SetLinearVelocity,
     SetCollidable               = libphx.RigidBody_SetCollidable,
     SetCollisionGroup           = libphx.RigidBody_SetCollisionGroup,
     SetCollisionMask            = libphx.RigidBody_SetCollisionMask,
@@ -122,6 +124,7 @@ do -- Metatype for class instances
       getToWorldMatrix            = libphx.RigidBody_GetToWorldMatrix,
       getVelocity                 = libphx.RigidBody_GetVelocity,
       getVelocityA                = libphx.RigidBody_GetVelocityA,
+      setLinearVelocity           = libphx.RigidBody_SetLinearVelocity,
       setCollidable               = libphx.RigidBody_SetCollidable,
       setCollisionGroup           = libphx.RigidBody_SetCollisionGroup,
       setCollisionMask            = libphx.RigidBody_SetCollisionMask,

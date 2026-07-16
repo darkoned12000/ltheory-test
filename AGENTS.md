@@ -4,11 +4,11 @@
 Limit Theory is an open-world space simulation game engine and game project. It is written primarily in C++ and uses Lua for high-level gameplay logic. The project is structured as a core library (`libphx`) and a main executable (`lt`).
 
 ## Technology Stack
-- **Language:** C++ (Standard C++11)
+- **Language:** C++17 (was C++11; bumped to C++17 in `libphx/script/build/Shared.cmake`)
 - **Scripting:** Lua (LuaJIT 2.1.x, Lua 5.1 ABI — see LuaJIT Status note)
-- **Build System:** CMake
+- **Build System:** CMake (minimum `VERSION 3.16`, set in both `CMakeLists.txt` and `libphx/CMakeLists.txt`)
 - **Configuration:** Python (`configure.py`)
-- **Graphics:** OpenGL, GLEW
+- **Graphics:** OpenGL (context requested as **2.1 compatibility profile** from `src/Main.cpp:15` → `Engine_Init(2,1)`; shaders compiled at **GLSL `#version 130`** / GL 3.0 level via `libphx/src/Shader.cpp:27`), GLEW (**2.3** system lib, exposes GL up to 4.6)
 - **Input/Windowing:** SDL2
 - **Physics:** Bullet Physics
 - **Audio:** FMOD
@@ -71,6 +71,20 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 12. **Runtime Lua errors fixed (regression from a bad prior refactor):** `Game.SocketType` returns the `LTheory_SocketType` table directly, so `SocketType.LTheory_SocketType` was `nil`, and `Sockets.lua` referenced a non-existent `GameSocket` global. Corrected all references to use the module tables directly (e.g. `require('Game.SocketKind')`, local `LTheory_Socket`).
 13. **Mesh degenerate-geometry warnings fixed:** Added `Shape:cleanup(eps)` (welds coincident/near-coincident vertices and drops degenerate/bowtie polys) and call it from `Shape:finalize()` before triangulation. This eliminates the `Bad normal at poly` and `BSP Incoming Mesh Error: Vertex Position Degenerate` warnings at their source. The verbose `getFaceNormal` print is now gated behind `Config.gen.debug` (default `false`). Ships build and display cleanly.
 14. **`LD_LIBRARY_PATH` no longer required:** Added `$ORIGIN`-based `RUNPATH` to `lt64r` and `libphx64r.so` (CMake `BUILD_RPATH`/`INSTALL_RPATH` in `CMakeLists.txt` and `libphx/CMakeLists.txt`), and made `ffi.load` resolve `libphx64.so` via an absolute path derived from the script location (`libphx/script/ffi/libphx.lua`). Also fixed the bundled `libfmod.so`, which carried an executable-stack flag (`GNU_STACK = RWE`) that modern kernels reject on `dlopen` — its `p_flags` was patched to `RW` in place. Added `run.sh` (launcher) and `bootstrap.sh` (one-command install+configure+build) at the repo root. Bumped `cmake_minimum_required` to 3.16 and the C++ standard to C++17 (`libphx/script/build/Shared.cmake`).
+
+### Session: Asteroid Interaction, Targeting & Cleanup (July 2026)
+
+Made asteroids actually destructible and the world clean up after them:
+
+1. **Asteroids are now destructible** (`script/Game/Entities/Asteroid.lua`): they call `addHealth(scale*10, 0)` and register an `Event.Destroyed` handler `fragment` that spawns 2–4 smaller child asteroids (cascading) plus an explosion/dust burst. Previously asteroids had **no health**, so projectiles hit them and did nothing.
+2. **Entity GC added** (`System:sweepDestroyed` in `script/Game/Entities/System.lua`): each `update` removes children that are `deleted` or have `health <= 0`, pulling their rigid bodies out of physics. Without this a "destroyed" asteroid stayed in the world and you could still crash into (and die on) it.
+3. **Ramming damage** (`System:handleRamming`): iterates `physics:getNextCollision()`, maps bodies → entities via `Entity.fromRigidBody`, and deals symmetric damage above a relative-speed threshold.
+4. **Targeting / lock fixed** (`script/Game/Controls/HUD.lua`): `drawTargets` now always computes the lock candidate (was gated behind `Config.ui.showTrackers`, which `Config.Local.lua` sets false — so `T` did nothing). `drawLock` clears the lock when the target dies, and draws a health bar over the locked entity.
+5. **Pulse damage rebalanced** (`Config.App.lua` `pulseDamage` 5 → 40) and asteroid health lowered (`scale*10`) so a few hits actually destroy a rock.
+6. **UI triangle shader bug fixed** (`res/shader/fragment/ui/triangle.glsl`): it wrote to read-only `uniform` `p1/p2/p3` and used `vec3 pos` in `vec2` math → GLSL compile error that aborted the game the first time anything drew a triangle (e.g. the lock arrow). Now uses local `q1/q2/q3` and `pos.xy`.
+7. **`RigidBody_SetLinearVelocity`** added (C++ `libphx/src/RigidBody.cpp`, header, and Lua FFI bindings) so fragments can be kicked outward (`Entity:setVelocity`).
+8. **Console damage log** added (`Config.debug.damageLog` in `Config.App.lua`, used in `Health.lua`).
+9. **Comments added** throughout `Asteroid.lua`, `Health.lua`, `System.lua` (ramming/sweep/spawn), `HUD.lua` (targeting), and the triangle shader, to document the destruction/targeting flow for new contributors.
 
 ### LuaJIT Status (as of July 2026)
 - **Linux runtime:** LuaJIT **2.1.1761786044** via system `libluajit-5.1-dev` (OpenResty branch). This is a 2.1.x line, **not** the original 2.0.1. If 2.0.1 was used at some point it was a Windows-only bundled binary; nothing in the current tree pins 2.0.1.
@@ -169,14 +183,85 @@ The engine prepends `#version 130\n` to all shaders via `glShaderSource(self, 2,
 
 **GLSL include chain:** `vertex.glsl` declares all standard uniforms (`mView`, `mProj`, `mViewInv`, `mProjInv`, `eye`, `mWorld`, `mWorldIT`) and the `VS_BEGIN`/`VS_END` macros. `fragment.glsl` declares `eye`, `mWorldIT`, `envMap`, `irMap`, `starColor`, `starDir`, and the `FRAGMENT_CORRECT_DEPTH` macro. `common.glsl` defines `HIGHQ`/`LOWQ`, `farPlane`, and `Fcoef`.
 
+### Graphics / OpenGL Context (how GL is initialized)
+
+This is the most undocumented part of the engine's graphics stack. Captured here so new features can be added safely.
+
+- **Context request is explicit and pinned in code** (`libphx/src/Engine.cpp:71-81`, inside `Engine_Init`):
+  ```cpp
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, glVersionMajor);   // = 2
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, glVersionMinor);   // = 1
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
+                      SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+  // ... plus ACCELERATED_VISUAL, 8/8/8 color, DOUBLEBUFFER, DEPTH_SIZE 24
+  ```
+  The major/minor come from the caller `Engine_Init(2, 1)` in `src/Main.cpp:15`. So the engine **requests an OpenGL 2.1 compatibility-profile context**.
+- **Window + context creation** happens in `libphx/src/Window.cpp:18-19` (`SDL_CreateWindow` then `SDL_GL_CreateContext`), and `OpenGL_Init()` (`libphx/src/OpenGL.cpp:6-12`) runs `glewInit()` immediately after.
+- **Shaders are compiled at GLSL `#version 130`** (`libphx/src/Shader.cpp:27`) — that is **OpenGL 3.0** GLSL. There is a **version skew**: the C++ side requests a 2.1 context, but the shaders target 3.0. On Linux this works in practice because GLX/Mesa grant a 3.x+ context when a 2.1 compat profile is requested; on stricter drivers it could fail to compile `#version 130` shaders. This is the root reason the docs say "bump to 330" — the *context* should be raised to match (or exceed) the *shader* level.
+- **GLEW is system 2.3** (link line `libphx/CMakeLists.txt:88`; header confirms `GLEW_VERSION_MAJOR 2` / `MINOR 3`). GLEW 2.3 exposes **every** OpenGL extension through GL 4.6, so any modern GL feature (compute shaders, SSBOs, tessellation, bindless textures, PBR) is already callable — GLEW will have it loaded after `glewInit()`. No GLEW upgrade is needed to use new GL features.
+
+#### Adding new OpenGL / GLSL features later
+1. **Raise the context to match the shaders first** — change `Engine_Init(2, 1)` in `src/Main.cpp:15` to e.g. `Engine_Init(3, 3)` (or `4, 5` for compute). Keep `SDL_GL_CONTEXT_PROFILE_COMPATIBILITY` so legacy calls in `OpenGL.cpp`/`OpenGL_Init` still work. This makes the GL version explicit and predictable instead of driver-dependent.
+2. **Bump the shader `#version`** in `libphx/src/Shader.cpp:27` from `"#version 130\n"` to `"#version 330\n"` (or higher) so new GLSL syntax (`layout(location=)`, `imageLoad/Store`, compute) is available. The shaders are already 130-clean, so 330 is low-risk.
+3. **GLEW needs no change** — just call the new GL function; GLEW 2.3 has it. Add `glGetError()` checks via the existing `OpenGL_CheckError()` macro if unsure.
+4. **Note on linking:** GL/GLEW are linked as bare `-lGL -lGLEW` (`libphx/CMakeLists.txt:87-88`), resolved from system paths. For a more robust/self-documenting build you *could* add `find_package(OpenGL REQUIRED)` + `find_package(GLEW REQUIRED)` and use the imported targets `OpenGL::GL` / `GLEW::GLEW`, but it is not required for error-free builds.
+
+### Gameplay Systems (Lua) — Asteroids, Damage, Targeting
+
+These are the systems that make "blow up an asteroid" work. They live entirely in `script/Game/`.
+
+#### Damage & Destruction (the event model)
+- Every damageable entity calls `Entity:addHealth(max, rate)` (in `script/Game/Components/Health.lua`). `rate=0` means no regen.
+- To hurt something: `entity:damage(amount, source)`. When health hits 0 it fires `Event.Destroyed(source)`. This is the **only** way objects die — projectiles (`Pulse.lua`) and ramming (`System.handleRamming`) both just call `:damage()`.
+- Listen for death with `entity:register(Event.Destroyed, handler)`. Asteroids use this to fragment (`script/Game/Entities/Asteroid.lua`).
+- Console debug: set `Config.debug.damageLog = true` in `script/Config.App.lua` to print every hit as `[DAMAGE] entity#id took X ...`.
+
+#### Asteroids (`script/Game/Entities/Asteroid.lua`)
+- `Asteroid = subclass(Entity, ...)` builds a procedurally-generated mesh (`Gen.Asteroid(seed)`, cached per seed), a rigid body, and a visible LOD mesh.
+- Health = `max(15, scale*10)` — intentionally low so a few weapon hits or one ram destroys it.
+- Destruction handler `fragment(self, source)`: if `scale > minFragmentScale` (0.5) it spawns 2–4 child asteroids at half scale with a random outward kick; always spawns an explosion/dust burst (`Entities.Explosion`, which fades on its own).
+- The child asteroids are themselves full `Asteroid`s, so they cascade (shoot a fragment → it fragments again → ... → too small → just explodes).
+
+#### Entity cleanup / "why dead things vanished"
+- The engine has **no automatic entity GC**. `Entity:delete()` only sets `self.deleted = true`; `Health.damage` only flips health to 0. Historically a "destroyed" asteroid kept its rigid body in the physics world (you could still crash into it).
+- Fixed in `System:sweepDestroyed()` (called each `System:update`): it removes any child that is `deleted` or has `health <= 0`. `removeChild` triggers `RemovedFromParent`, which for a RigidBody calls `physics:removeRigidBody`, pulling it out of the simulation. Iterate backwards because `removeChild` shrinks the array.
+
+#### Ramming (`System:handleRamming`)
+- After `physics:update`, `getNextCollision()` yields each contacting rigid-body pair. Map bodies → entities via `Entity.fromRigidBody`, compute relative speed, and if `> rammingMinSpeed` (25) deal symmetric damage `(relSpeed - 25) * 2.0` to both. Enough damage destroys the asteroid (→ fragment → swept).
+
+#### Targeting & HUD (`script/Game/Controls/HUD.lua`)
+- `self.targets` is a `TrackingList` (`script/Util/TrackingList.lua`) of every alive, damageable entity in the system.
+- `drawTargets` draws brackets (gated by `Config.ui.showTrackers`) AND picks the lock candidate = alive entity nearest screen center within 128px. Press **`T`** (`ShipBindings.LockTarget`) to lock it; **`G`** clears.
+- `drawLock` draws a direction arrow + a colored health bar (`cur / max`) over the locked target. If the target is destroyed it clears the lock.
+- NOTE: `Config.Local.lua` sets `Config.ui.showTrackers = false`, which hides brackets but locking still works. Set it to `true` to see target brackets.
+
+#### Building a scene full of asteroids
+In `script/App/LTheory.lua:generate()` (or any app):
+```lua
+self.system:spawnAsteroidField(2000, 20)   -- count, oreCount
+```
+Or spawn one manually:
+```lua
+local a = Entities.Asteroid(seed, scale)
+a:setPos(Vec3f(x, y, z))
+self.system:addChild(a)                     -- addChild = put it in the live world
+```
+Asteroid `scale` drives both visual size and health. See `System:spawnAsteroidField` for field-clustering logic.
+
+#### Shaders & interaction
+- Shaders live in `res/shader/` (vertex + fragment `.glsl`). Loaded at runtime via `Cache.Shader(vs, fs)` (e.g. `Cache.Shader('identity', 'sdf/asteroid')`). The engine prepends `#version 130` and runs a custom preprocessor (`#include`, `#autovar`).
+- To draw UI: `UI.DrawEx.*` (`Rect`, `TextAdditive`, `Tri`, `Arrow`, `Wedge`, ...). `DrawEx.Arrow`/`Tri` compile `fragment/ui/triangle.glsl` — a UI triangle SDF. That shader had a latent GLSL bug (writing to read-only uniforms + `vec3`/`vec2` mismatch) that crashed the first time anything drew a triangle; it is now fixed.
+- To create a new shader: copy an existing pair, `#include` the shared headers (`vertex.glsl`/`fragment.glsl`), declare uniforms with `uniform` in an include and bind them with `#autovar`, write to `out vec4 fragData0/1/2` for deferred material passes or your own `out vec4` for UI/effect passes. Keep GLSL 130 syntax (`in`/`out`/`texture()`).
+
 ### Modernization Plan — What To Update
 
 This engine is ~10 years old. The goal is to get it running reliably on modern hardware and make it easier to extend. Below is a prioritized breakdown of what's worth updating and what to leave alone.
 
 #### Worth Doing (High Impact, Low Risk)
 
-1. **Bump `#version` to 330** — The engine hardcodes `#version 130` in `Shader.cpp:27`. GLSL 330 gives proper `in`/`out` support, `texture()` as the standard sampler, and better compiler support on modern GPUs. All shaders are now GLSL 130+ compatible (items 2-4 below are complete).
-   - **Note:** `README.md` previously claimed "GLSL 330 already done" — that is inaccurate. `Shader.cpp` still emits `#version 130`, and shaders use `out vec4 fragData0/1/2` (G-buffer) rather than `layout(location=N)` qualifiers. The GLSL 120→130 modernization is complete; the 330 bump remains a TODO.
+ 1. **Bump `#version` to 330** — The engine hardcodes `#version 130` in `Shader.cpp:27`. GLSL 330 gives proper `in`/`out` support, `texture()` as the standard sampler, and better compiler support on modern GPUs. All shaders are now GLSL 130+ compatible (items 2-4 below are complete).
+    - **Note:** `README.md` previously claimed "GLSL 330 already done" — that is inaccurate. `Shader.cpp` still emits `#version 130`, and shaders use `out vec4 fragData0/1/2` (G-buffer) rather than `layout(location=N)` qualifiers. The GLSL 120→130 modernization is complete; the 330 bump remains a TODO.
+    - **Context skew to fix alongside it:** the C++ side requests an **OpenGL 2.1 compatibility-profile context** (`Engine_Init(2, 1)` in `src/Main.cpp:15`), but the shaders are GLSL 3.0 (`#version 130`). Before/with the 330 bump, raise the requested context to `Engine_Init(3, 3)` (or higher) so the context matches the shader level. See the "Graphics / OpenGL Context" section above for the full picture.
 
 2. **Replace corrupted texture assets** — Nearly all textures in `res/` are corrupted 130-byte placeholders. Replace with real assets or procedural generation. The engine already handles missing textures gracefully with magenta fallbacks.
 
@@ -196,7 +281,7 @@ This engine is ~10 years old. The goal is to get it running reliably on modern h
 
 4. **Replacing FMOD** — Proprietary but functional. Replacing with OpenAL or PipeWire would require rewriting the entire audio system. Not a priority for getting the engine running.
 
-5. **Updating C++ standard** — The codebase is C++11. Updating to C++17/20 would require compiler and build system changes with no functional benefit for a game engine of this type.
+ 5. **Updating C++ standard** — Already done: bumped from C++11 to C++17 in `libphx/script/build/Shared.cmake`. No further standard bump is worth doing for a game engine of this type.
 
 6. **Migrating from CMake** — The build system works. Replacing with Meson, Bazel, or similar is churn without gain.
 
