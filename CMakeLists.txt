@@ -2,8 +2,10 @@ cmake_minimum_required (VERSION 3.16)
 project (LTheory)
 set (CMAKE_BUILD_TYPE Release)
 include (libphx/script/build/Shared.cmake)
-
-add_subdirectory (libphx)
+add_subdirectory(libphx)
+# removed test executable from root CMakeLists; add subdirectory after libphx
+#add_subdirectory(test)
+# nothing – test target is built in its own folder, no need to set properties here
 
 add_executable (lt "src/Main.cpp")
 phx_configure_output_dir (lt)
