@@ -16,9 +16,9 @@ void LineSegment_FromRay (Ray const* ray, LineSegment* out) {
 cstr LineSegment_ToString (LineSegment* self) {
   static char buffer[512];
   snprintf(buffer, (size_t) Array_GetSize(buffer),
-    "p0:%s p1:%s",
-    Vec3f_ToString(&self->p0),
-    Vec3f_ToString(&self->p1)
+    "p0:(%.4f, %.4f, %.4f) p1:(%.4f, %.4f, %.4f)",
+    self->p0.x, self->p0.y, self->p0.z,
+    self->p1.x, self->p1.y, self->p1.z
   );
   return buffer;
 }

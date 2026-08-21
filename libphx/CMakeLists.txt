@@ -104,4 +104,14 @@ elseif (LINUX)
     INSTALL_RPATH_USE_ORIGIN TRUE
     INSTALL_RPATH "$ORIGIN;$ORIGIN/..;$ORIGIN/../ext/lib/${PLATARCH}")
 
+  # The Lua FFI loader (libphx/script/ffi/libphx.lua) dlopens "libphx${ARCH}.so"
+  # in release builds, but the Release output name carries a suffix
+  # (e.g. libphx64r.so). Keep a relative symlink so ffi.load works out of the box.
+  add_custom_command (TARGET phx POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+      -D LINK_DIR=${CMAKE_SOURCE_DIR}/bin
+      -D LINK_NAME=libphx${ARCH}.so
+      -D REAL_NAME=$<TARGET_FILE:phx>
+      -P ${CMAKE_CURRENT_LIST_DIR}/script/build/make_libphx_symlink.cmake)
+
 endif ()

@@ -16,6 +16,7 @@ if len(sys.argv) > 1:
         shutil.rmtree('bin', ignore_errors = True)
         shutil.rmtree('build', ignore_errors = True)
     elif sys.argv[1] == 'run':
-        subprocess.call(['bin/lt64.exe'] + sys.argv[2:])
+        exe = 'bin/lt64.exe' if os.name == 'nt' else 'bin/lt64r'
+        subprocess.call([exe] + sys.argv[2:])
 else:
     subprocess.call(['cmake', '-S', './', '-B', './build'])

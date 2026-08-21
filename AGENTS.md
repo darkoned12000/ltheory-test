@@ -8,12 +8,35 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 - **Scripting:** Lua (LuaJIT 2.1.x, Lua 5.1 ABI — see LuaJIT Status note)
 - **Build System:** CMake (minimum `VERSION 3.16`, set in both `CMakeLists.txt` and `libphx/CMakeLists.txt`)
 - **Configuration:** Python (`configure.py`)
-- **Graphics:** OpenGL (context requested as **2.1 compatibility profile** from `src/Main.cpp:15` → `Engine_Init(2,1)`; shaders compiled at **GLSL `#version 130`** / GL 3.0 level via `libphx/src/Shader.cpp:27`), GLEW (**2.3** system lib, exposes GL up to 4.6)
+- **Graphics:** OpenGL (context requested as **2.1 compatibility profile** from `src/Main.cpp:15` → `Engine_Init(2,1)`; shaders compiled at **GLSL `#version 130`** / GL 3.0 level via `libphx/src/Shader.cpp:27`), GLEW (**2.2.0** system lib — header locally patched to report 2.3; exposes GL up to 4.6)
 - **Input/Windowing:** SDL2
 - **Physics:** Bullet Physics
 - **Audio:** FMOD
 - **Compression:** LZ4
 - **Fonts:** FreeType
+
+## Engine Library Versions (verified on this host, 2026-08-20)
+
+| Library | Role in engine | Current version | Source | Latest / upgrade path | Notes |
+|---|---|---|---|---|---|
+| GCC | C++ compiler | 15.2.0 | system (Debian) | current distro stable (GCC 15.x line) | builds clean at `-O3 -msse4` |
+| CMake | build system | 4.2.3 | system | current distro stable | project floor `cmake_minimum_required(VERSION 3.16)` works on CMake 4.x |
+| Python | `configure.py` wrapper | 3.13.12 | system | current stable (3.13.x) | configure-time only |
+| Mesa | OpenGL ICD (GL runtime) | DRI 26.2.0 | system (`libgl1-mesa-dri`) | current distro package | capable of **GL 4.6**; engine still *requests* a 2.1 compat context |
+| GLU | legacy OpenGL utility | 9.0.2 (Mesa) | system | none — GLU is frozen/deprecated upstream | linked, minimal use |
+| GLEW | extension loader | **2.2.0** (`libglew-dev 2.2.0-4+b3`) | system | 2.2.0 is the last official release (project dormant) | `/usr/include/GL/glew.h` locally patched to report 2.3 (dpkg md5 mismatch); functionally identical, exposes all GL up to 4.6 |
+| SDL2 | windowing / input | 2.32.10 (`libsdl2-dev 2.32.10+dfsg-6`) | system | 2.32.x is the final maintenance line of SDL2 (SDL3 is the successor) | SDL version assert in `Engine.cpp` disabled for newer SDL2 (build fix #7) |
+| Bullet Physics | physics | 3.24+dfsg-5 | system (`libbullet-dev`) | upstream latest ≈ 3.25 ("PyBullet 3.2.5" release); upgrade optional | bundled 2.87 binaries moved to `bullet_backup/`; headers and lib must stay ABI-matched (see "The Bullet Physics Fix") |
+| FMOD | audio | bundled (header `FMOD_VERSION 0x00011001` → "1.16.1" per the header's own format comment) | `libphx/ext/lib/linux64` + `ext/include` | proprietary — new versions only via SDK download from fmod.com | soname symlinks created (build fix #5); executable-stack flag patched out of bundled `libfmod.so` |
+| LZ4 | compression | 1.10.0-6 | system (`liblz4-dev`) | v1.10.0 is the latest upstream release — **up to date** | upgraded since July notes (was 1.9.4) |
+| FreeType | fonts | 2.14.1+dfsg-2 | system (`libfreetype-dev`) | 2.14.x is current stable — up to date | upgraded since July notes (was 2.13.2) |
+| LuaJIT | scripting + FFI bindings | `libluajit-5.1-dev 2.1.0+openresty20251030-1+b1` (OpenResty fork of LuaJIT 2.1; runtime reports LuaJIT 2.1.x, Lua 5.1 ABI) | system | upstream LuaJIT 2.1 is EOL (last official: 2.1-beta3); OpenResty maintains the 2.1 line — build from pinned source for reproducibility | **do not replace with standard Lua** — all C bindings go through `ffi.cdef`/`ffi.load`. Package refreshed since July notes; re-run FFI smoke test after any change |
+| stb_image | image decoding (PNG/TGA) | v2.30 (bundled, header-only) | `libphx/ext/include/stb` | v2.30 is the latest upstream snapshot (stb does not use GitHub Releases) — **up to date** | updated from v1.48 in this session |
+
+**OpenGL / GLSL version status (the two values that matter for the `upgradeOpenGL.md` migration):**
+- **OpenGL context:** requested as **2.1 compatibility profile** — `Engine_Init(2,1)` at `src/Main.cpp:15` → `SDL_GL_SetAttribute(...)` in `libphx/src/Engine.cpp`. The Mesa 26.2 driver is *capable* of GL 4.6, but the engine never asks for more than 2.1.
+- **GLSL:** hard-coded **`#version 130`** (= GLSL 1.30 = OpenGL 3.0 level) at `libphx/src/Shader.cpp:27`. Note: GLSL "130" is *not* "3.30" — the GLSL that matches OpenGL 3.3 is **330**.
+- So **neither is at 3.3/330 yet** — that is exactly Phase 1 of `upgradeOpenGL.md` (`Engine_Init(3,3)` + `#version 330`). The driver/GLEW side already supports the full 3.3 → 4.6 ladder; only the two hard-coded values (and shader compatibility) stand in the way.
 
 ## Codebase Structure
 - `src/`: Main entry point and high-level game code.
@@ -198,12 +221,12 @@ This is the most undocumented part of the engine's graphics stack. Captured here
   The major/minor come from the caller `Engine_Init(2, 1)` in `src/Main.cpp:15`. So the engine **requests an OpenGL 2.1 compatibility-profile context**.
 - **Window + context creation** happens in `libphx/src/Window.cpp:18-19` (`SDL_CreateWindow` then `SDL_GL_CreateContext`), and `OpenGL_Init()` (`libphx/src/OpenGL.cpp:6-12`) runs `glewInit()` immediately after.
 - **Shaders are compiled at GLSL `#version 130`** (`libphx/src/Shader.cpp:27`) — that is **OpenGL 3.0** GLSL. There is a **version skew**: the C++ side requests a 2.1 context, but the shaders target 3.0. On Linux this works in practice because GLX/Mesa grant a 3.x+ context when a 2.1 compat profile is requested; on stricter drivers it could fail to compile `#version 130` shaders. This is the root reason the docs say "bump to 330" — the *context* should be raised to match (or exceed) the *shader* level.
-- **GLEW is system 2.3** (link line `libphx/CMakeLists.txt:88`; header confirms `GLEW_VERSION_MAJOR 2` / `MINOR 3`). GLEW 2.3 exposes **every** OpenGL extension through GL 4.6, so any modern GL feature (compute shaders, SSBOs, tessellation, bindless textures, PBR) is already callable — GLEW will have it loaded after `glewInit()`. No GLEW upgrade is needed to use new GL features.
+- **GLEW is system 2.2.0** (package `libglew-dev 2.2.0-4+b3`; the header at `/usr/include/GL/glew.h` was locally patched to report `MINOR 3`, so it *appears* as "2.3" — functionally identical). GLEW 2.2 exposes **every** OpenGL extension through GL 4.6, so any modern GL feature (compute shaders, SSBOs, tessellation, bindless textures, PBR) is already callable — GLEW will have it loaded after `glewInit()`. No GLEW upgrade is needed to use new GL features (2.2.0 is the last official release).
 
 #### Adding new OpenGL / GLSL features later
 1. **Raise the context to match the shaders first** — change `Engine_Init(2, 1)` in `src/Main.cpp:15` to e.g. `Engine_Init(3, 3)` (or `4, 5` for compute). Keep `SDL_GL_CONTEXT_PROFILE_COMPATIBILITY` so legacy calls in `OpenGL.cpp`/`OpenGL_Init` still work. This makes the GL version explicit and predictable instead of driver-dependent.
 2. **Bump the shader `#version`** in `libphx/src/Shader.cpp:27` from `"#version 130\n"` to `"#version 330\n"` (or higher) so new GLSL syntax (`layout(location=)`, `imageLoad/Store`, compute) is available. The shaders are already 130-clean, so 330 is low-risk.
-3. **GLEW needs no change** — just call the new GL function; GLEW 2.3 has it. Add `glGetError()` checks via the existing `OpenGL_CheckError()` macro if unsure.
+3. **GLEW needs no change** — just call the new GL function; GLEW (2.2.0, patched header) has it. Add `glGetError()` checks via the existing `OpenGL_CheckError()` macro if unsure.
 4. **Note on linking:** GL/GLEW are linked as bare `-lGL -lGLEW` (`libphx/CMakeLists.txt:87-88`), resolved from system paths. For a more robust/self-documenting build you *could* add `find_package(OpenGL REQUIRED)` + `find_package(GLEW REQUIRED)` and use the imported targets `OpenGL::GL` / `GLEW::GLEW`, but it is not required for error-free builds.
 
 #### GLSL 330 Bump — Attempted & Reverted (July 2026)
@@ -250,6 +273,19 @@ A `grep` confirms **zero** remaining `gl_Vertex`/`gl_MultiTexCoord` in `res/shad
 **Remaining for a future 330 bump (deferred — not needed for gameplay):**
 - Step 2: convert ~73 fragment shaders from `gl_FragColor`/`gl_FragData[]` to explicit `out vec4` (G-buffer material shaders via `deferred.glsl` already done; the 73 are UI/filter/effect/compute passes). ~35 of those also still call `texture2D` (deprecated but legal in 130).
 - Then bump `Engine_Init(2,1)`→`(3,3)` and `#version 130`→`330` **together** (attempted separately before and reverted — see "GLSL 330 Bump — Attempted & Reverted"). Rebuild + watch stderr for `Failed to compile shader`.
+
+### Bytes `-Wstringop-overflow` Fix (August 2026)
+
+`libphx/src/Bytes.cpp` used a **flexible-array idiom with a fake `char data[8]` placeholder** — the real payload lives inline right after the header in the same allocation, and every accessor computed addresses as `&self->data + cursor`. GCC's `-Wstringop-overflow` (enabled at `-O3`) mis-analyzed those payload copies as out-of-bounds writes past the declared 8-byte array, producing **16 spurious warnings** on `Bytes_Write`/`Bytes_Read`/`Bytes_WriteU64` etc.
+
+The `[8]` was sized to cover the largest single store (8 bytes) to quiet the warning, but it only shifted where GCC complained — it did not fix the root cause: the declared struct bounds were a lie.
+
+**Fix applied:** replaced the placeholder with an **explicit `char* data` pointer**.
+- `struct Bytes { uint32 size; uint32 cursor; char* data; }` (still 16 bytes total, so the payload offset and binary layout are unchanged).
+- `Bytes_Create` allocates `sizeof(Bytes) + size` and sets `self->data = (char*)(self + 1)`.
+- All accessors now use `self->data + cursor` instead of `&self->data + cursor`; `Bytes_GetData` returns `self->data`.
+
+**Verified:** full rebuild is warning-free for `Bytes.cpp` and links cleanly. No ABI change — the payload still starts at offset 16, and nothing outside `Bytes.cpp` did manual pointer arithmetic into the struct (all external access goes through `Bytes_GetData`).
 
 ### Gameplay Systems (Lua) — Asteroids, Damage, Targeting
 

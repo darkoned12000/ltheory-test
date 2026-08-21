@@ -250,7 +250,6 @@ void ImGui_EndScrollFrame () {
   float virtualSize = self.cursor.y - layout->lower.y;
   float scrollMax = virtualSize - layout->size.y;
   Vec2f scrollPos = Vec2f_Create(layout->lower.x + layout->size.x, layout->lower.y);
-  Vec2f scrollSize = Vec2f_Create(self.style->scrollBarSize.x, layout->size.y);
 
   uint64 handleHash = HashNext();
 
@@ -359,7 +358,6 @@ bool ImGui_ButtonEx (cstr label, float sx, float sy) {
   Vec2f labelPos = Vec2f_Create(
     self.widget->pos.x + 0.5f * (self.widget->size.x - bound.x),
     self.widget->pos.y + 0.5f * (self.widget->size.y - bound.y));
-  Vec2f labelSize = Vec2f_Create(bound.x, bound.y);
 
   EmitText(
     self.style->font,

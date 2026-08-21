@@ -93,28 +93,6 @@ static HmGuiData* HmGui_GetData (HmGuiGroup* g) {
 
 /* -------------------------------------------------------------------------- */
 
-static void HmGui_PushClipRect (HmGuiGroup* g) {
-  HmGuiClipRect* rect = MemNew(HmGuiClipRect);
-  rect->prev = self.clipRect;
-  rect->lower = g->pos;
-  rect->upper = Vec2f_Add(g->pos, g->size);
-  if (rect->prev) {
-    rect->lower.x = Max(rect->lower.x, rect->prev->lower.x);
-    rect->lower.y = Max(rect->lower.y, rect->prev->lower.y);
-    rect->upper.x = Min(rect->upper.x, rect->prev->upper.x);
-    rect->upper.y = Min(rect->upper.y, rect->prev->upper.y);
-  }
-  self.clipRect = rect;
-}
-
-static void HmGui_PopClipRect () {
-  HmGuiClipRect* rect = self.clipRect;
-  self.clipRect = rect->prev;
-  MemFree(rect);
-}
-
-/* -------------------------------------------------------------------------- */
-
 static void HmGui_ComputeSize (HmGuiGroup* g) {
   for (HmGuiWidget* e = g->head; e; e = e->next)
     if (e->type == Widget_Group)

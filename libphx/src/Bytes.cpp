@@ -6,10 +6,15 @@
 
 #include <stdio.h>
 
+// The payload lives inline in the same allocation, immediately after the
+// header: Bytes_Create allocates sizeof(Bytes) + size as one block and points
+// `data` at (self + 1). Using an explicit pointer (instead of a fake
+// `char data[8]` placeholder) keeps the declared struct bounds honest, so
+// GCC's -Wstringop-overflow cannot mis-analyze payload copies as OOB writes.
 struct Bytes {
   uint32 size;
   uint32 cursor;
-  char data;
+  char* data;
 };
 
 static void Bytes_CheckLZ4Version () {
@@ -23,9 +28,10 @@ static void Bytes_CheckLZ4Version () {
 }
 
 Bytes* Bytes_Create (uint32 size) {
-  Bytes* self = (Bytes*)MemAlloc(2 * sizeof(uint32) + size);
+  Bytes* self = (Bytes*)MemAlloc(sizeof(Bytes) + size);
   self->size = size;
   self->cursor = 0;
+  self->data = (char*)(self + 1);
   return self;
 }
 
@@ -48,7 +54,7 @@ void Bytes_Free (Bytes* self) {
 }
 
 void* Bytes_GetData (Bytes* self) {
-  return &self->data;
+  return self->data;
 }
 
 uint32 Bytes_GetSize (Bytes* self) {
@@ -124,18 +130,18 @@ void Bytes_SetCursor (Bytes* self, uint32 cursor) {
 }
 
 void Bytes_Read (Bytes* self, void* data, uint32 len) {
-  MemCpy(data, &self->data + self->cursor, len);
+  MemCpy(data, self->data + self->cursor, len);
   self->cursor += len;
 }
 
 void Bytes_Write (Bytes* self, void const* data, uint32 len) {
-  MemCpy(&self->data + self->cursor, data, len);
+  MemCpy(self->data + self->cursor, data, len);
   self->cursor += len;
 }
 
 void Bytes_WriteStr (Bytes* self, cstr data) {
   size_t len = StrLen(data);
-  MemCpy(&self->data + self->cursor, data, len);
+  MemCpy(self->data + self->cursor, data, len);
   self->cursor += (uint32)len;
 }
 
@@ -153,13 +159,13 @@ void Bytes_WriteStr (Bytes* self, cstr data) {
 
 #define X(T, N)                                                                \
   T Bytes_Read##N(Bytes* self) {                                               \
-    T value = *(T*)(&self->data + self->cursor);                               \
+    T value = *(T*)(self->data + self->cursor);                               \
     self->cursor += (uint32)sizeof(T);                                         \
     return value;                                                              \
   }                                                                            \
                                                                                \
   void Bytes_Write##N(Bytes* self, T value) {                                  \
-    *(T*)(&self->data + self->cursor) = value;                                 \
+    *(T*)(self->data + self->cursor) = value;                                 \
     self->cursor += (uint32)sizeof(T);                                         \
   }
 
@@ -169,13 +175,13 @@ READWRITE_X
 void Bytes_Print (Bytes* self) {
   printf("%d bytes:\n", self->size);
   for (uint32 i = 0; i < self->size; ++i)
-    putchar(*(&self->data + i));
+    putchar(*(self->data + i));
 }
 
 void Bytes_Save (Bytes* self, cstr path) {
   File* file = File_Create(path);
   if (!file)
     Fatal("Bytes_Save: Failed to open file '%s' for writing", path);
-  File_Write(file, &self->data, self->size);
+  File_Write(file, self->data, self->size);
   File_Close(file);
 }

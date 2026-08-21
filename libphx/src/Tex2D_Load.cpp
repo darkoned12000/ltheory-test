@@ -4,7 +4,8 @@
 #pragma warning(push)
 #pragma warning(disable:4242)
 #pragma warning(disable:4244)
-//https://github.com/nothings/stb/issues/334
+// stb_image is vendored third-party code. MSVC trips C4242/C4244 on its signed/unsigned
+// conversions; GCC/Clang need no suppression (stb v2.30 compiles clean).
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
 #pragma warning(pop)
