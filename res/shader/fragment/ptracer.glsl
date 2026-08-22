@@ -1,5 +1,7 @@
-#version 450
+#extension GL_ARB_shading_language_420pack : enable
 
+
+layout(location = 0) out vec4 fragColor;
 in vec2 uv;
 uniform float time;
 uniform vec2 mouse;
@@ -66,7 +68,7 @@ bool box ( in Ray r, inout Hit hit, vec3 o, vec3 s ) {
   return true;
 }
 
-#if 1
+#if 0
 SCENE_DESC
 #else
 
@@ -105,6 +107,7 @@ SCENE_DESC
   };
 
   #define NBOXES 0
+  Box boxes[1];
 
 #endif
 
@@ -174,5 +177,5 @@ void main () {
   vec2 uvp = 2.0 * (uv * res + vec2(dx, dy)) / res  - 1.0;
   Ray ray = { eye, normalize(1.5 * look + uvp.x * right + uvp.y * up), -1 };
   vec4 c = gather(ray, offset);
-  gl_FragColor = c;
+  fragColor = c;
 }

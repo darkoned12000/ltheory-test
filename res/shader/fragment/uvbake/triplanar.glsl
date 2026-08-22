@@ -2,6 +2,8 @@
 #include texturing
 #include math
 
+
+layout(location = 0) out vec4 fragColor;
 uniform sampler2D src;
 
 void main() {
@@ -10,5 +12,5 @@ void main() {
   vec3 c = sampleTriplanar(src, uvw).xyz;
   c *= pow2(sampleTriplanar(src, uvw * 4.0).xyz);
   c = sqrt(c);
-  gl_FragColor = vec4(c, 1.0);
+  fragColor = vec4(c, 1.0);
 }

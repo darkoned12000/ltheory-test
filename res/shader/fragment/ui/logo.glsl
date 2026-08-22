@@ -2,6 +2,8 @@
 #include noise
 #include color
 
+
+layout(location = 0) out vec4 fragColor;
 uniform sampler2D src;
 uniform vec2 size;
 uniform float alpha;
@@ -24,5 +26,5 @@ void main() {
   float a = 1.0;
   a *= 1.0 - exp(-6.0 * abs(1.0 - abs(2.0 * uv.y - 1.0)));
 
-  gl_FragColor = vec4(c.xyz, a * alpha);
+  fragColor = vec4(c.xyz, a * alpha);
 }

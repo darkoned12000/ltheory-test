@@ -8,6 +8,8 @@
 
 #define ENABLE_HORIZON 0
 
+
+layout(location = 0) out vec4 outColor;
 uniform vec3 color;
 uniform sampler1D lutR;
 uniform sampler1D lutG;

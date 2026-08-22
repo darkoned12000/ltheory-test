@@ -5,6 +5,8 @@
 #include texcube
 #include quat
 
+
+layout(location = 0) out vec4 fragColor;
 uniform float seed;
 uniform vec3 color;
 uniform vec4 rot;
@@ -55,5 +57,5 @@ void main() {
   // mult += 0.5 * emit;
   mult *= scatter;
   radiance.xyz += mult * (1.0 - exp(-exp(0.2 * color) * color));
-  gl_FragColor = radiance;
+  fragColor = radiance;
 }

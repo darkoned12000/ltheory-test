@@ -28,7 +28,7 @@ void main() {
   vec3 diff = texture(texDiffuseUV, uv).xyz;
 
 #if 1
-  diff *= mix(vec3(1.0 - edgeDarkness), vec3(1.0), exp(-sqrt(1024.0 * length(N - normal)));
+  diff *= mix(vec3(1.0 - edgeDarkness), vec3(1.0), exp(-sqrt(1024.0 * length(N - normal))));
 #endif
 
   float gloss = 1.0 - sampleTriplanar(texSpec, uvw).x;

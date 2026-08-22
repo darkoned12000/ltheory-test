@@ -1,5 +1,7 @@
 #include fragment
 
+
+layout(location = 0) out vec4 outColor;
 uniform float radius;
 uniform vec2 size;
 uniform vec4 color;

@@ -12,7 +12,7 @@ extern "C" {
 #endif
 
 int main (int argc, char* argv[]) {
-  Engine_Init(3, 2);
+  Engine_Init(3, 3);
   Lua* lua = Lua_Create();
   char const* entryPoint = "./script/Main.lua";
 

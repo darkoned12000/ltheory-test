@@ -1,3 +1,5 @@
+
+layout(location = 0) out vec4 fragColor;
 in vec2 uv;
 
 uniform int sDim;
@@ -33,5 +35,5 @@ void main() {
     }
   }
 
-  gl_FragColor.x = exp(-2.0 * sqrt(total));
+  fragColor.x = exp(-2.0 * sqrt(total));
 }

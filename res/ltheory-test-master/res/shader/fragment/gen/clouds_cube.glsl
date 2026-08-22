@@ -4,6 +4,8 @@
 #include noise
 #include texcube
 
+
+layout(location = 0) out vec4 fragColor;
 void main() {
   vec3 dir = cubeMapDir(uv);
   float xp = 2.0 * pow2(fSmoothNoise(dir + vec3(2, 3, 5), 4, 1.8)) - 1.0;
@@ -20,5 +22,5 @@ void main() {
   d = smoothstep(0.0, 1.0, max(0.0, d - thresh));
   // d *= frCellNoise(dir, 2.0 * seed + 33.0, 8, lac);
   d = saturate(d);
-  gl_FragColor = vec4(d);
+  fragColor = vec4(d);
 }

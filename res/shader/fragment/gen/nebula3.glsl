@@ -4,6 +4,8 @@
 #include noise
 #include texcube
 
+
+layout(location = 0) out vec4 fragColor;
 uniform vec3 color;
 uniform float seed;
 
@@ -40,5 +42,5 @@ vec4 generate(vec3 dir) {
 
 void main() {
   vec3 dir = cubeMapDir(uv);
-  gl_FragColor = generate(dir);
+  fragColor = generate(dir);
 }

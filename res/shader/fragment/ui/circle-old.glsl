@@ -2,6 +2,8 @@
 #include math
 /* This version did not support filled circles, and it has been replaced by circle.glsl */
 /* It is being retained in the script structure temporarily in case issues are found later */
+
+layout(location = 0) out vec4 outColor;
 uniform vec4 color;
 uniform vec2 size;
 uniform float radius;

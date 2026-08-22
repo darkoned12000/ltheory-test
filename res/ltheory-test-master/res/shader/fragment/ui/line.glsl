@@ -1,6 +1,8 @@
 #include fragment
 #include math
 
+
+layout(location = 0) out vec4 fragColor;
 uniform vec2 p1;
 uniform vec2 p2;
 uniform vec2 origin;
@@ -30,5 +32,5 @@ void main() {
   alpha += 0.2 * exp(-pow(0.2 * d, 0.75));
 
   alpha *= exp(-2.0 * (1.0 - t));
-  gl_FragColor = alpha * color.w * vec4(c, 1.0);
+  fragColor = alpha * color.w * vec4(c, 1.0);
 }

@@ -1,5 +1,7 @@
 #include filter
 
+
+layout(location = 0) out vec4 fragColor;
 uniform int radius;
 uniform float sigma;
 
@@ -15,5 +17,5 @@ void main() {
     tw += w;
   }
 
-  gl_FragColor = c / tw;
+  fragColor = c / tw;
 }

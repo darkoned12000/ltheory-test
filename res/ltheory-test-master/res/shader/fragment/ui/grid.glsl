@@ -1,5 +1,7 @@
 #include fragment
 
+
+layout(location = 0) out vec4 fragColor;
 uniform vec4 color;
 uniform vec2 size;
 
@@ -46,5 +48,5 @@ void main() {
   mult += 1.0 * exp(-sqrt(max(0.0, scale1.y * abs(uvp.y + 1.0) - 1.00)));
 #endif
 
-  gl_FragColor = c * mult;
+  fragColor = c * mult;
 }

@@ -1,6 +1,8 @@
 #include math
 #include noise
 
+
+layout(location = 0) out vec4 fragColor;
 in vec2 uv;
 
 uniform float radius;
@@ -32,5 +34,5 @@ void main() {
   total = 1.0 - total;
   total *= total;
 
-  gl_FragColor.x = total;
+  fragColor.x = total;
 }

@@ -3,6 +3,8 @@
 #include gamma
 #include color
 
+
+layout(location = 0) out vec4 fragColor;
 uniform sampler2D src;
 uniform sampler2D srcBlur;
 
@@ -31,5 +33,5 @@ void main() {
   c = mix(c, dark, f2 * kDark);
   // c = mix(c, c2, 0.9999);
 
-  gl_FragColor = vec4(c, 1.0);
+  fragColor = vec4(c, 1.0);
 }

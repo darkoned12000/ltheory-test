@@ -6,6 +6,8 @@
 #autovar samplerCube irMap
 #autovar vec3 eye
 
+
+layout(location = 0) out vec4 fragColor;
 float glossToLOD(float gloss) {
   return 8.0 * (pow(2.0, gloss) - 1.0);
 }
@@ -33,6 +35,6 @@ void main() {
   float f = 0.2;
 
   c = max(c, vec3(0.0, 0.0, 0.0));
-  gl_FragColor = vec4(c, 1.0);
+  fragColor = vec4(c, 1.0);
   FRAGMENT_CORRECT_DEPTH;
 }

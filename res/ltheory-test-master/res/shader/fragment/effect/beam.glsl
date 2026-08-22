@@ -2,6 +2,8 @@
 #include math
 #include noise
 
+
+layout(location = 0) out vec4 fragColor;
 uniform vec3 color;
 uniform float alpha;
 uniform vec2 size;
@@ -20,5 +22,5 @@ void main() {
   a += 0.5 * exp(-sqrt(32.0 * u));
   // a *= 1.0 + 4.0 * fSmoothNoise(uv * size / 8.0 + offset, 4, 2.0);
   a *= saturate(pow2(32.0 * v)) * pow8(1.0 - v);
-  gl_FragColor = vec4(a * pow2(alpha) * pow2(color), 1.0);
+  fragColor = vec4(a * pow2(alpha) * pow2(color), 1.0);
 }

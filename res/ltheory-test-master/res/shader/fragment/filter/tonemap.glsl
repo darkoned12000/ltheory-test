@@ -5,6 +5,8 @@
 #include noise
 #include bezier
 
+
+layout(location = 0) out vec4 fragColor;
 uniform int hdrOut;
 
 const float b = 1.25;
@@ -73,5 +75,5 @@ void main() {
     c = min(vec3(1.0), max(vec3(0.0), c));
   }
 
-  gl_FragColor = vec4(c, cc.w);
+  fragColor = vec4(c, cc.w);
 }

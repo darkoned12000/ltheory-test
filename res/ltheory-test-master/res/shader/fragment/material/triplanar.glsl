@@ -4,11 +4,11 @@
 #include gamma
 #include texturing
 
-uniform vec3 eye;
+
+layout(location = 0) out vec4 fragColor;
 uniform sampler2D texDiffuse;
 uniform sampler2D texNormal;
 uniform sampler2D texSpec;
-uniform samplerCube envMap;
 
 void main() {
   vec3 N = normalize(normal);
@@ -34,6 +34,6 @@ void main() {
 
   vec3 env = textureLod(envMap, R, mix(4.0, 0.0, spec)).xyz;
   c *= env;
-  gl_FragColor = vec4(c, 1.0);
+  fragColor = vec4(c, 1.0);
   FRAGMENT_CORRECT_DEPTH;
 }

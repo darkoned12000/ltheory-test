@@ -1,5 +1,7 @@
 #include filter
 
+
+layout(location = 0) out vec4 fragColor;
 void main() {
-  gl_FragColor = log(vec4(1.0) + texture(src, uv));
+  fragColor = log(vec4(1.0) + texture(src, uv));
 }

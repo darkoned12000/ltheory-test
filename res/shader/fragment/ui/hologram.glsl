@@ -2,6 +2,8 @@
 #include math
 #include noise
 
+
+layout(location = 0) out vec4 fragColor;
 uniform vec4 color;
 uniform float time;
 
@@ -14,5 +16,5 @@ void main() {
   alpha *= 1.0 - 0.1 * log(1.0 - noise(vec3(gl_FragCoord.xy, time)));
   alpha *= 1.0 + 0.2 * sin(radians(180.0) * gl_FragCoord.y);
   vec3 c = 2.0 * color.xyz;
-  gl_FragColor = alpha * color.w * vec4(c, 1.0);
+  fragColor = alpha * color.w * vec4(c, 1.0);
 }

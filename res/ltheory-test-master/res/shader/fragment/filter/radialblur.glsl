@@ -3,6 +3,8 @@
 #include color
 #include noise
 
+
+layout(location = 0) out vec4 fragColor;
 uniform float strength;
 uniform float scanlines;
 
@@ -39,5 +41,5 @@ void main() {
   // c = mix(c, vec3(lum(c)), f1);
 
   c = mix(cc, c, strength);
-  gl_FragColor = vec4(c, 1.0);
+  fragColor = vec4(c, 1.0);
 }

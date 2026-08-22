@@ -16,4 +16,5 @@ uniform vec2 brushOrigin;
   vec2 p = canvasSize * uv;                                                    \
   float r = length(brushOrigin - p) / brushSize;                               \
 
-#define BRUSH_OUTPUT(x) gl_FragColor = vec4((x).xyz, 1.0);
+layout(location = 0) out vec4 fragColor;
+#define BRUSH_OUTPUT(x) fragColor = vec4((x).xyz, 1.0);
