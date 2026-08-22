@@ -16,6 +16,8 @@ void main() {
   a += 1.0 * exp(-pow2(30.0 * r));
   c *= a*a;
 
+  if (a < 0.02) discard; // star quads span ~4 degrees; without this they paint near-black squares over the skybox
+
   setAlbedo(c.xyz);
   setAlpha(1.0);
 }

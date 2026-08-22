@@ -17,8 +17,10 @@ uniform mat4 mWorld;
 uniform mat4 mWorldIT;
 uniform mat4 mView;
 uniform mat4 mViewInv;
+uniform mat4 mViewUI;
 uniform mat4 mProj;
 uniform mat4 mProjInv;
+uniform mat4 mProjUI;
 
 #define VS_BEGIN                                                               \
   uv = vertex_uv;                                                              \

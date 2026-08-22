@@ -16,10 +16,10 @@ void main() {
   float f2 = pow(floor(l2) + 1.0, 2.0);
 
   vec3 c = emix(
-    texture2D(texDiffuse, f1 * uv).xyz,
-    texture2D(texDiffuse, f2 * uv).xyz, fract(l2));
+    texture(texDiffuse, f1 * uv).xyz,
+    texture(texDiffuse, f2 * uv).xyz, fract(l2));
 
-  c = sqrt(c * texture2D(texDiffuse, 4.0 * uv).xyz);
+  c = sqrt(c * texture(texDiffuse, 4.0 * uv).xyz);
   c *= 0.5;
 
   gl_FragColor = vec4(c, 1.0);

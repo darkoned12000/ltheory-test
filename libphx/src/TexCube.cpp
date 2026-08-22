@@ -3,6 +3,8 @@
 #include "ClipRect.h"
 #include "CubeFace.h"
 #include "CullFace.h"
+#include <cstdlib>
+#include <cstdio>
 #include "DataFormat.h"
 #include "Draw.h"
 #include "File.h"
@@ -213,36 +215,86 @@ void TexCube_Generate (TexCube* self, ShaderState* state) {
   GLMatrix_ModeP();  GLMatrix_Push(); GLMatrix_Clear();
   GLMatrix_ModeWV(); GLMatrix_Push(); GLMatrix_Clear();
   RenderState_PushAllDefaults();
-  ShaderState_Start(state);
+
+  // NOTE: Shader_Start eagerly uploads #autovar uniforms (incl. mProjUI/
+  // mViewUI) from the current stack. The shader must therefore be started
+  // INSIDE a render-target viewport push -- starting it while only the window
+  // viewport was active baked the *window* ortho into the UI matrices, so
+  // face quads covered ~64% of each cubemap face at GLSL 150+.
+  int size = self->size;
+  float fSize = (float) size;
 
   for (int i = 0; i < 6; i++) {
     Face face = kFaces[i];
-    int size = self->size;
-    float fSize = (float) self->size;
     RenderTarget_Push(size, size);
+    if (i == 0)
+      ShaderState_Start(state);   // bind autovars with RT matrices on top
     RenderTarget_BindTexCube(self, face.face);
     Draw_Clear(0, 0, 0, 1);
     Shader_SetFloat3("cubeLook", UNPACK3(face.look));
     Shader_SetFloat3("cubeUp", UNPACK3(face.up));
     Shader_SetFloat("cubeSize", fSize);
 
-    int j = 1;
-    int jobSize = 1;
-    while (j <= size) {
-      TimeStamp time = TimeStamp_Get();
-
-      ClipRect_Push(0, j - 1, size, jobSize);
+    // PHX_DEBUG_TEXCUBE=1: bypass the adaptive band tiler and draw the whole
+    // face in one unscissored pass -- isolates whether the 150 skybox gaps
+    // come from the band loop or from the texture/mipmap/sampling path.
+    if (getenv("PHX_DEBUG_TEXCUBE")) {
       Draw_Rect(0, 0, fSize, fSize);
       Draw_Flush();
-      ClipRect_Pop();
+    } else {
+      int j = 1;
+      int jobSize = 1;
+      while (j <= size) {
+        TimeStamp time = TimeStamp_Get();
 
-      j += jobSize;
-      double elapsed = TimeStamp_GetElapsed(time);
-      jobSize = Max(1, (int)Floor(0.25 * jobSize / elapsed + 0.5));
-      jobSize = Min(jobSize, (size - j + 1));
+        ClipRect_Push(0, j - 1, size, jobSize);
+        Draw_Rect(0, 0, fSize, fSize);
+        Draw_Flush();
+        ClipRect_Pop();
+
+        j += jobSize;
+        double elapsed = TimeStamp_GetElapsed(time);
+        jobSize = Max(1, (int)Floor(0.25 * jobSize / elapsed + 0.5));
+        jobSize = Min(jobSize, (size - j + 1));
+      }
     }
 
     RenderTarget_Pop();
+  }
+
+  ShaderState_Stop(state);
+
+  // PHX_DEBUG_TEXCUBE_DUMP=<prefix>: write each generated face (level 0) as
+  // PNG so cubemap content can be inspected without going through sampling.
+  cstr dumpPrefix = getenv("PHX_DEBUG_TEXCUBE_DUMP");
+  if (dumpPrefix) {
+    static const GLenum kFaceGl[6] = {
+      GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+      GL_TEXTURE_CUBE_MAP_POSITIVE_Y, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+      GL_TEXTURE_CUBE_MAP_POSITIVE_Z, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
+    };
+    static cstr kFaceName[6] = { "px", "nx", "py", "ny", "pz", "nz" };
+    GLCALL(glBindTexture(GL_TEXTURE_CUBE_MAP, self->handle))
+    float* pixels = (float*) malloc(self->size * self->size * 4 * sizeof(float));
+    uchar* bytes = (uchar*) malloc(self->size * self->size * 4);
+    for (int i = 0; i < 6; ++i) {
+      glGetTexImage(kFaceGl[i], 0, GL_RGBA, GL_FLOAT, pixels);
+      int n = self->size * self->size;
+      for (int p = 0; p < n; ++p) {
+        for (int c = 0; c < 3; ++c) {
+          float f = pixels[p*4+c];
+          bytes[p*4+c] = (uchar) (f < 0.0f ? 0 : f > 1.0f ? 255 : f * 255.0f);
+        }
+        bytes[p*4+3] = 255;
+      }
+      char path[512];
+      snprintf(path, sizeof(path), "%s_%s.png", dumpPrefix, kFaceName[i]);
+      Tex2D_Save_Png(path, self->size, self->size, 4, bytes);
+      fprintf(stderr, "[TexCube] dumped %s\n", path);
+    }
+    free(pixels);
+    free(bytes);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
   }
 
   ShaderState_Stop(state);

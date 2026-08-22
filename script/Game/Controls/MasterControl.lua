@@ -14,10 +14,12 @@ MasterControl.__index = MasterControl
 setmetatable(MasterControl, UI.Container)
 
 local function isPlayerDocked (self)
-  local playerShip   = self.player:getControlling()
+  local playerShip = self.player:getControlling()
+  if not playerShip then return false end
   local playerParent = playerShip:getParent()
-  local playerDocked = playerParent:hasDockable()
-  return playerDocked
+  if not playerParent then return false end
+  if not playerParent.hasDockable then return false end
+  return playerParent:hasDockable()
 end
 
 local ControlSets = {

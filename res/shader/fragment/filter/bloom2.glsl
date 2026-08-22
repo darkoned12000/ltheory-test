@@ -11,8 +11,8 @@ vec3 normalum (vec3 x) {
 }
 
 void main() {
-  vec3 c1 = texture2D(src, uv).xyz;
-  vec4 c2w = texture2D(srcBlur, uv);
+  vec3 c1 = texture(src, uv).xyz;
+  vec4 c2w = texture(srcBlur, uv);
   vec3 c2 = c2w.xyz;
   float w = c2w.w;
   

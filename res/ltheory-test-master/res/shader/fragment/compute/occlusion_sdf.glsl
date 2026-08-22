@@ -11,7 +11,7 @@ const int kSamples = 1024;
 const float kThresh = 0.3;
 
 void main() {
-  vec3 p = 0.5 * texture2D(points, uv).xyz + 0.5;
+  vec3 p = 0.5 * texture(points, uv).xyz + 0.5;
   float total = 0.0;
 
   float offset = 133.7 * noise(uv);
@@ -22,7 +22,7 @@ void main() {
     float x = sin(a) * sqrt(1.0 - z*z);
     float y = cos(a) * sqrt(1.0 - z*z);
     float r = radius * sqrt(noise(float(i) + 51.0 + offset * 1.5));
-    float s = texture3D(sdf, p + r * vec3(x, y, z)).x;
+    float s = texture(sdf, p + r * vec3(x, y, z)).x;
     if (s < 0.0)
       total += 1.0;
   }

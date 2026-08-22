@@ -7,6 +7,6 @@ uniform float mult2;
 
 void main() {
   gl_FragColor =
-    mult1 * texture2D(src1, uv) +
-    mult2 * texture2D(src2, uv);
+    mult1 * texture(src1, uv) +
+    mult2 * texture(src2, uv);
 }

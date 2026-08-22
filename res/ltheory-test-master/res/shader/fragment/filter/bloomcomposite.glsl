@@ -10,8 +10,8 @@ const float kBright = 0.15;
 const float kDark   = 0.10;
 
 void main() {
-  vec3 c1 = texture2D(src, uv).xyz;
-  vec4 cc2 = texture2D(srcBlur, uv);
+  vec3 c1 = texture(src, uv).xyz;
+  vec4 cc2 = texture(srcBlur, uv);
   vec3 c2 = cc2.xyz;
   float c2w = cc2.w;
   c1 = max(c1, vec3(0.0));

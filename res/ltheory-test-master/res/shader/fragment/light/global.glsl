@@ -22,8 +22,8 @@ float roughnessToLOD (float r) {
 }
 
 void main () {
-  vec4 normalMat = texture2D(texNormalMat, uv);
-  float depth = texture2D(texDepth, uv).x;
+  vec4 normalMat = texture(texNormalMat, uv);
+  float depth = texture(texDepth, uv).x;
   vec3 N = decodeNormal(normalMat.xy);
   float rough = normalMat.z;
   float mat = normalMat.w;
@@ -34,14 +34,14 @@ void main () {
   vec3 light = vec3(0.0);
 
   if (mat == Material_Diffuse) {
-    light += linear(textureCubeLod(irMap, N, 8.0).xyz);
+    light += linear(textureLod(irMap, N, 8.0).xyz);
   }
 
   else if (mat == Material_Metal) {
     #ifdef HIGHQ
-      light += linear(textureCubeLod(irMap, R, roughnessToLOD(rough)).xyz);
+      light += linear(textureLod(irMap, R, roughnessToLOD(rough)).xyz);
     #else
-      light += linear(textureCube(envMap, R).xyz);
+      light += linear(texture(envMap, R).xyz);
     #endif
   }
 

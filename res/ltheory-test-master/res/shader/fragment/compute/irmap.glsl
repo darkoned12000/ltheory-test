@@ -37,7 +37,7 @@ void main() {
 
     float w = 1.0 / dot(N, L);
     w = 1;
-    c += w * textureCubeLod(src, L, 0.0);
+    c += w * textureLod(src, L, 0.0);
     tw += w;
   }
 

@@ -5,11 +5,10 @@
 #include fog
 
 #autovar samplerCube envMap
-#autovar samplerCube irMap
 
 void main() {
   vec3 V = normalize(vertPos);
-  vec3 c = textureCube(envMap, V).xyz;
+  vec3 c = texture(envMap, V).xyz;
 
   gl_FragDepth = 1.0;
 

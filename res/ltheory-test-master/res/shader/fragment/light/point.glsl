@@ -18,8 +18,8 @@ const float kMinDistance = 0.0001;
 const float kPointLightMult = 16.0;
 
 void main () {
-  vec4 normalMat = texture2D(texNormalMat, uv);
-  float depth = texture2D(texDepth, uv).x;
+  vec4 normalMat = texture(texNormalMat, uv);
+  float depth = texture(texDepth, uv).x;
   vec3 N = decodeNormal(normalMat.xy);
   float rough = normalMat.z;
   float mat = normalMat.w;

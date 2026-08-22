@@ -12,7 +12,7 @@ uniform vec3 brushColor;
 uniform vec2 brushOrigin;
 
 #define BRUSH_BEGIN                                                            \
-  vec3 canvasColor = texture2D(canvas, uv).xyz;                                \
+  vec3 canvasColor = texture(canvas, uv).xyz;                                \
   vec2 p = canvasSize * uv;                                                    \
   float r = length(brushOrigin - p) / brushSize;                               \
 

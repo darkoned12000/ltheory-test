@@ -1,5 +1,10 @@
 #include vertex
 
+#autovar mat4 mView
+#autovar mat4 mProj
+#autovar mat4 mViewUI
+#autovar mat4 mProjUI
+
 uniform vec4 viewport;
 
 void main() {
@@ -12,5 +17,5 @@ void main() {
   p.xy = mix(viewport.xy, viewport.zw, 0.5 + 0.5 * p.xy);
   p.z = 0.0;
   p.w = 1.0;
-  gl_Position = gl_ProjectionMatrix * (gl_ModelViewMatrix * p);
+  gl_Position = mProjUI * (mViewUI * p);
 }

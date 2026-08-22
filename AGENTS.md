@@ -231,6 +231,14 @@ This is the most undocumented part of the engine's graphics stack. Captured here
 
 #### GLSL 330 Bump — Attempted & Reverted (July 2026)
 
+#### Stage Ladder Progress (Aug 2026): 3.2 / GLSL 150 GREEN
+The version-ladder plan lives in `opengl-glsl-upgrade.md` (read its **Stage 3 Troubleshooting Notes** before stage 4). Stages 0–3 are complete: engine runs at `Engine_Init(3,2)` + `#version 150 compatibility` (`libphx/src/Shader.cpp:27`). Key changes landed with stage 3:
+- `ui.glsl`/`ui3D.glsl` migrated off `gl_ProjectionMatrix/gl_ModelViewMatrix` (Mesa rejects them at bare `#version 150` even with COMPAT context) onto `mProjUI/mViewUI`, pushed/popped by `Viewport_Push/Pop` (`libphx/src/Viewport.cpp`).
+- **Eager autovar trap:** `Shader_Start` uploads `#autovar` uniforms once, at start time. Passes that start a shader before pushing their render-target viewport bake in the window matrices — this was the skybox "gaps/squares" root cause; `TexCube_Generate` now starts inside the first RT push.
+- All legacy texture fns (`texture1D/2D/3D/Cube`) → `texture()`/`textureLod()`; `starbg.glsl` discard guard added; `MasterControl.lua` nil guards re-applied.
+- Debug tools kept env-gated: `PHX_DEBUG_TEXCUBE=1` (tiler bypass), `PHX_DEBUG_TEXCUBE_DUMP=<prefix>` (dump cubemap faces to PNG).
+- Remaining for stage 4 (330): only checklist item A — ~73 fragment files still on `gl_FragColor`.
+
 An attempt was made to bump `Engine_Init(2, 1)` → `(3, 3)` (`src/Main.cpp:15`) and `#version 130` → `#version 330` (`libphx/src/Shader.cpp:27`) together. **It builds but aborts at runtime** on the first shader compile, and has been **reverted** to keep the stable baseline. Findings, so the next attempt has a real roadmap:
 
 - **Root cause:** GLSL 330 is a *core*-profile GLSL that removes every deprecated fixed-function built-in the engine's shaders still use. The first failure is `CreateGLShader: Failed to compile shader: 'gl_MultiTexCoord0' undeclared / 'gl_Vertex' undeclared` (during `computeAO` at boot).

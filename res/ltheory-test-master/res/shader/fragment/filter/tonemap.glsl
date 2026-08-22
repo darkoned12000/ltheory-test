@@ -19,7 +19,7 @@ const float kVignetteHardness = 32.0;
 #define VIGNETTE 1
 
 void main() {
-  vec4 cc = texture2D(src, uv);
+  vec4 cc = texture(src, uv);
   vec3 c = cc.xyz;
   c = gamma(c);
 
