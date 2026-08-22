@@ -2,17 +2,17 @@
 
 Goal: migrate the engine from its current state up to **OpenGL 4.6 / GLSL 460**, one version at a time, keeping the GL context and the shader `#version` in sync at every step. Each stage is tested before moving on. Trouble spots (structural changes that force C++ or shader rewrites) are flagged — they land at **3.3, 4.0, 4.3, and 4.6**.
 
-## Current State (verified 2026-08-21, updated 2026-08-22 to 3.1/140)
+## Current State (verified 2026-08-21, updated 2026-08-22 to 3.2/150)
 
 | Item | Value | Location |
 |---|---|---|
-| Context requested | OpenGL **3.1 compatibility** | `src/Main.cpp:15` — `Engine_Init(3, 1)` |
-| Shader version | GLSL **140** (GL 3.1) | `libphx/src/Shader.cpp:27` — `versionString = "#version 140\n"` |
+| Context requested | OpenGL **3.2 compatibility** | `src/Main.cpp:15` — `Engine_Init(3, 2)` |
+| Shader version | GLSL **150** (GL 3.2) | `libphx/src/Shader.cpp:27` — `versionString = "#version 150\n"` |
 | Profile mask | `SDL_GL_CONTEXT_PROFILE_COMPATIBILITY` | `libphx/src/Engine.cpp:74-81` |
 | Driver capability | Mesa 26.2 → **GL 4.6** available | system ICD |
 | GLEW | 2.2.0 (last official release; exposes everything up to 4.6) | system `libglew-dev` |
 
-Engine at **3.1/140** (phase 2) — `2.1/130` skew removed via `3.0/130` (phase 1 low-risk context only) → `3.1/140`. No shader migration yet (`gl_FragColor`/`texture2D` still valid at `140` compat).
+Engine at **3.2/150** (phase 3) — `3.1/140` → `3.2/150` (`150` `layout` in/out qualifiers, geometry shaders optional, `gl_FragColor` still valid at `150` compat).
 
 ## Version Ladder (check off as each stage lands)
 
@@ -22,8 +22,8 @@ GLSL versions map to OpenGL versions: 130→3.0, 140→3.1, 150→3.2, 330→3.3
 |---|-------|---------------------------|-----------------|---------------------|-------------------|----------------------|--------|
 | 0 | Baseline (today) | `(2, 1)` compat | `130` | — | none | none | [x] done |
 | 1 | **3.0** | `(3, 0)` compat | `130` (unchanged) | No — low risk | none (context only) | none | [x] done 2026-08-22 (via 3.1 bump, context 3.0 verified) |
-| 2 | **3.1** | `(3, 1)` compat | `140` | No — low risk | optional: UBOs become available | optional: adopt uniform buffers | [x] done 2026-08-22 — `Engine_Init(3,1)` `versionString 140` `python3 configure.py && cmake --build build` clean, `gl_FragColor`/`texture2D` still valid at 140 compat (moderngl 140 both legacy+modern compile OK) |
-| 3 | **3.2** | `(3, 2)` compat | `150` | No — low risk | none required | optional: geometry shaders, `layout` in/out qualifiers | [ ] |
+| 2 | **3.1** | `(3, 1)` compat | `140` | No — low risk | optional: UBOs become available | optional: adopt uniform buffers | [x] done 2026-08-22 — `Engine_Init(3,1)` `versionString 140` clean, `gl_FragColor` at 140 compat OK |
+| 3 | **3.2** | `(3, 2)` compat | `150` | No — low risk | none required | optional: geometry shaders, `layout` in/out qualifiers | [x] done 2026-08-22 — `Engine_Init(3,2)` `versionString 150` clean, `gl_FragColor` at 150 compat OK (`moderngl` 150 legacy still valid) |
 | 4 | **3.3** ⚠️ | `(3, 3)` compat* | `330` | **YES — core-profile cutover** | keep COMPAT mask until C++ is clean; later flip to CORE | **mandatory**: all ~73 `gl_FragColor`/`gl_FragData[]` → explicit `out vec4`; legacy texture fns → `texture()`/`textureLod()` | [ ] |
 | 5 | **4.0** ⚠️ | `(4, 0)` core | `400` | **YES — last legacy removals** | flip profile to CORE (all C++ must be modern VBO path) | subroutines/atomics available; any remaining compute-like passes need explicit outputs | [ ] |
 | 6 | **4.1** | `(4, 1)` core | `410` | No — low risk | none required | optional: explicit uniform locations, `textureGather` | [ ] |
