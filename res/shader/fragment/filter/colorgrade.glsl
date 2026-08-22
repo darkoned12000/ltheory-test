@@ -2,6 +2,8 @@
 #include color
 #include math
 
+
+layout(location = 0) out vec4 fragColor;
 uniform sampler2D src;
 uniform sampler1D curve1;
 uniform sampler1D curve2;
@@ -33,5 +35,5 @@ void main() {
     kVariation * dot(uv, bDir));
 
   c *= avg(original) / max(0.00001, avg(c));
-  gl_FragColor = vec4(c, 1.0);
+  fragColor = vec4(c, 1.0);
 }

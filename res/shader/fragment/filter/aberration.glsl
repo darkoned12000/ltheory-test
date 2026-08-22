@@ -3,6 +3,8 @@
 #include color
 #include noise
 
+
+layout(location = 0) out vec4 fragColor;
 uniform float strength;
 
 const float k = 1.00;
@@ -25,5 +27,5 @@ void main() {
   c /= tw;
   c = lum(cc) * (c / lum(c));
   c = mix(cc, c, strength);
-  gl_FragColor = vec4(c, 1.0);
+  fragColor = vec4(c, 1.0);
 }

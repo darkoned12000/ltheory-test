@@ -3,6 +3,8 @@
 #include math
 #include noise
 
+
+layout(location = 0) out vec4 fragColor;
 uniform float alpha;
 uniform float time;
 uniform vec3 color;
@@ -18,6 +20,6 @@ void main() {
   a *= mix(1.0, 1.5, variation);
   // a *= 1.0 - getFoginess(length(position - eye));
   a *= 2.0;
-  gl_FragColor = vec4(alpha * a * color, 1.0);
+  fragColor = vec4(alpha * a * color, 1.0);
   FRAGMENT_CORRECT_DEPTH;
 }

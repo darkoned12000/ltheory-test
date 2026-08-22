@@ -4,6 +4,8 @@
 
 #autovar vec3 eye
 
+
+layout(location = 0) out vec4 fragColor;
 uniform vec2 size;
 
 void main() {
@@ -21,5 +23,5 @@ void main() {
     1.0 - uv.y);
   c = c / lum(c);
   c *= sqrt(c);
-  gl_FragColor = vec4(c * alpha, 1.0);
+  fragColor = vec4(c * alpha, 1.0);
 }

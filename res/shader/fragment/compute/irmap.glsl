@@ -1,3 +1,5 @@
+
+layout(location = 0) out vec4 fragColor;
 in vec2 uv;
 
 uniform vec3 cubeLook;
@@ -41,6 +43,6 @@ void main() {
     tw += w;
   }
 
-  gl_FragColor = c / tw;
-  gl_FragColor.w = 1;
+  fragColor = c / tw;
+  fragColor.w = 1;
 }

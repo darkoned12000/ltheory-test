@@ -5,6 +5,8 @@
 #include texcube
 #include quat
 
+
+layout(location = 0) out vec4 fragColor;
 uniform float density;
 uniform float seed;
 uniform vec4 rot;
@@ -44,5 +46,5 @@ void main() {
   float od = magic(dir);
   radiance.xyz *= exp(-od / normalize(0.0001 + radiance.xyz));
   radiance.w += od;
-  gl_FragColor = radiance;
+  fragColor = radiance;
 }

@@ -1,7 +1,9 @@
 #include fragment
 
+
+layout(location = 0) out vec4 fragColor;
 uniform vec3 color;
 
 void main() {
-  gl_FragColor = vec4(color, uv.x);
+  fragColor = vec4(color, uv.x);
 }

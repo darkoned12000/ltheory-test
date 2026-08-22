@@ -1,3 +1,5 @@
+
+layout(location = 0) out vec4 fragColor;
 in vec2 uv;
 
 uniform sampler2D src;
@@ -26,5 +28,5 @@ void main() {
     tw += w0 + w1;
   }
 
-  gl_FragColor = vec4(total / tw, tw);
+  fragColor = vec4(total / tw, tw);
 }

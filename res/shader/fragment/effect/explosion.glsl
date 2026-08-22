@@ -2,6 +2,8 @@
 #include math
 #include noise
 
+
+layout(location = 0) out vec4 fragColor;
 uniform float age;
 uniform float seed;
 const float animSpeed = 0.4;
@@ -22,6 +24,6 @@ void main() {
     vec3(1.0, 0.2, 0.0),
     vec3(1.0, 0.5, 0.2), a),
     vec3(4.0, 2.0, 1.0), a);
-  gl_FragColor = vec4(c * a, 1.0);
+  fragColor = vec4(c * a, 1.0);
   FRAGMENT_CORRECT_DEPTH;
 }

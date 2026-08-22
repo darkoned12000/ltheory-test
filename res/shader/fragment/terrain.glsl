@@ -1,3 +1,5 @@
+
+layout(location = 0) out vec4 fragColor;
 in vec2 uv;
 in vec3 pos;
 
@@ -22,5 +24,5 @@ void main() {
   c = sqrt(c * texture(texDiffuse, 4.0 * uv).xyz);
   c *= 0.5;
 
-  gl_FragColor = vec4(c, 1.0);
+  fragColor = vec4(c, 1.0);
 }

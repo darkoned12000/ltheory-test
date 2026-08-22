@@ -1,9 +1,29 @@
 #!/usr/bin/env python
-import os, sys, shutil, subprocess
+import os, re, sys, shutil, subprocess
 
 # Helper for test harness
 
+def current_glsl_version():
+    # Parse the version the engine actually compiles with (single source of truth).
+    try:
+        with open(os.path.join('libphx', 'src', 'Shader.cpp')) as f:
+            m = re.search(r'"#version\s+(\d+)', f.read())
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    return '330'
+
+def run_shader_tests():
+    print('[configure.py] Validating GLSL shaders (offline compile+link)')
+    exe = os.path.join('tools', 'validate_glsl.py')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_glsl.py found - skipping')
+        return 0
+    return subprocess.run([sys.executable, exe, current_glsl_version()]).returncode
+
 def run_tests():
+    result = 0
     exe = os.path.join('build', 'test', 'lte_tests')
     env = dict(os.environ)
     if sys.platform != 'win32':
@@ -12,10 +32,11 @@ def run_tests():
         env['LD_LIBRARY_PATH'] = os.pathsep.join(paths + existing.split(os.pathsep) if existing else paths)
     print('[configure.py] Running LTE core unit tests')
     if os.path.exists(exe):
-        return subprocess.run([exe], env=env).returncode
+        result |= subprocess.run([exe], env=env).returncode
     else:
-        print('[configure.py] No test executable found – skipping')
-        return 0
+        print('[configure.py] No test executable found - skipping')
+    result |= run_shader_tests()
+    return result
 
 # Main entry point
 

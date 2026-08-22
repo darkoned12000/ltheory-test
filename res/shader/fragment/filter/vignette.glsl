@@ -1,3 +1,5 @@
+
+layout(location = 0) out vec4 fragColor;
 in vec2 uv;
 
 uniform sampler2D src;
@@ -11,5 +13,5 @@ void main() {
   a *= 1.0 - strength * exp(-hardness * uvp.y);
   vec4 c = texture(src, uv);
   c.xyz *= a;
-  gl_FragColor = c;
+  fragColor = c;
 }

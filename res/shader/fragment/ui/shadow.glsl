@@ -1,6 +1,8 @@
 #include fragment
 #include math
 
+
+layout(location = 0) out vec4 fragColor;
 uniform float radius;
 uniform float padding;
 uniform float alpha;
@@ -17,5 +19,5 @@ void main() {
   float a = (d < 0.0) ? innerAlpha : alpha;
   vec3 c = vec3(0.01);
   a *= exp(-pow2(0.015 * max(0.0, d)));
-  gl_FragColor = vec4(c, a);
+  fragColor = vec4(c, a);
 }

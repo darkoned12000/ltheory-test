@@ -1,3 +1,5 @@
+
+layout(location = 0) out vec4 fragColor;
 in vec2 uv;
 
 uniform sampler2D src;
@@ -38,5 +40,5 @@ void main() {
     }
   }}
 
-  gl_FragColor = vec4(mode == 0 ? cMin : cMax);
+  fragColor = vec4(mode == 0 ? cMin : cMax);
 }

@@ -2,20 +2,25 @@
 
 Goal: migrate the engine from its current state up to **OpenGL 4.6 / GLSL 460**, one version at a time, keeping the GL context and the shader `#version` in sync at every step. Each stage is tested before moving on. Trouble spots (structural changes that force C++ or shader rewrites) are flagged — they land at **3.3, 4.0, 4.3, and 4.6**.
 
-## Current State (verified 2026-08-21, updated 2026-08-22 to 3.2/150)
+## Current State (verified 2026-08-21, updated 2026-08-22 to 3.3/330)
 
 | Item | Value | Location |
 |---|---|---|
-| Context requested | OpenGL **3.2 compatibility** | `src/Main.cpp:15` — `Engine_Init(3, 2)` |
-| Shader version | GLSL **150 compat** (GL 3.2) | `libphx/src/Shader.cpp:27` — `versionString = "#version 150 compatibility\n"` |
+| Context requested | OpenGL **3.3 compatibility** | `src/Main.cpp:15` — `Engine_Init(3, 3)` |
+| Shader version | GLSL **330 compat** (GL 3.3) | `libphx/src/Shader.cpp:27` — `versionString = "#version 330 compatibility\n"` |
 | Profile mask | `SDL_GL_CONTEXT_PROFILE_COMPATIBILITY` | `libphx/src/Engine.cpp:74-81` |
 | Driver capability | Mesa 26.2 → **GL 4.6** available | system ICD |
 | GLEW | 2.2.0 (last official release; exposes everything up to 4.6) | system `libglew-dev` |
 
-Engine at **3.2/150** (phase 3, GREEN 2026-08-22 after skybox fix). The `compatibility`
+Engine at **3.3/330** (phase 4, GREEN 2026-08-22). The `compatibility`
 token on `#version` is deliberate: from GLSL 150 on, a bare `#version NNN` means **core**
 semantics per spec; Mesa tolerated legacy builtins anyway, but the explicit token keeps
 them guaranteed until the stage-5 CORE flip.
+
+**Legacy-token status after stage 4 — all ZERO across `res/shader/`:**
+`gl_FragColor`/`gl_FragData[]`, `varying`/`attribute`, `texture1D/2D/3D/Cube`,
+embedded `#version` directives, `GL_EXT_gpu_shader4`. Every fragment shader declares
+explicit `out vec4`; validate any change offline with `python3 tools/validate_glsl.py <NNN>`.
 
 ## Version Ladder (check off as each stage lands)
 
@@ -27,7 +32,7 @@ GLSL versions map to OpenGL versions: 130→3.0, 140→3.1, 150→3.2, 330→3.3
 | 1 | **3.0** | `(3, 0)` compat | `130` (unchanged) | No — low risk | none (context only) | none | [x] done 2026-08-22 (via 3.1 bump, context 3.0 verified) |
 | 2 | **3.1** | `(3, 1)` compat | `140` | No — low risk | optional: UBOs become available | optional: adopt uniform buffers | [x] done 2026-08-22 — `Engine_Init(3,1)` `versionString 140` clean, `gl_FragColor` at 140 compat OK |
 | 3 | **3.2** | `(3, 2)` compat | `150 compat` | **YES — more than expected**: `gl_ProjectionMatrix` rejected at 150 (even w/ COMPAT ctx) forced the `ui`/`ui3D` migration + `Viewport` `mProjUI/mViewUI`; `TexCube_Generate` autovar-order fix | done: ui/ui3D modernization, all legacy texture fns → `texture()`, `starbg` discard, `MasterControl` guards, TexCube shader-start reorder | see Stage 3 notes below | [x] done 2026-08-22 — 5 clean runs, skybox/stars/HUD verified vs 140 baseline |
-| 4 | **3.3** ⚠️ | `(3, 3)` compat* | `330 compatibility` | **YES — core-language cutover** | keep COMPAT mask until C++ is clean; later flip to CORE | checklist item A only: ~73 `gl_FragColor` files → `layout(location=0) out vec4` (B/C/D/E already done) | [ ] |
+| 4 | **3.3** ⚠️ | `(3, 3)` compat* | `330 compatibility` | **YES — core-language cutover**, plus latent-bug sweep (see Stage 4 notes) | keep COMPAT mask until C++ is clean; later flip to CORE. Built clean first try | checklist A done: 73 fragment files → `layout(location=0) out vec4 fragColor;` (146 files / 148 call sites incl. master tree); `BRUSH_OUTPUT` macro blind spot fixed by declaring the output inside `brush.glsl`; 12 pre-existing broken shaders repaired (`outColor` never declared, uv_metal missing paren, triplanar dup uniforms, desat missing include, ptracer embedded `#version 450` + `SCENE_DESC` + 420pack, common.glsl gpu_shader4 removal) | [x] done 2026-08-22 — 113/113 offline compile at 330 core + runtime QA green (skybox/stars/sun/flight/weapons/thrusters) |
 | 5 | **4.0** ⚠️ | `(4, 0)` core | `400` | **YES — last legacy removals** | flip profile to CORE (all C++ must be modern VBO path) | subroutines/atomics available; any remaining compute-like passes need explicit outputs | [ ] |
 | 6 | **4.1** | `(4, 1)` core | `410` | No — low risk | none required | optional: explicit uniform locations, `textureGather` | [ ] |
 | 7 | **4.2** | `(4, 2)` core | `420` | No — low risk | none required | optional: image load/store, dual-source blending | [ ] |
@@ -88,32 +93,89 @@ from stage 3 onward as belt-and-braces until the CORE flip.
 - `MasterControl.lua`: nil guards on `playerShip:getParent():hasDockable()`.
 - All legacy texture fns migrated (`texture1D/2D/3D/Cube` → `texture()`/`textureLod()`).
 
-### Known issues NOT caused by the upgrade (observed during 5-run QA)
+### Known issues NOT caused by the upgrade (observed during QA)
 - `BSP Incoming Mesh Error: Vertex Position Underflow` — pre-existing, seed-dependent
   degenerate asteroid mesh (`libphx/src/Triangle.cpp:84`).
 - `GameView.lua:21 attempt to call method 'beginRender' (a nil value)` — Lua-side dangling
   reference, likely same deleted-entity family as MasterControl; investigate separately.
 
+## Stage 4 (3.3 / 330) Notes — DONE 2026-08-22
+
+The mechanical part went fast; the value was in what the offline validator caught.
+
+### Conversion mechanics
+- All 73 `gl_FragColor` fragment shaders → explicit `layout(location = 0) out vec4 fragColor;`
+  declared before the first code line, refs rewritten (`fragColor`, not `outColor` — keep
+  ONE canonical name). 146 files / 148 call sites across both shader trees.
+- **Macro blind spot:** grep-based scans miss macro-mediated output. `brush.glsl` defines
+  `BRUSH_OUTPUT(x)` expanding to a write of the old builtin — 9 brush shaders never matched
+  any `gl_FragColor` grep yet still needed the output declared. Fix: declare the output
+  *inside* the include so every includer gets it. Lesson: when auditing shader-wide changes,
+  also grep `#define`s for legacy tokens.
+- `deferred.glsl` `fragData0/1/2` left WITHOUT explicit locations: linker assigns 0/1/2 in
+  declaration order and runtime QA is green. Optional hardening before/at stage 5: add
+  `layout(location=0/1/2)` explicitly.
+
+### Latent bugs found & fixed (all pre-existing, none caused by the upgrade)
+These compiled under NOTHING — they are unused-at-runtime leftovers that would have kept
+rotting. The validator found them on the first pass:
+
+| File(s) | Bug | Fix |
+|---|---|---|
+| `filter/identity`, `simple_color`, `simple_image`, `ui/circle-old`, `ui/ringdim`, `gen/nebula4_weak` | wrote undeclared `outColor` (illegal under every GLSL version) | added `layout(location=0) out vec4 outColor;` |
+| `material/uv_metal` | unbalanced parens (missing `)`) — syntax error since inception | fixed |
+| `material/triplanar` | duplicate `eye` + `envMap` uniforms vs `fragment.glsl` (compat-profile leniency only) | removed dups |
+| `brush/desat` | used `saturate()` without `#include math` | include added |
+| `ptracer` | embedded `#version 450`, undefined `SCENE_DESC` placeholder (`#if 1` selected it!), pre-420pack aggregate initializers, undeclared `boxes` array | dropped embedded version, `#if 1→0`, `#extension GL_ARB_shading_language_420pack`, stub array |
+| `common.glsl` | dead `GL_EXT_gpu_shader4` extension + ifdef (HIGHQ was force-defined anyway) | removed; `#define HIGHQ` unconditional |
+
+Duplicate-uniform redeclaration compiles on Mesa compat but REJECTS on core/EGL — another
+reason the offline validator runs at CORE (see below): it simulates the strictest future state.
+
+### Offline validation harness (new tooling)
+`tools/validate_glsl.py` — compiles AND links every vertex/fragment shader headlessly via a
+standalone moderngl/EGL context:
+
+```bash
+python3 tools/validate_glsl.py [NNN]   # explicit version
+python3 configure.py test              # auto-detects NNN from libphx/src/Shader.cpp
+```
+
+- Replicates the engine preprocessor: recursive `#include` resolution + `#autovar` strip,
+  then prepends `#version` exactly like `Shader.cpp`. Auto-detect means bump `Shader.cpp`
+  once and the harness follows — no drift between engine level and test level.
+- **EGL cannot create compatibility profiles** (GLX can — that's why the game runs fine).
+  So the harness validates at `<NNN> core`: stricter than runtime compat, and from stage 4
+  the tree has zero compat-only builtins, making core validation legal everywhere.
+- Each file links against an auto-generated **stub counterpart** built from its own
+  interface declarations (fragment's `in`s → stub VS outs, vertex's `out`s → stub FS ins),
+  giving every file true driver-side compile+link coverage without knowing real pairs.
+- Stage-4 result: **113/113 OK at 330 core**, then runtime QA green (skybox/stars/sun/
+  flight/weapons/thrusters).
+- Future tier (proposed): extend with real-pair linking by scraping `Cache.Shader(vs, fs)`
+  calls, then semantic unit tests (render pure-function shaders — `filter/*`, `ui/*` SDFs —
+  into small FBOs and assert pixel outputs); golden-image regression only with tolerance-
+  aware diffing. Headless EGL makes tiers 1–2 CI-able (llvmpipe).
+
+
 ### What makes each trouble spot a trouble spot
 
-- **3.3 / GLSL 330:** the core profile drops every deprecated fixed-function built-in. With B/C/D/E already done in stage 3, the remaining work is checklist A: convert the ~73 `gl_FragColor` fragment shaders to explicit `out vec4`. Vertex side is clean (`gl_Vertex` gone since stage 3, `mProjUI/mViewUI` in place — mind the eager-autovar trap).
 - **4.0 / GLSL 400:** last of the legacy removals land; safe to flip the context to CORE profile, which removes immediate mode from the driver entirely. C++ must be 100% on the VBO path (it is — `Draw.cpp` was already rewritten).
 - **4.3 / GLSL 430:** compute shaders and SSBOs become real. The engine's legacy "compute" fragment passes (`computeAO`, etc.) can be migrated to native `.comp` + `glDispatchCompute`, or left as-is (they still compile).
 - **4.6 / GLSL 460:** final gate — SPIR-V support, robust buffer access. No forced shader syntax changes, but this is where the full deprecation sweep and GLEW capability verification happen.
 
-## Shader Migration Checklist (for Stage 4)
+## Shader Migration Checklist — COMPLETE after stage 4
 
-Counts verified 2026-08-22 after stage 3: **73** fragment files still use `gl_FragColor`
-(only remaining legacy output; `gl_FragData[]` = 0, `varying`/`attribute` = 0,
-`texture1D/2D/3D/Cube` = 0, `gl_ProjectionMatrix`/`gl_ModelViewMatrix` = 0).
+Final counts verified 2026-08-22: `gl_FragColor`/`gl_FragData[]` = 0,
+`varying`/`attribute` = 0, legacy texture fns = 0,
+`gl_ProjectionMatrix`/`gl_ModelViewMatrix` = 0, embedded `#version` = 0.
 
-### A. Fragment outputs (`gl_FragColor` → `out vec4`) — REMAINING (the only real stage-4 work)
-Each of the ~73 fragment shaders needs `layout(location=0) out vec4 outColor;` +
-`gl_FragColor→outColor` (deferred G-buffer files already use `fragData0/1/2` via
-`res/shader/include/deferred.glsl` — add `layout(location=0/1/2)` for `330`, with
-`libphx/src/Shader.cpp:98-101` `glBindFragDataLocation` fallback).
-- UI/filter/effect/compute: `layout(location=0) out vec4 outColor;`
-- Deferred: verify `material/*` and `light/*` keep using `setAlbedo()` etc.
+### A. Fragment outputs (`gl_FragColor` → `out vec4`) — DONE during stage 4
+All 73 fragment files converted to explicit `layout(location = 0) out vec4 fragColor;`
+(canonical name: `fragColor`; the six pre-existing `outColor` users keep their local
+declaration). Deferred G-buffer files use `fragData0/1/2` via
+`res/shader/include/deferred.glsl` (linker-assigned locations 0/1/2; optional explicit
+`layout()` hardening noted in Stage 4 notes).
 
 ### B. Texture functions — DONE during stage 3
 All `texture2D/texture1D/texture3D/textureCube/textureCubeLod` calls migrated to
@@ -146,13 +208,18 @@ For **every** stage (1–11):
    ```bash
    python3 configure.py build && ./run.sh LTheory
    ```
-6. Watch stderr for `CreateGLShader: Failed to compile shader` — any hit means a shader still uses syntax removed by the new GLSL version; fix that shader, rebuild, repeat.
+6. Validate shaders offline BEFORE running (catches ~all compile failures in seconds):
+   ```bash
+   python3 configure.py test        # runs tools/validate_glsl.py at the engine's GLSL level
+   ```
+   Then rebuild and run, still watching stderr for `CreateGLShader: Failed to compile shader`
+   (runtime catches real-pair link issues the stub validator cannot see).
 7. Visual QA sweep: skybox, stars, G-buffer materials, UI/HUD, post-processing filters, effects. Confirm no missing/broken passes.
 8. Commit on green. Check off the stage in the table above and update `AGENTS.md`.
 
 ## Known Failure Modes & Rollback
 
-- **`'gl_FragColor' undeclared` / `'gl_Vertex' undeclared` / `texture1D undeclared`** at first shader compile → a shader still uses legacy built-ins removed by the new GLSL version. Grep for the symbol, fix, rebuild. At `313ddc9` `75` `gl_FragColor`, `58` `texture2D` + `18` `texture1D/3D` remain.
+- **`'gl_FragColor' undeclared` / `'gl_Vertex' undeclared` / legacy texture fn errors** at first shader compile → a shader still uses legacy syntax removed by the new GLSL version. Since stage 4 the tree is fully clean — if `python3 configure.py test` passes but runtime still fails, suspect a real vs/fs pair link mismatch or an include not present in BOTH trees (`res/shader/` and `res/ltheory-test-master/res/shader/`; note the master tree is a partial copy and lacks some files).
 - **White background black models** → deferred `fragData0/1/2` without `layout(location=)` + `glBindFragDataLocation` `libphx/src/Shader.cpp:98` `res/shader/include/deferred.glsl:21` → `texAlbedo` black, `texLighting` 0.
 - **Black screen purple streaks left corner / green screen / half-black** → `ui.glsl:6` `gl_ProjectionMatrix` at `330` core + `Viewport` not pushing `mProjUI` `libphx/src/Viewport.cpp:51` → `mProj/mView` `0` → UI `Draw.Rect` offscreen, attribute mismatch `Shader.cpp:91-93` locations 0/1/2.
 - **Skybox missing squares / boxes moving when flying / stars through skybox** → two distinct causes, check in this order:
@@ -164,7 +231,10 @@ For **every** stage (1–11):
 - **Context creation returns NULL / engine aborts at boot** → driver refused the requested version/profile; check `SDL_GL_GetError()` output and Mesa DRI version.
 - **Rollback:** revert the two-line change (`Main.cpp` + `Shader.cpp`) plus any profile-mask flip, rebuild, re-run. Each stage is independent — a failed stage rolls back to the previous green commit without touching earlier stages.
 
-#### Affected Shader Files
-- Fragment shader files containing legacy `gl_FragColor` output: ~73 files under `res/shader/fragment/**`. Run `rg -l 'gl_FragColor'` to list them; each needs an explicit `out vec4 outColor;` declaration and replacement of the `gl_FragColor` assignments.
-- Texture function files using legacy texture calls: ~38 files. Use `rg -l 'texture2D('` and similar patterns to identify them; replace with `texture(...)`, `textureLod(...)`, or `textureCube...`.
-+ *Add a tip:* If you hit a green‑screen after bumping to 4.0, first run the `glBegin` test path in `Draw.cpp` (should be dead code) – sometimes drivers still expect it for internal state.
+#### Affected Shader Files — HISTORICAL, all resolved as of stage 4
+The legacy-token audit (`gl_FragColor` outputs, legacy texture fns) is complete — see
+"Shader Migration Checklist" above. For any future audit, run
+`python3 tools/validate_glsl.py <NNN>` instead of grepping: it catches undeclared
+identifiers, syntax errors, duplicate uniforms, and macro-mediated output writes that
+greps miss. Remember to check `#define` bodies for hidden legacy tokens (the
+`BRUSH_OUTPUT` lesson from Stage 4).

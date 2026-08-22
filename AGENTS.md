@@ -231,13 +231,18 @@ This is the most undocumented part of the engine's graphics stack. Captured here
 
 #### GLSL 330 Bump — Attempted & Reverted (July 2026)
 
-#### Stage Ladder Progress (Aug 2026): 3.2 / GLSL 150 GREEN
-The version-ladder plan lives in `opengl-glsl-upgrade.md` (read its **Stage 3 Troubleshooting Notes** before stage 4). Stages 0–3 are complete: engine runs at `Engine_Init(3,2)` + `#version 150 compatibility` (`libphx/src/Shader.cpp:27`). Key changes landed with stage 3:
-- `ui.glsl`/`ui3D.glsl` migrated off `gl_ProjectionMatrix/gl_ModelViewMatrix` (Mesa rejects them at bare `#version 150` even with COMPAT context) onto `mProjUI/mViewUI`, pushed/popped by `Viewport_Push/Pop` (`libphx/src/Viewport.cpp`).
+#### Stage Ladder Progress (Aug 2026): 3.3 / GLSL 330 GREEN
+The version-ladder plan lives in `opengl-glsl-upgrade.md` (read its **Stage 3** and **Stage 4** troubleshooting notes before stage 5). Stages 0–4 are complete: engine runs at `Engine_Init(3,3)` + `#version 330 compatibility` (`libphx/src/Shader.cpp:27`). Key changes landed with stage 4:
+- All 73 `gl_FragColor` fragment shaders → explicit `layout(location=0) out vec4 fragColor;`; output for the 9 brush shaders declared inside `include/brush.glsl` (macro blind spot: grep audits must also check `#define` bodies).
+- **Offline shader validator:** `python3 configure.py test` → `tools/validate_glsl.py`, compiles+links all 113 shaders headlessly via moderngl/EGL at the engine's current GLSL level (auto-parsed from `Shader.cpp`). EGL can't do compatibility profiles, so it validates at `<NNN> core` — stricter than runtime and now legal everywhere since zero compat-only builtins remain. Run it before every stage bump.
+- Stage-4 sweep repaired 12 pre-existing broken shaders that had never compiled (undeclared `outColor` writers, `uv_metal` missing paren, `triplanar` duplicate uniforms, `desat` missing include, `ptracer` embedded `#version 450` + `SCENE_DESC` + 420pack initializers) and removed the dead `GL_EXT_gpu_shader4` block from `common.glsl`.
+- Legacy-token counts after stage 4, all ZERO: `gl_FragColor/gl_FragData`, `varying/attribute`, legacy texture fns, embedded `#version`.
+
+Stage-3 recap (still relevant):
+- `ui.glsl`/`ui3D.glsl` migrated off `gl_ProjectionMatrix/gl_ModelViewMatrix` onto `mProjUI/mViewUI`, pushed/popped by `Viewport_Push/Pop` (`libphx/src/Viewport.cpp`).
 - **Eager autovar trap:** `Shader_Start` uploads `#autovar` uniforms once, at start time. Passes that start a shader before pushing their render-target viewport bake in the window matrices — this was the skybox "gaps/squares" root cause; `TexCube_Generate` now starts inside the first RT push.
-- All legacy texture fns (`texture1D/2D/3D/Cube`) → `texture()`/`textureLod()`; `starbg.glsl` discard guard added; `MasterControl.lua` nil guards re-applied.
 - Debug tools kept env-gated: `PHX_DEBUG_TEXCUBE=1` (tiler bypass), `PHX_DEBUG_TEXCUBE_DUMP=<prefix>` (dump cubemap faces to PNG).
-- Remaining for stage 4 (330): only checklist item A — ~73 fragment files still on `gl_FragColor`.
+- Remaining for stage 5 (4.0): flip `SDL_GL_CONTEXT_PROFILE_MASK` to CORE in `Engine.cpp` + bump to `400`; optional hardening: explicit `layout(location=0/1/2)` on `deferred.glsl` outputs.
 
 An attempt was made to bump `Engine_Init(2, 1)` → `(3, 3)` (`src/Main.cpp:15`) and `#version 130` → `#version 330` (`libphx/src/Shader.cpp:27`) together. **It builds but aborts at runtime** on the first shader compile, and has been **reverted** to keep the stable baseline. Findings, so the next attempt has a real roadmap:
 

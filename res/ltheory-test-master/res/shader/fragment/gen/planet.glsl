@@ -3,6 +3,8 @@
 #include noise
 #include texcube
 
+
+layout(location = 0) out vec4 fragColor;
 uniform float seed;
 uniform float freq;
 uniform float power;
@@ -54,5 +56,5 @@ float genHeight(vec3 p) {
 
 void main() {
   vec3 p = cubeMapDir(uv);
-  gl_FragColor = vec4(genHeight(p), genColor(p), genClouds(p), 0.0);
+  fragColor = vec4(genHeight(p), genColor(p), genClouds(p), 0.0);
 }
