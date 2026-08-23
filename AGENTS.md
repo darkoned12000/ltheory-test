@@ -8,7 +8,7 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 - **Scripting:** Lua (LuaJIT 2.1.x, Lua 5.1 ABI — see LuaJIT Status note)
 - **Build System:** CMake (minimum `VERSION 3.16`, set in both `CMakeLists.txt` and `libphx/CMakeLists.txt`)
 - **Configuration:** Python (`configure.py`)
-- **Graphics:** OpenGL (context requested as **4.2 core profile** from `src/Main.cpp:15` → `Engine_Init(4,2)`; shaders compiled at **GLSL `#version 420 core`** via `libphx/src/Shader.cpp:27`; one global VAO bound for the process lifetime in `OpenGL_Init`), GLEW (**2.2.0** system lib — header locally patched to report 2.3; exposes GL up to 4.6)
+- **Graphics:** OpenGL (context requested as **4.3 core profile** from `src/Main.cpp:15` → `Engine_Init(4,3)`; shaders compiled at **GLSL `#version 430 core`** via `libphx/src/Shader.cpp:27`; one global VAO bound for the process lifetime in `OpenGL_Init`), GLEW (**2.2.0** system lib — header locally patched to report 2.3; exposes GL up to 4.6)
 - **Input/Windowing:** SDL2
 - **Physics:** Bullet Physics
 - **Audio:** FMOD
@@ -34,9 +34,9 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 | stb_image | image decoding (PNG/TGA) | v2.30 (bundled, header-only) | `libphx/ext/include/stb` | v2.30 is the latest upstream snapshot (stb does not use GitHub Releases) — **up to date** | updated from v1.48 in this session |
 
 **OpenGL / GLSL version status (the two values that matter for the `upgradeOpenGL.md` migration):**
-- **OpenGL context:** requested as **4.2 core profile** — `Engine_Init(4,2)` at `src/Main.cpp:15` → `SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_CORE, ...)` in `libphx/src/Engine.cpp`. Mesa 26.2 grants it (driver capable of 4.6).
-- **GLSL:** hard-coded **`#version 420 core`** at `libphx/src/Shader.cpp:27`.
-- Stages 0–7 of the ladder in `opengl-glsl-upgrade.md` are COMPLETE (2026-08-22). Remaining: 4.3 (compute/SSBO era), 4.4, 4.5, 4.6 (final gate). Read that file's Stage 5 notes before touching rendering code — especially Finding B: **every draw must run under an explicitly started program** (`glUseProgram(0)` blits are silent no-ops on Mesa core; no error is raised).
+- **OpenGL context:** requested as **4.3 core profile** — `Engine_Init(4,3)` at `src/Main.cpp:15` → `SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_CORE, ...)` in `libphx/src/Engine.cpp`. Mesa 26.2 grants it (driver capable of 4.6).
+- **GLSL:** hard-coded **`#version 430 core`** at `libphx/src/Shader.cpp:27`.
+- Stages 0–8 of the ladder in `opengl-glsl-upgrade.md` are COMPLETE (2026-08-22). Remaining: 4.4, 4.5, 4.6 (final gate) on branch `upgrade-gl4_6`. Read that file's Stage 5 notes before touching rendering code — especially Finding B: **every draw must run under an explicitly started program** (`glUseProgram(0)` blits are silent no-ops on Mesa core; no error is raised).
 
 ## Codebase Structure
 - `src/`: Main entry point and high-level game code.
@@ -202,7 +202,7 @@ All critical shaders have been updated from GLSL 120 to GLSL 130 syntax:
 **13 fragment shaders:** `varying` → `in` (ptracer, skybox_dynamic, ptracer_out, terrain, filter/*, compute/*)
 
 ### Key Architectural Notes
-The engine prepends `#version 130\n` to all shaders via `glShaderSource(self, 2, srcs, 0)` in `libphx/src/Shader.cpp:63-68`. Shards must NOT contain their own `#version` directive. The `#include` and `#autovar` directives are custom preprocessor extensions handled by `GLSL_Preprocess()` in `Shader.cpp:129-171` — `#include` is recursively resolved via `GLSL_Load()`, and `#autovar` lines are stripped from the source and registered as automatic ShaderVar bindings.
+The engine prepends the current `#version` (see `Shader.cpp:27`) to all shaders via `glShaderSource(self, 2, srcs, 0)` in `libphx/src/Shader.cpp:63-68`. Shards must NOT contain their own `#version` directive. The `#include` and `#autovar` directives are custom preprocessor extensions handled by `GLSL_Preprocess()` in `Shader.cpp:129-171` — `#include` is recursively resolved via `GLSL_Load()`, and `#autovar` lines are stripped from the source and registered as automatic ShaderVar bindings.
 
 **GLSL include chain:** `vertex.glsl` declares all standard uniforms (`mView`, `mProj`, `mViewInv`, `mProjInv`, `eye`, `mWorld`, `mWorldIT`) and the `VS_BEGIN`/`VS_END` macros. `fragment.glsl` declares `eye`, `mWorldIT`, `envMap`, `irMap`, `starColor`, `starDir`, and the `FRAGMENT_CORRECT_DEPTH` macro. `common.glsl` defines `HIGHQ`/`LOWQ`, `farPlane`, and `Fcoef`.
 
@@ -231,17 +231,17 @@ This is the most undocumented part of the engine's graphics stack. Captured here
 
 #### GLSL 330 Bump — Attempted & Reverted (July 2026)
 
-#### Stage Ladder Progress (Aug 2026): 4.2 / GLSL 420 CORE — GREEN
+#### Stage Ladder Progress (Aug 2026): 4.3 / GLSL 430 CORE — GREEN
 The version-ladder plan lives in `opengl-glsl-upgrade.md` (**read its Stage 5 notes before
-touching rendering code**). Stages **0–7 are complete**: engine runs at `Engine_Init(4,2)`
-CORE profile + `#version 420 core` (`libphx/src/Shader.cpp:27`). Key changes landed with
-stages 5–7:
+touching rendering code**). Stages **0–8 are complete**: engine runs at `Engine_Init(4,3)`
+CORE profile + `#version 430 core` (`libphx/src/Shader.cpp:27`). Key changes landed with
+stages 5–8:
 - **Global VAO:** core profile has no default VAO; one is created after `glewInit()` in `OpenGL_Init` and bound for the process lifetime.
 - **No program-0 draws:** Mesa core rasterizes nothing (silently!) when no program is bound — `Renderer:present/presentAll/startPostEffects-downsample` explicitly run `Cache.Shader('ui','filter/identity')`. Every new draw path MUST start a program.
 - **Immediate mode fully removed:** `Draw.cpp` provides internal `Imm_*` VBO API (`DrawInternal.h`); Tex1D/Tex2D/Mesh_DrawNormals converted; dead `Tex3D_Draw` deleted (+ Lua FFI bindings). `GLMatrix.cpp` is pure-CPU stacks (equivalence-proven vs the old fixed-function path).
 - **Validator stub fix:** `tools/validate_glsl.py` stub shaders previously used `v_`-prefixed names that never matched real interfaces — Mesa ≤4.1 linked leniently, 420 rejected. Stubs now use exact interface names; genuine 113/113 at 410 AND 420.
 - Debug tooling kept env-gated: `PHX_DEBUG_TEXCUBE=1`, `PHX_DEBUG_TEXCUBE_DUMP=<prefix>`, `PHX_DEBUG_DUMP=<frame>` (GameView pipeline PNG dumps), `[GL]` context banner at boot.
-- Stages 5–7 merged (GL 4.2/420 CORE); stage 8 (4.3/430) green on branch `upgrade-gl4_3`. Remaining ladder: 4.4/4.5/4.6. Half-tap Gaussian blur shipped (~2x fewer fetches, `filter/blur.glsl`); textureGather evaluated & rejected for RGBA pipeline (see ladder Stage 8 notes).
+- Stages 5–8 merged to main (GL 4.3/430 CORE). Remaining ladder: 4.4/4.5/4.6 on branch `upgrade-gl4_6`. Half-tap Gaussian blur shipped (~2x fewer fetches, `filter/blur.glsl`); textureGather evaluated & rejected for RGBA pipeline (see ladder Stage 8 notes).
 
 Historical stage-3/4 recap (still relevant):
 - All 73 `gl_FragColor` fragment shaders → explicit `layout(location=0) out vec4 fragColor;`; output for the 9 brush shaders declared inside `include/brush.glsl` (macro blind spot: grep audits must also check `#define` bodies).
@@ -339,7 +339,7 @@ Asteroid `scale` drives both visual size and health. See `System:spawnAsteroidFi
 #### Shaders & interaction
 - Shaders live in `res/shader/` (vertex + fragment `.glsl`). Loaded at runtime via `Cache.Shader(vs, fs)` (e.g. `Cache.Shader('identity', 'sdf/asteroid')`). The engine prepends `#version 130` and runs a custom preprocessor (`#include`, `#autovar`).
 - To draw UI: `UI.DrawEx.*` (`Rect`, `TextAdditive`, `Tri`, `Arrow`, `Wedge`, ...). `DrawEx.Arrow`/`Tri` compile `fragment/ui/triangle.glsl` — a UI triangle SDF. That shader had a latent GLSL bug (writing to read-only uniforms + `vec3`/`vec2` mismatch) that crashed the first time anything drew a triangle; it is now fixed.
-- To create a new shader: copy an existing pair, `#include` the shared headers (`vertex.glsl`/`fragment.glsl`), declare uniforms with `uniform` in an include and bind them with `#autovar`, write to `out vec4 fragData0/1/2` for deferred material passes or your own `out vec4` for UI/effect passes. Keep GLSL 130 syntax (`in`/`out`/`texture()`).
+- To create a new shader: copy an existing pair, `#include` the shared headers (`vertex.glsl`/`fragment.glsl`), declare uniforms with `uniform` in an include and bind them with `#autovar`, write to `out vec4 fragData0/1/2` for deferred material passes or your own `out vec4` for UI/effect passes. Use core-profile GLSL (`in`/`out`/`texture()`) and remember: every draw needs an explicitly started program.
 
 ### Modernization Plan — What To Update
 
@@ -347,17 +347,29 @@ This engine is ~10 years old. The goal is to get it running reliably on modern h
 
 #### Worth Doing (High Impact, Low Risk)
 
- 1. **Bump `#version` to 330** — The engine hardcodes `#version 130` in `Shader.cpp:27`. GLSL 330 gives proper `in`/`out` support, `texture()` as the standard sampler, and better compiler support on modern GPUs. All shaders are now GLSL 130+ compatible (items 2-4 below are complete).
-    - **Note:** `README.md` previously claimed "GLSL 330 already done" — that is inaccurate. `Shader.cpp` still emits `#version 130`, and shaders use `out vec4 fragData0/1/2` (G-buffer) rather than `layout(location=N)` qualifiers. The GLSL 120→130 modernization is complete; the 330 bump remains a TODO.
-    - **Context skew to fix alongside it:** the C++ side requests an **OpenGL 2.1 compatibility-profile context** (`Engine_Init(2, 1)` in `src/Main.cpp:15`), but the shaders are GLSL 3.0 (`#version 130`). Before/with the 330 bump, raise the requested context to `Engine_Init(3, 3)` (or higher) so the context matches the shader level. See the "Graphics / OpenGL Context" section above for the full picture.
+The original items here (GLSL/context bumps, legacy-token cleanup) are **DONE** —
+superseded by the version ladder (`opengl-glsl-upgrade.md`, stages 0–8 complete at
+GL 4.3/430 CORE). What remains worth doing is the post-4.6 backlog below plus:
 
-2. **Replace corrupted texture assets** — Nearly all textures in `res/` are corrupted 130-byte placeholders. Replace with real assets or procedural generation. The engine already handles missing textures gracefully with magenta fallbacks.
+1. **Clean up `common.glsl` dead code** — `HIGHQ` is always force-defined (line 16), making `LOWQ` branches dead code. Either remove the `#ifdef HIGHQ` guards entirely or add a runtime toggle. Harmless but confusing warnings.
 
-3. **Clean up `common.glsl` dead code** — `HIGHQ` is always force-defined (line 16), making `LOWQ` branches dead code. Either remove the `#ifdef HIGHQ` guards entirely (always use the HIGHQ path) or add a runtime toggle. This eliminates confusing GLSL warnings about unused uniforms.
+### Post-4.6 Modernization Backlog (start after stages 9–11 land)
 
-4. **Complete GLSL 130 cleanup** — Replace remaining ~55 `texture2D` calls and `gl_FragColor` usage in filter/UI/compute shaders (deprecated but functional in GLSL 130).
+Ordered by expected impact. These are feature investments, not correctness work —
+the engine runs fully functional at every ladder stage. Branch off main once
+`upgrade-gl4_6` merges.
 
-5. **Pin / verify LuaJIT 2.1** — The Linux runtime is the distro's OpenResty LuaJIT 2.1.1761786044, which diverges slightly from upstream Mike Pall 2.1-beta3. For reproducible builds, build LuaJIT from a pinned source, and run an FFI smoke-test pass (Physics/Matrix/ShaderVar bindings) whenever the LuaJIT version changes. The `dump2.lua` version check is currently disabled as a stopgap.
+1. **Compute shader plumbing (`.comp` stage)** — `Shader_Load` only knows vertex+fragment pairs. Add a stage enum, `.comp` loading through the existing preprocessor/cache, `glDispatchCompute` + memory-barrier API, and SSBO helpers. THE flagship enabler — everything below that says "compute" waits on this.
+2. **GPU particle systems** — explosions, thruster plumes, engine trails simulated in compute (100k+ sprites) and rendered as billboards. Highest visual payoff in the codebase; removes CPU-side Explosion/dust entity limits.
+3. **Shadow maps for point lights** — deferred light passes (`light/global.glsl`, `light/point.glsl`) currently do unshadowed radial falloffs. Shadow depth maps make **textureGather** finally relevant (PCF taps; see rejection note in `filter/blur.glsl`) and enable SSAO from depth.
+4. **Migrate `Mesh_ComputeAO` to native compute** (optional) — currently GPGPU-via-raster at world-gen time; works fine. Migrate only if ship-gen feels slow or as a compute testbed after item 1.
+5. **Explicit uniform locations** — `layout(location=N) uniform` drops runtime `glGetUniformLocation` lookups (the never-adopted 4.1 feature). Optional cleanup/optimization pass over ShaderVar binding.
+6. **Persistent-mapped buffers (`glBufferStorage`, 4.4 feature)** — evaluate for the `Imm_*` scratch VBO and mesh streaming to cut per-frame orphaning costs. Benchmark with the built-in profiler first.
+7. **SPIR-V shader loading (4.6 feature)** — optional faster/offline-compiled shader loads via `glShaderBinary`; low priority, driver support varies.
+8. **Replace corrupted texture assets** — real assets or procedural generation (magenta fallbacks still appear in places).
+9. **Freelancer-style environment expansion** — procedural nebulae, dust clouds, sector system (gameplay-facing goal).
+10. **Pin LuaJIT 2.1** — build from pinned OpenResty source for reproducible Linux builds; run an FFI smoke-test pass (Physics/Matrix/ShaderVar bindings) whenever the LuaJIT version changes. The `dump2.lua` version check remains disabled as a stopgap.
+11. **Optional hardening** — explicit `layout(location=0/1/2)` on `deferred.glsl` fragData outputs; `find_package(OpenGL/GLEW)` imported targets in CMake.
 
 #### Not Worth Doing (High Cost, Low Benefit)
 
@@ -377,7 +389,7 @@ This engine is ~10 years old. The goal is to get it running reliably on modern h
 
 When writing or adapting shaders for this engine:
 
-- **No `#version` directives** — The engine prepends `#version 130\n` automatically via `Shader.cpp:63-68`.
+- **No `#version` directives** — The engine prepends the current level (`#version 430 core\n` today) automatically via `Shader.cpp:63-68`; it auto-follows whatever `Shader.cpp:27` declares.
 - **Use `#include` for shared code** — `vertex.glsl` (uniforms, VS_BEGIN/VS_END), `fragment.glsl` (eye, envMap, irMap), `common.glsl` (constants), `deferred.glsl` (G-buffer output), `gamma.glsl`, `color.glsl`, `math.glsl`.
 - **Use `#autovar` for auto-bound uniforms** — Registers a variable for automatic ShaderVar stack binding. The variable must also be declared as `uniform` in an include file.
 - **G-buffer output via `#include deferred`** — Use `setAlbedo()`, `setNormal()`, `setDepth()`, `setRoughness()`, `setMaterial()`. These write to `fragData0/1/2` (mapped to color attachments 0-2). You cannot mix `out vec4` with these.
@@ -396,10 +408,6 @@ chain, and `libphx/script/ffi/libphx.lua` loads `libphx64.so` by absolute path. 
 also run `./bin/lt64r LTheory` directly from the repo root without any env var.
 
 ### Next Steps
-1. **Optional feature adoption (4.1+ features):** `textureGather` in blur/shadow passes — separate optimization branch, benchmark with the built-in profiler.
-2. **Stage 8 (4.3 / 430):** compute shaders + SSBOs become available; migrate legacy "compute" fragment passes (`computeAO` etc.) or leave as-is. See ladder doc.
-3. **Replace corrupted textures** with real assets or procedural generation to restore visual quality.
-4. **Extend the engine** for Freelancer-style 3D space environments (procedural nebulae, dust, sectors, etc.).
-5. **Pin LuaJIT** — Build LuaJIT 2.1 from a pinned source for reproducible Linux builds; smoke-test FFI bindings after any version bump.
-6. **Remaining ladder:** stages 9–11 (4.4/4.5/4.6) after 4.3 lands.
-7. **Update this document** as new milestones are reached.
+1. **Finish the ladder on branch `upgrade-gl4_6`:** stages 9–11 (4.4/440 → 4.5/450 → 4.6/460). Additive two-line bumps each; validate + QA per stage; final deprecation sweep + GLEW capability verification at 4.6.
+2. **Then start the Post-4.6 Modernization Backlog above**, led by compute plumbing + GPU particles.
+3. **Update this document** as new milestones are reached.
