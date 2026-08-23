@@ -21,18 +21,9 @@ static VP vp[MAX_STACK_DEPTH];
 
 static void Viewport_Set (VP const* self) {
   GLCALL(glViewport(self->x, self->y, self->sx, self->sy))
-  GLCALL(glMatrixMode(GL_PROJECTION))
-  GLCALL(glLoadIdentity())
-
-  /* GL's window coordinates and texture coordinates have opposite vertical
-   * orientation. Automatically compensate via the projection matrix. */
-  if (self->isWindow) {
-    GLCALL(glTranslatef(-1.0, 1.0, 0.0))
-    GLCALL(glScalef(2.0f / self->sx, -2.0f / self->sy, 1.0f))
-  } else {
-    GLCALL(glTranslatef(-1.0, -1.0, 0.0))
-    GLCALL(glScalef(2.0f / self->sx,  2.0f / self->sy, 1.0f))
-  }
+  /* NOTE : The legacy fixed-function matrix setup that used to live here was
+   * removed in the core-profile migration (stage 5). Shaders consume the
+   * mProjUI/mViewUI autovars pushed by Viewport_Push instead. */
 }
 
 float Viewport_GetAspect () {

@@ -1,6 +1,7 @@
 #include "ArrayList.h"
 #include "Box3.h"
 #include "Bytes.h"
+#include "DrawInternal.h"
 #include "Matrix.h"
 #include "Mesh.h"
 #include "Metric.h"
@@ -246,15 +247,24 @@ void Mesh_Draw (Mesh* self) {
 }
 
 void Mesh_DrawNormals (Mesh* self, float scale) {
-  glBegin(GL_LINES);
+  ImmVert buf[512];
+  int n = 0;
   ArrayList_ForEach(self->vertex, Vertex, v) {
-    glVertex3f(v->p.x, v->p.y, v->p.z);
-    glVertex3f(
-      v->p.x + scale * v->n.x,
-      v->p.y + scale * v->n.y,
-      v->p.z + scale * v->n.z);
+    buf[n].x = v->p.x;             buf[n].y = v->p.y;             buf[n].z = v->p.z;
+    buf[n].u = 0.0f;               buf[n].v = 0.0f;
+    ++n;
+    buf[n].x = v->p.x + scale * v->n.x;
+    buf[n].y = v->p.y + scale * v->n.y;
+    buf[n].z = v->p.z + scale * v->n.z;
+    buf[n].u = 0.0f;               buf[n].v = 0.0f;
+    ++n;
+    if (n == 512) {
+      Imm_Draw(buf, n, GL_LINES);
+      n = 0;
+    }
   }
-  GLCALL(glEnd())
+  if (n > 0)
+    Imm_Draw(buf, n, GL_LINES);
 }
 
 void Mesh_GetBound (Mesh* self, Box3f* out) {

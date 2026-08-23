@@ -2,12 +2,35 @@
 #include "CullFace.h"
 #include "OpenGL.h"
 #include "RenderState.h"
+#include <SDL2/SDL.h>
+#include <cstdio>
 
 void OpenGL_Init () {
   static bool init = false;
   if (!init) {
     init = true;
     glewInit();
+
+    /* Core-profile contexts have no default vertex array (compat profile's
+     * VAO 0 does not exist). Create one global VAO and leave it bound for
+     * the lifetime of the process: all existing buffer/attrib code then
+     * records into it exactly like it recorded into implicit VAO 0. */
+    GLuint vao = 0;
+    GLCALL(glGenVertexArrays(1, &vao))
+    GLCALL(glBindVertexArray(vao))
+
+    /* One-time context report — makes version/profile skew visible. */
+    GLint profile = 0;
+    SDL_GL_GetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, &profile);
+    printf(
+      "[GL] %s | %s | GL %s | GLSL %s | profile %s\n",
+      glGetString(GL_VENDOR),
+      glGetString(GL_RENDERER),
+      glGetString(GL_VERSION),
+      glGetString(GL_SHADING_LANGUAGE_VERSION),
+      profile == SDL_GL_CONTEXT_PROFILE_CORE ? "CORE"
+        : profile == SDL_GL_CONTEXT_PROFILE_COMPATIBILITY ? "COMPATIBILITY"
+        : "ES");
   }
 
   GLCALL(glDisable(GL_MULTISAMPLE))
@@ -22,18 +45,9 @@ void OpenGL_Init () {
   GLCALL(glBlendFunc(GL_ONE, GL_ZERO))
 
   GLCALL(glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS))
-  GLCALL(glDisable(GL_POINT_SMOOTH))
-  GLCALL(glDisable(GL_LINE_SMOOTH))
-  GLCALL(glHint(GL_POINT_SMOOTH_HINT, GL_FASTEST))
-  GLCALL(glHint(GL_LINE_SMOOTH_HINT, GL_FASTEST))
-  GLCALL(glLineWidth(2))
-
-  GLCALL(glMatrixMode(GL_PROJECTION))
-  GLCALL(glLoadIdentity())
-  GLCALL(glMatrixMode(GL_MODELVIEW))
-  GLCALL(glLoadIdentity())
-
-  // GLCALL(glDepthRange(-1, 1))
+  // NOTE : GL_LINE_SMOOTH / GL_POINT_SMOOTH are compatibility-only; removed
+  // in the core-profile migration (stage 5). glLineWidth >1 is also illegal
+  // in core, so the old glLineWidth(2) default is dropped (GL default is 1).
 
   RenderState_PushAllDefaults();
 }

@@ -1,5 +1,6 @@
 #include "Bytes.h"
 #include "DataFormat.h"
+#include "DrawInternal.h"
 #include "PhxMemory.h"
 #include "OpenGL.h"
 #include "PixelFormat.h"
@@ -55,17 +56,14 @@ void Tex1D_Free (Tex1D* self) {
 }
 
 void Tex1D_Draw (Tex1D* self, float x, float y, float xs, float ys) {
-  GLCALL(glEnable(GL_TEXTURE_1D))
   GLCALL(glBindTexture(GL_TEXTURE_1D, self->handle))
-  glBegin(GL_QUADS);
-  glTexCoord1f(0);
-  glVertex2f(x, y);
-  glVertex2f(x, y + ys);
-  glTexCoord1f(1);
-  glVertex2f(x + xs, y + ys);
-  glVertex2f(x + xs, y);
-  GLCALL(glEnd())
-  GLCALL(glDisable(GL_TEXTURE_1D))
+  ImmVert q[4] = {
+    { x,       y,       0.0f, 0.0f, 0.0f },
+    { x,       y + ys,  0.0f, 0.0f, 1.0f },
+    { x + xs,  y + ys,  0.0f, 1.0f, 1.0f },
+    { x + xs,  y,       0.0f, 1.0f, 0.0f },
+  };
+  Imm_Draw(q, 4, GL_QUADS);
 }
 
 void Tex1D_GenMipmap (Tex1D* self) {

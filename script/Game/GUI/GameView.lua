@@ -6,7 +6,36 @@ GameView.name = 'Game View'
 
 local ssTable = { 1, 2, 4 }
 
+-- PHX_DEBUG_DUMP=<frame> : save pipeline checkpoints to PNGs once, at that frame.
+-- Set PHX_DEBUG_DUMP=120 to snapshot ~2s after boot.
+local dumpTargetFrame = tonumber(os.getenv('PHX_DEBUG_DUMP') or '')
+
 function GameView:draw (focus, active)
+  if dumpTargetFrame then
+    GameView.__dumpFrame = (GameView.__dumpFrame or 0) + 1
+    if GameView.__dumpFrame == dumpTargetFrame then
+      local function mkDump (name)
+        return function (tex)
+          Tex2D.Save(tex, 'dump_' .. name .. '.png')
+          print('[DUMP] saved dump_' .. name .. '.png')
+        end
+      end
+      GameView.__dumpGBuffer = function ()
+        mkDump('1_gbuffer_albedo')(self.renderer.buffer0)
+        mkDump('1b_gbuffer_normalmat')(self.renderer.buffer1)
+        mkDump('1c_zbufferL')(self.renderer.zBufferL)
+        GameView.__dumpGBuffer = nil
+      end
+      GameView.__dumpLit = function ()
+        mkDump('2_lit')(self.renderer.buffer1)
+        GameView.__dumpLit = nil
+      end
+      GameView.__dump = function ()
+        mkDump('3_final')(self.renderer.buffer0)
+        GameView.__dump = nil
+      end
+    end
+  end
   self.camera:push()
 
   local ss = ssTable[Settings.get('render.superSample')]
@@ -27,6 +56,7 @@ function GameView:draw (focus, active)
     self.renderer:stop()
     Profiler.End()
   end
+  if GameView.__dumpGBuffer then GameView.__dumpGBuffer() end
 
   do -- Lighting
     -- Gather light sources
@@ -77,6 +107,7 @@ function GameView:draw (focus, active)
       Draw.Rect(-1, -1, 2, 2)
       shader:stop()
       self.renderer.buffer1:pop()
+      if GameView.__dumpGBuffer then GameView.__dumpLit() end
     end
 
     self.renderer.buffer0, self.renderer.buffer1 = self.renderer.buffer1, self.renderer.buffer0
@@ -174,6 +205,7 @@ function GameView:draw (focus, active)
     GUI.DrawHmGui(self.sx, self.sy)
   end
 
+  if GameView.__dump then GameView.__dump() end
   RenderState.PopAll()
   ClipRect.Pop()
   self.camera:pop()

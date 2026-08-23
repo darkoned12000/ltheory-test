@@ -67,13 +67,16 @@ def main() -> int:
                 src = version_line + resolve(f, ())
                 if kind == "fragment":
                     ins = interface(src, "in")
+                    # NOTE : stub output names MUST equal the fragment input
+                    # names exactly -- GLSL interface matching compares them,
+                    # and >=420 drivers reject mismatches instead of warning.
                     stub = version_line + "".join(
-                        f"out {t} v_{n};\n" for t, n in ins) + "void main(){}\n"
+                        f"out {t} {n};\n" for t, n in ins) + "void main(){}\n"
                     ctx.program(vertex_shader=stub, fragment_shader=src)
                 else:
                     outs = interface(src, "out")
                     stub = version_line + "".join(
-                        f"in {t} v_{n};\n" for t, n in outs) + "void main(){}\n"
+                        f"in {t} {n};\n" for t, n in outs) + "void main(){}\n"
                     ctx.program(vertex_shader=src, fragment_shader=stub)
                 ok += 1
             except Exception as e:

@@ -17,7 +17,6 @@ PHX_API void       Tex3D_Pop            (Tex3D*);
 PHX_API void       Tex3D_Push           (Tex3D*, int layer);
 PHX_API void       Tex3D_PushLevel      (Tex3D*, int layer, int level);
 
-PHX_API void       Tex3D_Draw          (Tex3D* self, int layer, float x, float y, float xs, float ys);
 PHX_API void       Tex3D_GenMipmap     (Tex3D*);
 PHX_API void       Tex3D_GetData       (Tex3D*, void*, PixelFormat, DataFormat);
 PHX_API Bytes*     Tex3D_GetDataBytes  (Tex3D*, PixelFormat, DataFormat);

@@ -1,6 +1,7 @@
 #include "Bytes.h"
 #include "DataFormat.h"
 #include "Draw.h"
+#include "DrawInternal.h"
 #include "PhxMemory.h"
 #include "Metric.h"
 #include "OpenGL.h"
@@ -112,15 +113,14 @@ Tex2D* Tex2D_Clone (Tex2D* self) {
 
 void Tex2D_Draw (Tex2D* self, float x, float y, float sx, float sy) {
   Metric_AddDrawImm(1, 2, 4);
-  GLCALL(glEnable(GL_TEXTURE_2D))
   GLCALL(glBindTexture(GL_TEXTURE_2D, self->handle))
-  glBegin(GL_QUADS);
-  glTexCoord2f(0, 0); glVertex2f(x, y);
-  glTexCoord2f(0, 1); glVertex2f(x, y + sy);
-  glTexCoord2f(1, 1); glVertex2f(x + sx, y + sy);
-  glTexCoord2f(1, 0); glVertex2f(x + sx, y);
-  GLCALL(glEnd())
-  GLCALL(glDisable(GL_TEXTURE_2D))
+  ImmVert q[4] = {
+    { x,       y,       0.0f, 0.0f, 0.0f },
+    { x,       y + sy,  0.0f, 0.0f, 1.0f },
+    { x + sx,  y + sy,  0.0f, 1.0f, 1.0f },
+    { x + sx,  y,       0.0f, 1.0f, 0.0f },
+  };
+  Imm_Draw(q, 4, GL_QUADS);
 }
 
 void Tex2D_DrawEx (
@@ -131,15 +131,14 @@ void Tex2D_DrawEx (
   float u1, float v1)
 {
   Metric_AddDrawImm(1, 2, 4);
-  GLCALL(glEnable(GL_TEXTURE_2D))
   GLCALL(glBindTexture(GL_TEXTURE_2D, self->handle))
-  glBegin(GL_QUADS);
-  glTexCoord2f(u0, v0); glVertex2f(x0, y0);
-  glTexCoord2f(u0, v1); glVertex2f(x0, y1);
-  glTexCoord2f(u1, v1); glVertex2f(x1, y1);
-  glTexCoord2f(u1, v0); glVertex2f(x1, y0);
-  GLCALL(glEnd())
-  GLCALL(glDisable(GL_TEXTURE_2D))
+  ImmVert q[4] = {
+    { x0, y0, 0.0f, u0, v0 },
+    { x0, y1, 0.0f, u0, v1 },
+    { x1, y1, 0.0f, u1, v1 },
+    { x1, y0, 0.0f, u1, v0 },
+  };
+  Imm_Draw(q, 4, GL_QUADS);
 }
 
 void Tex2D_GenMipmap (Tex2D* self) {
