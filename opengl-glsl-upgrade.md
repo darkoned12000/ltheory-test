@@ -2,17 +2,18 @@
 
 Goal: migrate the engine from its current state up to **OpenGL 4.6 / GLSL 460**, one version at a time, keeping the GL context and the shader `#version` in sync at every step. Each stage is tested before moving on. Trouble spots (structural changes that force C++ or shader rewrites) are flagged — they land at **3.3, 4.0, 4.3, and 4.6**.
 
-## Current State (verified 2026-08-22, updated to 4.2/420 CORE)
+## Current State (verified 2026-08-22 — LADDER COMPLETE at 4.6/460 CORE)
 
 | Item | Value | Location |
 |---|---|---|
-| Context requested | OpenGL **4.2 core** | `src/Main.cpp:15` — `Engine_Init(4, 2)` |
-| Shader version | GLSL **420 core** (GL 4.2) | `libphx/src/Shader.cpp:27` — `versionString = "#version 420 core\n"` |
+| Context requested | OpenGL **4.6 core** | `src/Main.cpp:15` — `Engine_Init(4, 6)` |
+| Shader version | GLSL **460 core** (GL 4.6) | `libphx/src/Shader.cpp:27` — `versionString = "#version 460 core\n"` |
 | Profile mask | `SDL_GL_CONTEXT_PROFILE_CORE` | `libphx/src/Engine.cpp:74-81` |
-| Driver capability | Mesa 26.2 → **GL 4.6** available | system ICD |
-| GLEW | 2.2.0 (last official release; exposes everything up to 4.6) | system `libglew-dev` |
+| Driver capability | Mesa 26.2 → **GL 4.6** granted | system ICD |
+| GLEW | 2.2.0; `glewIsSupported("GL_VERSION_4_6")` printed at boot in the `[GL]` banner | system `libglew-dev` |
 
-Engine at **4.2/420** (stages 5–7 GREEN 2026-08-22). One global VAO is created and bound
+**The full version ladder is COMPLETE (stages 0–11 GREEN, final gate passed 2026-08-22).**
+One global VAO is created and bound
 forever in `OpenGL_Init` (`libphx/src/OpenGL.cpp`) — core profile has **no default VAO**,
 so every draw depends on it. All immediate-mode rendering is gone: `Draw.cpp` exposes an
 internal `Imm_*` API (`DrawInternal.h`) used by `Tex1D`/`Tex2D`/`Mesh_DrawNormals`; dead
@@ -40,9 +41,9 @@ GLSL versions map to OpenGL versions: 130→3.0, 140→3.1, 150→3.2, 330→3.3
 | 6 | **4.1** | `(4, 1)` core | `410` | No — low risk | none required (two-line bump) | optional: explicit uniform locations, `textureGather` — NOT adopted yet; follow-up optimization branch planned | [x] done 2026-08-22 — validator green, QA 3× clean |
 | 7 | **4.2** | `(4, 2)` core | `420` | No — but exposed a validator bug (see Stage 7 notes) | none required (two-line bump) | optional: image load/store, dual-source blending — not adopted | [x] done 2026-08-22 — validator stub-name fix, genuine 113/113, QA clean |
 | 8 | **4.3** ⚠️ | `(4, 3)` core | `430` | Only if ADOPTING compute — bump itself is additive | none required (two-line bump); `.comp` stage plumbing deferred until a compute feature justifies it | optional (NOT done): migrate `Mesh_ComputeAO` GPGPU-via-raster path to native `.comp` + SSBOs — see Stage 8 notes | [x] done 2026-08-22 — validator green, QA clean |
-| 9 | **4.4** | `(4, 4)` core | `440` | No — low risk | none required | optional: sparse texture access, non-uniform derivatives | [ ] |
-| 10 | **4.5** | `(4, 5)` core | `450` | No — low risk | none required | optional: transform-feedback stream/mode qualifiers, I/O interning | [ ] |
-| 11 | **4.6** ⚠️ | `(4, 6)` core | `460` | **YES — final gate** | verify GLEW exposes full 4.6; robust-buffer-access checks | final deprecation sweep: zero legacy syntax anywhere | [ ] |
+| 9 | **4.4** | `(4, 4)` core | `440` | No — low risk | none required | optional: sparse texture access, non-uniform derivatives | [x] done 2026-08-22 — validator green, QA clean |
+| 10 | **4.5** | `(4, 5)` core | `450` | No — low risk | none required | optional: transform-feedback stream/mode qualifiers, I/O interning | [x] done 2026-08-22 — validator green, QA clean |
+| 11 | **4.6** ⚠️ | `(4, 6)` core | `460` | **YES — final gate** | done: GLEW capability flag added to `[GL]` boot banner (`glewIsSupported("GL_VERSION_4_6")`) | done: final deprecation sweep — ZERO legacy tokens in all 113 shaders AND all C++ (only doc comments mention the removed legacy APIs) | [x] done 2026-08-22 — LADDER COMPLETE |
 
 \* Stage 4 keeps the COMPATIBILITY mask on purpose: it lets us bump GLSL to 330 (core-profile language) while any straggler C++ calls still work, then flip to CORE at stage 5 once everything is verified.
 
@@ -318,3 +319,39 @@ The legacy-token audit (`gl_FragColor` outputs, legacy texture fns) is complete 
 identifiers, syntax errors, duplicate uniforms, and macro-mediated output writes that
 greps miss. Remember to check `#define` bodies for hidden legacy tokens (the
 `BRUSH_OUTPUT` lesson from Stage 4).
+
+## Stage 9–11 Notes (4.4/440 → 4.5/450 → 4.6/460) — LADDER COMPLETE
+
+All three remaining stages landed together on branch `upgrade-gl4_6` (2026-08-22),
+validated at every intermediate level before moving on:
+
+| Level | Validator | Notes |
+|---|---|---|
+| 440 | 113/113 | additive; nothing adopted |
+| 450 | 113/113 | additive; nothing adopted |
+| 460 | 113/113 | final gate — see below |
+
+- **Process:** context and `#version` bumped in lockstep per level
+  (`Main.cpp:15` / `Shader.cpp:27`); validator run after each GLSL bump;
+  single rebuild + one QA cycle at the final state (`Engine_Init(4, 6)`).
+  QA result: clean, no graphic anomalies.
+- **Near-miss worth recording:** the first scripted bump left the *context* at
+  `(4, 4)` while shaders reached `460` — the loop iterated `Shader.cpp` only.
+  Requesting a 4.6-core context with a mismatched context would break at window
+  creation or silently change driver behavior. **Always grep both lines after any
+  scripted version edit** (`grep -n Engine_Init src/Main.cpp && grep -n versionString libphx/src/Shader.cpp`).
+- **Final deprecation sweep (gate requirement):** zero legacy tokens across all
+  shaders AND C++. The only grep hits are doc comments in `Draw.cpp:10` and
+  `Tex3D.cpp:76` describing what was removed in stage 5 — no live calls.
+- **GLEW capability verification (gate requirement):** the `[GL]` boot banner now
+  prints `glew-4.6 yes/no` via `glewIsSupported("GL_VERSION_4_6")`
+  (`libphx/src/OpenGL.cpp`). A granted context alone doesn't prove GLEW resolved
+  the entry points; this makes it visible on every boot.
+- **Optional features deliberately NOT adopted** (all remain callable at 4.6):
+  sparse textures, non-uniform derivatives (4.4), transform-feedback qualifiers (4.5),
+  SPIR-V loading (4.6), plus the older deferrals (explicit uniform locations,
+  textureGather, image load/store). Each is tracked in AGENTS.md's
+  "Post-4.6 Modernization Backlog" with its trigger condition — adopt when the
+  corresponding feature work starts, never speculatively.
+
+**Next milestone:** Post-4.6 backlog, led by compute plumbing (`.comp` stage) and GPU particles.

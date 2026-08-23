@@ -8,7 +8,7 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 - **Scripting:** Lua (LuaJIT 2.1.x, Lua 5.1 ABI — see LuaJIT Status note)
 - **Build System:** CMake (minimum `VERSION 3.16`, set in both `CMakeLists.txt` and `libphx/CMakeLists.txt`)
 - **Configuration:** Python (`configure.py`)
-- **Graphics:** OpenGL (context requested as **4.3 core profile** from `src/Main.cpp:15` → `Engine_Init(4,3)`; shaders compiled at **GLSL `#version 430 core`** via `libphx/src/Shader.cpp:27`; one global VAO bound for the process lifetime in `OpenGL_Init`), GLEW (**2.2.0** system lib — header locally patched to report 2.3; exposes GL up to 4.6)
+- **Graphics:** OpenGL (context requested as **4.6 core profile** from `src/Main.cpp:15` → `Engine_Init(4,6)`; shaders compiled at **GLSL `#version 460 core`** via `libphx/src/Shader.cpp:27`; one global VAO bound for the process lifetime in `OpenGL_Init`), GLEW (**2.2.0** system lib — header locally patched to report 2.3; exposes GL up to 4.6)
 - **Input/Windowing:** SDL2
 - **Physics:** Bullet Physics
 - **Audio:** FMOD
@@ -22,7 +22,7 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 | GCC | C++ compiler | 15.2.0 | system (Debian) | current distro stable (GCC 15.x line) | builds clean at `-O3 -msse4` |
 | CMake | build system | 4.2.3 | system | current distro stable | project floor `cmake_minimum_required(VERSION 3.16)` works on CMake 4.x |
 | Python | `configure.py` wrapper | 3.13.12 | system | current stable (3.13.x) | configure-time only |
-| Mesa | OpenGL ICD (GL runtime) | DRI 26.2.0 | system (`libgl1-mesa-dri`) | current distro package | capable of **GL 4.6**; engine still *requests* a 2.1 compat context |
+| Mesa | OpenGL ICD (GL runtime) | DRI 26.2.0 | system (`libgl1-mesa-dri`) | current distro package | capable of **GL 4.6**; engine requests a **4.6 CORE context** (ladder complete) |
 | GLU | legacy OpenGL utility | 9.0.2 (Mesa) | system | none — GLU is frozen/deprecated upstream | linked, minimal use |
 | GLEW | extension loader | **2.2.0** (`libglew-dev 2.2.0-4+b3`) | system | 2.2.0 is the last official release (project dormant) | `/usr/include/GL/glew.h` locally patched to report 2.3 (dpkg md5 mismatch); functionally identical, exposes all GL up to 4.6 |
 | SDL2 | windowing / input | 2.32.10 (`libsdl2-dev 2.32.10+dfsg-6`) | system | 2.32.x is the final maintenance line of SDL2 (SDL3 is the successor) | SDL version assert in `Engine.cpp` disabled for newer SDL2 (build fix #7) |
@@ -33,10 +33,11 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 | LuaJIT | scripting + FFI bindings | `libluajit-5.1-dev 2.1.0+openresty20251030-1+b1` (OpenResty fork of LuaJIT 2.1; runtime reports LuaJIT 2.1.x, Lua 5.1 ABI) | system | upstream LuaJIT 2.1 is EOL (last official: 2.1-beta3); OpenResty maintains the 2.1 line — build from pinned source for reproducibility | **do not replace with standard Lua** — all C bindings go through `ffi.cdef`/`ffi.load`. Package refreshed since July notes; re-run FFI smoke test after any change |
 | stb_image | image decoding (PNG/TGA) | v2.30 (bundled, header-only) | `libphx/ext/include/stb` | v2.30 is the latest upstream snapshot (stb does not use GitHub Releases) — **up to date** | updated from v1.48 in this session |
 
-**OpenGL / GLSL version status (the two values that matter for the `upgradeOpenGL.md` migration):**
-- **OpenGL context:** requested as **4.3 core profile** — `Engine_Init(4,3)` at `src/Main.cpp:15` → `SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_CORE, ...)` in `libphx/src/Engine.cpp`. Mesa 26.2 grants it (driver capable of 4.6).
-- **GLSL:** hard-coded **`#version 430 core`** at `libphx/src/Shader.cpp:27`.
-- Stages 0–8 of the ladder in `opengl-glsl-upgrade.md` are COMPLETE (2026-08-22). Remaining: 4.4, 4.5, 4.6 (final gate) on branch `upgrade-gl4_6`. Read that file's Stage 5 notes before touching rendering code — especially Finding B: **every draw must run under an explicitly started program** (`glUseProgram(0)` blits are silent no-ops on Mesa core; no error is raised).
+**OpenGL / GLSL version status — LADDER COMPLETE at GL 4.6 / GLSL 460 (2026-08-22):**
+- **OpenGL context:** requested as **4.6 core profile** — `Engine_Init(4,6)` at `src/Main.cpp:15` → `SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_CORE, ...)` in `libphx/src/Engine.cpp`. Mesa 26.2 grants it.
+- **GLSL:** hard-coded **`#version 460 core`** at `libphx/src/Shader.cpp:27`.
+- All 12 stages (0–11) of the ladder in `opengl-glsl-upgrade.md` are COMPLETE — final deprecation sweep clean, GLEW capability flag printed in the `[GL]` boot banner.
+- STILL TRUE and permanent: read that file's Stage 5 notes before touching rendering code — especially Finding B: **every draw must run under an explicitly started program** (`glUseProgram(0)` blits are silent no-ops on Mesa core; no error is raised).
 
 ## Codebase Structure
 - `src/`: Main entry point and high-level game code.
@@ -231,17 +232,17 @@ This is the most undocumented part of the engine's graphics stack. Captured here
 
 #### GLSL 330 Bump — Attempted & Reverted (July 2026)
 
-#### Stage Ladder Progress (Aug 2026): 4.3 / GLSL 430 CORE — GREEN
+#### Stage Ladder Progress (Aug 2026): COMPLETE — GL 4.6 / GLSL 460 CORE, GREEN
 The version-ladder plan lives in `opengl-glsl-upgrade.md` (**read its Stage 5 notes before
-touching rendering code**). Stages **0–8 are complete**: engine runs at `Engine_Init(4,3)`
-CORE profile + `#version 430 core` (`libphx/src/Shader.cpp:27`). Key changes landed with
+touching rendering code**). All stages **0–11 are complete**: engine runs at `Engine_Init(4,6)`
+CORE profile + `#version 460 core` (`libphx/src/Shader.cpp:27`). Key changes landed with
 stages 5–8:
 - **Global VAO:** core profile has no default VAO; one is created after `glewInit()` in `OpenGL_Init` and bound for the process lifetime.
 - **No program-0 draws:** Mesa core rasterizes nothing (silently!) when no program is bound — `Renderer:present/presentAll/startPostEffects-downsample` explicitly run `Cache.Shader('ui','filter/identity')`. Every new draw path MUST start a program.
 - **Immediate mode fully removed:** `Draw.cpp` provides internal `Imm_*` VBO API (`DrawInternal.h`); Tex1D/Tex2D/Mesh_DrawNormals converted; dead `Tex3D_Draw` deleted (+ Lua FFI bindings). `GLMatrix.cpp` is pure-CPU stacks (equivalence-proven vs the old fixed-function path).
 - **Validator stub fix:** `tools/validate_glsl.py` stub shaders previously used `v_`-prefixed names that never matched real interfaces — Mesa ≤4.1 linked leniently, 420 rejected. Stubs now use exact interface names; genuine 113/113 at 410 AND 420.
 - Debug tooling kept env-gated: `PHX_DEBUG_TEXCUBE=1`, `PHX_DEBUG_TEXCUBE_DUMP=<prefix>`, `PHX_DEBUG_DUMP=<frame>` (GameView pipeline PNG dumps), `[GL]` context banner at boot.
-- Stages 5–8 merged to main (GL 4.3/430 CORE). Remaining ladder: 4.4/4.5/4.6 on branch `upgrade-gl4_6`. Half-tap Gaussian blur shipped (~2x fewer fetches, `filter/blur.glsl`); textureGather evaluated & rejected for RGBA pipeline (see ladder Stage 8 notes).
+- Stages 9–11 (4.4→4.5→4.6 final gate) landed on branch `upgrade-gl4_6`: validator green at every level, QA clean, zero legacy tokens anywhere, GLEW 4.6 capability flag in boot banner. Half-tap Gaussian blur shipped (~2x fewer fetches, `filter/blur.glsl`); textureGather evaluated & rejected for RGBA pipeline (see ladder Stage 8 notes).
 
 Historical stage-3/4 recap (still relevant):
 - All 73 `gl_FragColor` fragment shaders → explicit `layout(location=0) out vec4 fragColor;`; output for the 9 brush shaders declared inside `include/brush.glsl` (macro blind spot: grep audits must also check `#define` bodies).
@@ -408,6 +409,6 @@ chain, and `libphx/script/ffi/libphx.lua` loads `libphx64.so` by absolute path. 
 also run `./bin/lt64r LTheory` directly from the repo root without any env var.
 
 ### Next Steps
-1. **Finish the ladder on branch `upgrade-gl4_6`:** stages 9–11 (4.4/440 → 4.5/450 → 4.6/460). Additive two-line bumps each; validate + QA per stage; final deprecation sweep + GLEW capability verification at 4.6.
-2. **Then start the Post-4.6 Modernization Backlog above**, led by compute plumbing + GPU particles.
+1. ~~Finish the ladder~~ DONE (2026-08-22) — GL 4.6/460 CORE is the new baseline; keep context+shader versions in lockstep forever (both live in exactly two places: `Main.cpp:15`, `Shader.cpp:27`).
+2. **Start the Post-4.6 Modernization Backlog above**, led by compute plumbing (`.comp` stage) + GPU particles.
 3. **Update this document** as new milestones are reached.

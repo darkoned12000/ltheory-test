@@ -24,7 +24,7 @@
  *        elegantly. */
 
 static cstr includePath = "include/";
-static cstr versionString = "#version 430 core\n";
+static cstr versionString = "#version 460 core\n";
 
 struct ShaderVar {
   ShaderVarType type;
