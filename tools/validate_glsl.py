@@ -61,7 +61,7 @@ def main() -> int:
     print(f"context: {ctx.info['GL_VERSION']}")
 
     ok = fails = 0
-    for kind in ("vertex", "fragment"):
+    for kind in ("vertex", "fragment", "compute"):
         for f in sorted(pathlib.Path("res/shader", kind).rglob("*.glsl")):
             try:
                 src = version_line + resolve(f, ())
@@ -73,6 +73,10 @@ def main() -> int:
                     stub = version_line + "".join(
                         f"out {t} {n};\n" for t, n in ins) + "void main(){}\n"
                     ctx.program(vertex_shader=stub, fragment_shader=src)
+                elif kind == "compute":
+                    # Compute stages are standalone programs (no interface
+                    # matching needed); compile+link covers them fully.
+                    ctx.compute_shader(src)
                 else:
                     outs = interface(src, "out")
                     stub = version_line + "".join(
