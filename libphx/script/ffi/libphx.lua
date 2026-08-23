@@ -92,6 +92,7 @@ do -- Opaque Structs
     typedef struct Directory    {} Directory;
     typedef struct File         {} File;
     typedef struct Font         {} Font;
+    typedef struct GPUBuffer    {} GPUBuffer;
     typedef struct HashGrid     {} HashGrid;
     typedef struct HashGridElem {} HashGridElem;
     typedef struct HashMap      {} HashMap;
@@ -135,6 +136,7 @@ do -- Opaque Structs
     'Directory',
     'File',
     'Font',
+    'GPUBuffer',
     'HashGrid',
     'HashGridElem',
     'HashMap',

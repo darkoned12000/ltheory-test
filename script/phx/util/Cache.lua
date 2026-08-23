@@ -42,6 +42,15 @@ function Cache.Shader (vs, fs)
   return self
 end
 
+function Cache.Compute (cs)
+  local key = '@compute/' .. cs
+  local self = shaders[key]
+  if self then return self end
+  self = Shader.LoadCompute('compute/' .. cs)
+  shaders[key] = self
+  return self
+end
+
 function Cache.Texture (name, filtered)
   local self = textures[name]
   if self then return self end

@@ -37,6 +37,8 @@ struct Shader {
   cstr name;
   uint vs;
   uint fs;
+  uint cs;      /* Compute stage handle; 0 for graphics shaders. */
+  bool compute; /* True if this program is a single compute stage. */
   uint program;
   uint texIndex;
   ArrayList(ShaderVar, vars);
@@ -104,6 +106,26 @@ static uint CreateGLProgram (uint vs, uint fs) {
       char* infoLog = (char*)MemAllocZero(length + 1);
       GLCALL(glGetProgramInfoLog(self, length, 0, infoLog))
       Fatal("CreateGLProgram: Failed to link program:\n%s", infoLog);
+    }
+  }
+  return self;
+}
+
+/* Compute programs have no vertex attributes to bind and exactly one stage. */
+static uint CreateGLComputeProgram (uint cs) {
+  uint self = glCreateProgram();
+  GLCALL(glAttachShader(self, cs))
+  GLCALL(glLinkProgram(self))
+
+  /* Check for link errors. */ {
+    int status;
+    GLCALL(glGetProgramiv(self, GL_LINK_STATUS, &status))
+    if (status == GL_FALSE) {
+      int length;
+      GLCALL(glGetProgramiv(self, GL_INFO_LOG_LENGTH, &length))
+      char* infoLog = (char*)MemAllocZero(length + 1);
+      GLCALL(glGetProgramInfoLog(self, length, 0, infoLog))
+      Fatal("CreateGLComputeProgram: Failed to link program:\n%s", infoLog);
     }
   }
   return self;
@@ -203,6 +225,10 @@ Shader* Shader_Load (cstr vName, cstr fName) {
   Shader* self = MemNew(Shader);
   RefCounted_Init(self);
   ArrayList_Init(self->vars);
+  self->vs = 0;
+  self->fs = 0;
+  self->cs = 0;
+  self->compute = false;
   cstr vs = GLSL_Load(vName, self);
   cstr fs = GLSL_Load(fName, self);
   self->vs = CreateGLShader(vs, GL_VERTEX_SHADER);
@@ -214,14 +240,34 @@ Shader* Shader_Load (cstr vName, cstr fName) {
   return self;
 }
 
+Shader* Shader_LoadCompute (cstr cName) {
+  Shader* self = MemNew(Shader);
+  RefCounted_Init(self);
+  ArrayList_Init(self->vars);
+  self->vs = 0;
+  self->fs = 0;
+  self->cs = 0;
+  self->compute = true;
+  cstr cs = GLSL_Load(cName, self);
+  self->cs = CreateGLShader(cs, GL_COMPUTE_SHADER);
+  StrFree(cs);
+  self->program = CreateGLComputeProgram(self->cs);
+  self->texIndex = 1;
+  self->name = StrFormat("[cs: %s]", cName);
+  Shader_BindVariables(self);
+  return self;
+}
+
 void Shader_Acquire (Shader* self) {
   RefCounted_Acquire(self);
 }
 
 void Shader_Free (Shader* self) {
   RefCounted_Free(self) {
+    /* Handles of unused stages stay 0; glDeleteShader(0) is a silent no-op. */
     GLCALL(glDeleteShader(self->vs))
     GLCALL(glDeleteShader(self->fs))
+    GLCALL(glDeleteShader(self->cs))
     GLCALL(glDeleteProgram(self->program))
     ArrayList_Free(self->vars);
     StrFree(self->name);
@@ -305,6 +351,18 @@ void Shader_Start (Shader* self) {
 void Shader_Stop (Shader*) {
   GLCALL(glUseProgram(0))
   current = 0;
+}
+
+void Shader_Dispatch (uint x, uint y, uint z) {
+  if (!current)
+    Fatal("Shader_Dispatch: No shader is bound");
+  if (!current->compute)
+    Fatal("Shader_Dispatch: Bound shader <%s> is not a compute shader", current->name);
+  GLCALL(glDispatchCompute(x, y, z))
+}
+
+void Shader_MemoryBarrier (uint barriers) {
+  GLCALL(glMemoryBarrier(barriers))
 }
 
 static void ShaderCache_FreeElem (cstr, void* data) {

@@ -1,3 +1,4 @@
+#include "ComputeSelfTest.h"
 #include "PhxMemory.h"
 #include "OpenGL.h"
 #include "SDL.h"
@@ -5,6 +6,7 @@
 #include "Viewport.h"
 #include "Window.h"
 #include "WindowMode.h"
+#include <cstdlib>
 
 struct Window {
   SDL_Window* handle;
@@ -21,6 +23,9 @@ Window* Window_Create (cstr title, int x, int y, int sx, int sy, WindowMode mode
   if (!self->context)
     Fatal("Failed to create OpenGL context for window");
   OpenGL_Init();
+  /* Env-gated compute plumbing self-test; runs once on first context. */
+  if (getenv("PHX_SELFTEST_COMPUTE"))
+    ComputeSelfTest_Run();
   return self;
 }
 
