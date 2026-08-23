@@ -1,4 +1,5 @@
 #include "Draw.h"
+#include "DrawInternal.h"
 #include "Metric.h"
 #include "OpenGL.h"
 #include "Vec4.h"
@@ -111,9 +112,32 @@ static int Draw_Expand (GLenum mode) {
   return mode; /* LINES / POINTS / TRIANGLES unchanged */
 }
 
+/* --- Imm_* : shared immediate-vertex API (see DrawInternal.h) ------------- */
+
+static void Draw_Flush (GLenum mode);
+
+void Imm_Bind () {
+  Draw_Bind();
+}
+
+void Imm_Unbind () {
+  Draw_Unbind();
+}
+
+void Imm_Draw (ImmVert const* verts, int count, GLenum mode) {
+  if (!verts || count <= 0) return;
+  while (count > 0) {
+    int n = count < DRAW_MAX_VERTS ? count : DRAW_MAX_VERTS;
+    memcpy(s_verts, verts, (size_t)n * sizeof(DrawVert));
+    s_count = n;
+    Draw_Flush(mode);
+    verts += n;
+    count -= n;
+  }
+}
+
 static void Draw_Flush (GLenum mode) {
   if (s_count == 0) return;
-
   mode = Draw_Expand(mode);
 
   Draw_Bind();
@@ -134,7 +158,6 @@ void Draw_PushAlpha (float a) {
   float prevAlpha = alphaIndex >= 0 ? alphaStack[alphaIndex] : 1;
   float alpha = a * prevAlpha;
   alphaStack[++alphaIndex] = alpha;
-  GLCALL(glColor4f(color.x, color.y, color.z, color.w * alpha));
 }
 
 void Draw_PopAlpha () {
@@ -142,8 +165,6 @@ void Draw_PopAlpha () {
       Fatal("Draw_PopAlpha Attempting to pop an empty alpha stack");
 
   alphaIndex--;
-  float alpha = alphaIndex >= 0 ? alphaStack[alphaIndex] : 1;
-  GLCALL(glColor4f(color.x, color.y, color.z, color.w * alpha));
 }
 
 void Draw_Axes (
@@ -157,7 +178,6 @@ void Draw_Axes (
   Vec3f left    = Vec3f_Add(*pos, Vec3f_Muls(*x, scale));
   Vec3f up      = Vec3f_Add(*pos, Vec3f_Muls(*y, scale));
   Vec3f forward = Vec3f_Add(*pos, Vec3f_Muls(*z, scale));
-  glColor4f(1, 0.25f, 0.25f, _alpha);
   Draw_Begin();
   Draw_Push(UNPACK3(*pos), 0, 0);
   Draw_Push(UNPACK3(left), 0, 0);
@@ -167,7 +187,6 @@ void Draw_Axes (
   Draw_Push(UNPACK3(forward), 0, 0);
   Draw_Flush(GL_LINES);
 
-  glColor4f(1, 1, 1, _alpha);
   Draw_Begin();
   Draw_Push(UNPACK3(*pos), 0, 0);
   Draw_Flush(GL_POINTS);
@@ -229,7 +248,6 @@ void Draw_ClearDepth (float d) {
 void Draw_Color (float r, float g, float b, float a) {
   float alpha = alphaIndex >= 0 ? alphaStack[alphaIndex] : 1;
   color = Vec4f_Create(r, g, b, a);
-  GLCALL(glColor4f(r, g, b, a * alpha))
 }
 
 void Draw_Flush () {
@@ -338,24 +356,18 @@ void Draw_Rect (float x1, float y1, float xs, float ys) {
   Draw_Flush(GL_QUADS);
 }
 
+/* NOTE : GL_LINE_SMOOTH / GL_POINT_SMOOTH are compatibility-only and were
+ * removed in the core-profile migration (stage 5). The setters remain for
+ * API compatibility but no longer touch GL state. */
+static bool s_smoothLines = false;
+static bool s_smoothPoints = false;
+
 void Draw_SmoothLines (bool enabled) {
-  if (enabled) {
-    GLCALL(glEnable(GL_LINE_SMOOTH))
-    GLCALL(glHint(GL_LINE_SMOOTH_HINT, GL_NICEST))
-  } else {
-    GLCALL(glDisable(GL_LINE_SMOOTH))
-    GLCALL(glHint(GL_LINE_SMOOTH_HINT, GL_FASTEST))
-  }
+  s_smoothLines = enabled;
 }
 
 void Draw_SmoothPoints (bool enabled) {
-  if (enabled) {
-    GLCALL(glEnable(GL_POINT_SMOOTH))
-    GLCALL(glHint(GL_POINT_SMOOTH_HINT, GL_NICEST))
-  } else {
-    GLCALL(glDisable(GL_POINT_SMOOTH))
-    GLCALL(glHint(GL_POINT_SMOOTH_HINT, GL_FASTEST))
-  }
+  s_smoothPoints = enabled;
 }
 
 inline static Vec3f Spherical (float r, float yaw, float pitch) {

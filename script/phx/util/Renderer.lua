@@ -147,6 +147,10 @@ end
 function Renderer:present (x, y, sx, sy, useMips)
   Draw.Color(1, 1, 1, 1)
   RenderState.PushAllDefaults()
+  -- NOTE : core-profile — program 0 has no fixed-function fallback, so the
+  -- final window blit must run through an explicit passthrough shader.
+  local shader = Cache.Shader('ui', 'filter/identity')
+  shader:start()
   if false and useMips then
     self.buffer0:genMipmap()
     self.buffer0:setMinFilter(TexFilter.LinearMipLinear)
@@ -155,16 +159,20 @@ function Renderer:present (x, y, sx, sy, useMips)
   else
     self.buffer0:draw(x, y + sy, sx, -sy)
   end
+  shader:stop()
   RenderState.PopAll()
 end
 
 function Renderer:presentAll (x, y, sx, sy)
   Draw.Color(1, 1, 1, 1)
   RenderState.PushAllDefaults()
+  local shader = Cache.Shader('ui', 'filter/identity')
+  shader:start()
   self.buffer0:draw(x, y + sy / 2, sx / 2, -sy / 2)
   self.buffer1:draw(x + sx / 2, y + sy / 2, sx / 2, -sy / 2)
   self.buffer2:draw(x, y + sy, sx / 2, -sy / 2)
   self.zBufferL:draw(x + sx / 2, y + sy, sx / 2, -sy / 2)
+  shader:stop()
   RenderState.PopAll()
 end
 
@@ -263,7 +271,11 @@ function Renderer:startPostEffects ()
       self.level = self.level + 1
       factor = factor * 2
       self.buffer1:pushLevel(self.level)
+      -- NOTE : core-profile — explicit passthrough program (no fixed-function fallback)
+      local dsShader = Cache.Shader('ui', 'filter/identity')
+      dsShader:start()
       self.buffer0:draw(0, 0, self.sx / factor, self.sy / factor)
+      dsShader:stop()
       self.buffer1:pop()
 
       -- Constrain all buffers to the new active mip level

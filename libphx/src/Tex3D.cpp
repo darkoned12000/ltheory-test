@@ -72,18 +72,10 @@ void Tex3D_PushLevel(Tex3D* self, int layer, int level) {
   RenderTarget_PushTex3DLevel(self, layer, level);
 }
 
-void Tex3D_Draw (Tex3D* self, int layer, float x, float y, float xs, float ys) {
-  float r = (float)(layer + 1) / (float)(self->size.z + 1);
-  GLCALL(glEnable(GL_TEXTURE_3D))
-  GLCALL(glBindTexture(GL_TEXTURE_3D, self->handle))
-  glBegin(GL_QUADS);
-  glTexCoord3f(0, 0, r); glVertex2f(x, y);
-  glTexCoord3f(0, 1, r); glVertex2f(x, y + ys);
-  glTexCoord3f(1, 1, r); glVertex2f(x + xs, y + ys);
-  glTexCoord3f(1, 0, r); glVertex2f(x + xs, y);
-  GLCALL(glEnd())
-  GLCALL(glDisable(GL_TEXTURE_3D))
-}
+/* NOTE : Tex3D_Draw was removed in the core-profile migration (stage 5). It
+ * was immediate-mode (glBegin/glTexCoord3f) and had no callers; a 3D-texture
+ * blit needs a vec3 texcoord attribute, which the shared vertex layout does
+ * not carry. Reintroduce as a shader-based blit if ever needed. */
 
 void Tex3D_GenMipmap (Tex3D* self) {
   GLCALL(glBindTexture(GL_TEXTURE_3D, self->handle))

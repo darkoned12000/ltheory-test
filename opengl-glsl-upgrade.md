@@ -2,25 +2,28 @@
 
 Goal: migrate the engine from its current state up to **OpenGL 4.6 / GLSL 460**, one version at a time, keeping the GL context and the shader `#version` in sync at every step. Each stage is tested before moving on. Trouble spots (structural changes that force C++ or shader rewrites) are flagged — they land at **3.3, 4.0, 4.3, and 4.6**.
 
-## Current State (verified 2026-08-21, updated 2026-08-22 to 3.3/330)
+## Current State (verified 2026-08-22, updated to 4.2/420 CORE)
 
 | Item | Value | Location |
 |---|---|---|
-| Context requested | OpenGL **3.3 compatibility** | `src/Main.cpp:15` — `Engine_Init(3, 3)` |
-| Shader version | GLSL **330 compat** (GL 3.3) | `libphx/src/Shader.cpp:27` — `versionString = "#version 330 compatibility\n"` |
-| Profile mask | `SDL_GL_CONTEXT_PROFILE_COMPATIBILITY` | `libphx/src/Engine.cpp:74-81` |
+| Context requested | OpenGL **4.2 core** | `src/Main.cpp:15` — `Engine_Init(4, 2)` |
+| Shader version | GLSL **420 core** (GL 4.2) | `libphx/src/Shader.cpp:27` — `versionString = "#version 420 core\n"` |
+| Profile mask | `SDL_GL_CONTEXT_PROFILE_CORE` | `libphx/src/Engine.cpp:74-81` |
 | Driver capability | Mesa 26.2 → **GL 4.6** available | system ICD |
 | GLEW | 2.2.0 (last official release; exposes everything up to 4.6) | system `libglew-dev` |
 
-Engine at **3.3/330** (phase 4, GREEN 2026-08-22). The `compatibility`
-token on `#version` is deliberate: from GLSL 150 on, a bare `#version NNN` means **core**
-semantics per spec; Mesa tolerated legacy builtins anyway, but the explicit token keeps
-them guaranteed until the stage-5 CORE flip.
+Engine at **4.2/420** (stages 5–7 GREEN 2026-08-22). One global VAO is created and bound
+forever in `OpenGL_Init` (`libphx/src/OpenGL.cpp`) — core profile has **no default VAO**,
+so every draw depends on it. All immediate-mode rendering is gone: `Draw.cpp` exposes an
+internal `Imm_*` API (`DrawInternal.h`) used by `Tex1D`/`Tex2D`/`Mesh_DrawNormals`; dead
+`Tex3D_Draw` was deleted. `GLMatrix.cpp` is a pure-CPU matrix stack (numerically proven
+equivalent to the old fixed-function pipeline).
 
-**Legacy-token status after stage 4 — all ZERO across `res/shader/`:**
-`gl_FragColor`/`gl_FragData[]`, `varying`/`attribute`, `texture1D/2D/3D/Cube`,
-embedded `#version` directives, `GL_EXT_gpu_shader4`. Every fragment shader declares
-explicit `out vec4`; validate any change offline with `python3 tools/validate_glsl.py <NNN>`.
+**Legacy-token status after stage 5 — all ZERO across `res/shader/` AND C++:**
+`gl_FragColor`/`gl_FragData[]`, `varying`/`attribute`, legacy texture fns,
+embedded `#version`, `glBegin/glEnd/glVertex*`, fixed-function matrix calls.
+Validate shader changes offline with `python3.13 tools/validate_glsl.py <NNN>`
+(python3.13 specifically: moderngl lives under its site-packages on this host).
 
 ## Version Ladder (check off as each stage lands)
 
@@ -33,9 +36,9 @@ GLSL versions map to OpenGL versions: 130→3.0, 140→3.1, 150→3.2, 330→3.3
 | 2 | **3.1** | `(3, 1)` compat | `140` | No — low risk | optional: UBOs become available | optional: adopt uniform buffers | [x] done 2026-08-22 — `Engine_Init(3,1)` `versionString 140` clean, `gl_FragColor` at 140 compat OK |
 | 3 | **3.2** | `(3, 2)` compat | `150 compat` | **YES — more than expected**: `gl_ProjectionMatrix` rejected at 150 (even w/ COMPAT ctx) forced the `ui`/`ui3D` migration + `Viewport` `mProjUI/mViewUI`; `TexCube_Generate` autovar-order fix | done: ui/ui3D modernization, all legacy texture fns → `texture()`, `starbg` discard, `MasterControl` guards, TexCube shader-start reorder | see Stage 3 notes below | [x] done 2026-08-22 — 5 clean runs, skybox/stars/HUD verified vs 140 baseline |
 | 4 | **3.3** ⚠️ | `(3, 3)` compat* | `330 compatibility` | **YES — core-language cutover**, plus latent-bug sweep (see Stage 4 notes) | keep COMPAT mask until C++ is clean; later flip to CORE. Built clean first try | checklist A done: 73 fragment files → `layout(location=0) out vec4 fragColor;` (146 files / 148 call sites incl. master tree); `BRUSH_OUTPUT` macro blind spot fixed by declaring the output inside `brush.glsl`; 12 pre-existing broken shaders repaired (`outColor` never declared, uv_metal missing paren, triplanar dup uniforms, desat missing include, ptracer embedded `#version 450` + `SCENE_DESC` + 420pack, common.glsl gpu_shader4 removal) | [x] done 2026-08-22 — 113/113 offline compile at 330 core + runtime QA green (skybox/stars/sun/flight/weapons/thrusters) |
-| 5 | **4.0** ⚠️ | `(4, 0)` core | `400` | **YES — last legacy removals** | flip profile to CORE (all C++ must be modern VBO path) | subroutines/atomics available; any remaining compute-like passes need explicit outputs | [ ] |
-| 6 | **4.1** | `(4, 1)` core | `410` | No — low risk | none required | optional: explicit uniform locations, `textureGather` | [ ] |
-| 7 | **4.2** | `(4, 2)` core | `420` | No — low risk | none required | optional: image load/store, dual-source blending | [ ] |
+| 5 | **4.0** ⚠️ | `(4, 0)` core | `400` | **YES — last legacy removals** | done: CORE profile flip + global VAO (`OpenGL_Init`), `Imm_*` VBO API in `Draw.cpp` (Tex1D/Tex2D/Mesh_DrawNormals converted, `Tex3D_Draw` deleted), CPU matrix stacks in `GLMatrix.cpp` (equivalence-simulated), explicit passthrough shaders for window blits (`Renderer:present/presentAll/downsample`) | subroutines available; no shader changes needed | [x] done 2026-08-22 — see Stage 5 notes (black-screen root cause) |
+| 6 | **4.1** | `(4, 1)` core | `410` | No — low risk | none required (two-line bump) | optional: explicit uniform locations, `textureGather` — NOT adopted yet; follow-up optimization branch planned | [x] done 2026-08-22 — validator green, QA 3× clean |
+| 7 | **4.2** | `(4, 2)` core | `420` | No — but exposed a validator bug (see Stage 7 notes) | none required (two-line bump) | optional: image load/store, dual-source blending — not adopted | [x] done 2026-08-22 — validator stub-name fix, genuine 113/113, QA clean |
 | 8 | **4.3** ⚠️ | `(4, 3)` core | `430` | **YES — compute/SSBO era** | add `glDispatchCompute` plumbing if migrating legacy compute passes | optional: rewrite `computeAO`-style passes as native `.comp` + SSBOs | [ ] |
 | 9 | **4.4** | `(4, 4)` core | `440` | No — low risk | none required | optional: sparse texture access, non-uniform derivatives | [ ] |
 | 10 | **4.5** | `(4, 5)` core | `450` | No — low risk | none required | optional: transform-feedback stream/mode qualifiers, I/O interning | [ ] |
@@ -157,6 +160,66 @@ python3 configure.py test              # auto-detects NNN from libphx/src/Shader
   into small FBOs and assert pixel outputs); golden-image regression only with tolerance-
   aware diffing. Headless EGL makes tiers 1–2 CI-able (llvmpipe).
 
+## Stage 5 (4.0 / 400 CORE) Notes — DONE 2026-08-22
+
+The profile flip was two lines; making it *work* took a full debugging campaign. Findings
+in order of importance for future work:
+
+### Finding A: core profile has NO default VAO
+In compatibility profiles VAO 0 exists implicitly and records attrib state; in core it
+does not exist at all — `glVertexAttribPointer` and draws silently do nothing. Fix: one
+global VAO, created right after `glewInit()` in `OpenGL_Init` and never unbound. All
+`Draw_Bind`/`Mesh_DrawBind` attrib state lands in it, exactly mirroring old VAO-0
+semantics with zero call-site changes.
+
+### Finding B: `glUseProgram(0)` blits are silent no-ops under core (Mesa)
+`Shader_Stop` calls `glUseProgram(0)`. Any draw issued afterward relied on the
+compatibility-profile **fixed-function fallback** for program 0. Under core that fallback
+is gone — and **Mesa radeonsi does NOT raise `GL_INVALID_OPERATION`**; it rasterizes
+nothing, silently. This is why `ENABLE_GLCHECK=1` reported zero errors on a fully black
+screen. Rule: **every draw must have an explicitly started program** — no residual-program
+blits. Fixed sites (`script/phx/util/Renderer.lua`): `present()`, `presentAll()`, and the
+supersample downsample in `startPostEffects()` now wrap their quads in
+`Cache.Shader('ui','filter/identity')` start/stop.
+
+### Finding C: how the black screen was diagnosed (reuse this playbook)
+1. `ENABLE_GLCHECK 1` (`libphx/include/PhxConfig.h`) + `[GL]` context banner print in
+   `OpenGL_Init` → proved context was 4.x CORE and zero GL errors fired.
+2. Env-gated PNG dumps added to `GameView.lua` (`PHX_DEBUG_DUMP=<frame>`): gbuffer albedo,
+   normal/mat, zBufferL after opaque pass, final buffer before present. Result: pipeline
+   content was FINE all the way to the final buffer → failure isolated to window present.
+3. Red-clear probe in `Window_EndDraw` → red window → swap chain fine → only the present
+   blit itself broken → Finding B.
+   (Probe removed post-diagnosis; dumps kept as documented tooling.)
+
+### Other stage-5 changes
+- `Draw.cpp`: internal `ImmVert {x,y,z,u,v}` + `Imm_Bind/Imm_Unbind/Imm_Draw`
+  (`DrawInternal.h`); `Draw_Expand` converts GL_QUADS/GL_POLYGON → triangles pre-draw.
+  `Tex1D/Tex2D` draws and `Mesh_DrawNormals` converted; `Tex3D_Draw` deleted (dead code,
+  needed vec3 texcoords we don't carry) along with its Lua FFI bindings.
+- `GLMatrix.cpp`: pure-CPU P/WV stacks replacing fixed-function matrix state; proven
+  equivalent to the old GL path via offline simulation (3000 random op sequences,
+  0 divergences). Lua consumers: `GameView` UI pass, dev apps.
+- `Viewport_Set` reduced to `glViewport` only; legacy matrix-mode calls removed from
+  `OpenGL_Init`; `glLineWidth(2)` dropped (widths >1 are core-illegal anyway).
+
+## Stage 6 (4.1 / 410) Notes — DONE 2026-08-22
+
+Two-line bump (`Engine_Init(4,1)` + `#version 410 core`). Validator green, runtime QA
+green ×3. Optional features (explicit uniform locations, `textureGather`) NOT adopted —
+planned as a separate optimization branch starting with the blur filter family.
+
+## Stage 7 (4.2 / 420) Notes — DONE 2026-08-22
+
+Two-line bump exposed a **latent bug in the offline validator**: stub counterpart shaders
+declared interface variables with a `v_` name prefix (`out vec3 v_vertPos`) that NEVER
+matched the real fragment inputs (`vertPos`). Mesa ≤4.10 linked these mismatches anyway
+(leniency), so prior "113 OK" results had weaker link coverage than believed; 420's
+stricter interface matching rejected them (98 FAILs). Fixed: stub names now equal the
+interface names exactly. Post-fix genuine result: **113/113 at both 410 and 420**, then
+runtime QA green. Lesson: interface-matching bugs hide behind driver leniency — trust the
+validator only when its stubs are provably symmetric.
+
 
 ### What makes each trouble spot a trouble spot
 
@@ -200,8 +263,8 @@ For **every** stage (1–11):
 1. Branch: `git checkout -b upgrade-gl<MAJOR>_<MINOR>`
 2. Edit the two values together — context and shader version must move in sync:
    - `src/Main.cpp:15` → `Engine_Init(<M>, <m>);`
-   - `libphx/src/Shader.cpp:27` → `versionString = "#version <NNN> compatibility\n";`
-     (from stage 3 on, keep the `compatibility` token until the stage-5 CORE flip)
+   - `libphx/src/Shader.cpp:27` → `versionString = "#version <NNN> core\n";`
+     (stages 3–4 used the `compatibility` token; from stage 5 CORE flip onward it's `core`)
 3. At stage 4 only: complete the Shader Migration Checklist **before** flipping `#version`.
 4. At stage 5 only: flip `SDL_GL_CONTEXT_PROFILE_MASK` to `SDL_GL_CONTEXT_PROFILE_CORE` in `libphx/src/Engine.cpp` (after confirming zero legacy C++ GL calls remain).
 5. Rebuild and run:

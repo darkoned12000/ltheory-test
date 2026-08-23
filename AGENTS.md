@@ -8,7 +8,7 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 - **Scripting:** Lua (LuaJIT 2.1.x, Lua 5.1 ABI — see LuaJIT Status note)
 - **Build System:** CMake (minimum `VERSION 3.16`, set in both `CMakeLists.txt` and `libphx/CMakeLists.txt`)
 - **Configuration:** Python (`configure.py`)
-- **Graphics:** OpenGL (context requested as **2.1 compatibility profile** from `src/Main.cpp:15` → `Engine_Init(2,1)`; shaders compiled at **GLSL `#version 130`** / GL 3.0 level via `libphx/src/Shader.cpp:27`), GLEW (**2.2.0** system lib — header locally patched to report 2.3; exposes GL up to 4.6)
+- **Graphics:** OpenGL (context requested as **4.2 core profile** from `src/Main.cpp:15` → `Engine_Init(4,2)`; shaders compiled at **GLSL `#version 420 core`** via `libphx/src/Shader.cpp:27`; one global VAO bound for the process lifetime in `OpenGL_Init`), GLEW (**2.2.0** system lib — header locally patched to report 2.3; exposes GL up to 4.6)
 - **Input/Windowing:** SDL2
 - **Physics:** Bullet Physics
 - **Audio:** FMOD
@@ -34,9 +34,9 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 | stb_image | image decoding (PNG/TGA) | v2.30 (bundled, header-only) | `libphx/ext/include/stb` | v2.30 is the latest upstream snapshot (stb does not use GitHub Releases) — **up to date** | updated from v1.48 in this session |
 
 **OpenGL / GLSL version status (the two values that matter for the `upgradeOpenGL.md` migration):**
-- **OpenGL context:** requested as **2.1 compatibility profile** — `Engine_Init(2,1)` at `src/Main.cpp:15` → `SDL_GL_SetAttribute(...)` in `libphx/src/Engine.cpp`. The Mesa 26.2 driver is *capable* of GL 4.6, but the engine never asks for more than 2.1.
-- **GLSL:** hard-coded **`#version 130`** (= GLSL 1.30 = OpenGL 3.0 level) at `libphx/src/Shader.cpp:27`. Note: GLSL "130" is *not* "3.30" — the GLSL that matches OpenGL 3.3 is **330**.
-- So **neither is at 3.3/330 yet** — that is exactly Phase 1 of `upgradeOpenGL.md` (`Engine_Init(3,3)` + `#version 330`). The driver/GLEW side already supports the full 3.3 → 4.6 ladder; only the two hard-coded values (and shader compatibility) stand in the way.
+- **OpenGL context:** requested as **4.2 core profile** — `Engine_Init(4,2)` at `src/Main.cpp:15` → `SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_CORE, ...)` in `libphx/src/Engine.cpp`. Mesa 26.2 grants it (driver capable of 4.6).
+- **GLSL:** hard-coded **`#version 420 core`** at `libphx/src/Shader.cpp:27`.
+- Stages 0–7 of the ladder in `opengl-glsl-upgrade.md` are COMPLETE (2026-08-22). Remaining: 4.3 (compute/SSBO era), 4.4, 4.5, 4.6 (final gate). Read that file's Stage 5 notes before touching rendering code — especially Finding B: **every draw must run under an explicitly started program** (`glUseProgram(0)` blits are silent no-ops on Mesa core; no error is raised).
 
 ## Codebase Structure
 - `src/`: Main entry point and high-level game code.
@@ -231,35 +231,29 @@ This is the most undocumented part of the engine's graphics stack. Captured here
 
 #### GLSL 330 Bump — Attempted & Reverted (July 2026)
 
-#### Stage Ladder Progress (Aug 2026): 3.3 / GLSL 330 GREEN
-The version-ladder plan lives in `opengl-glsl-upgrade.md` (read its **Stage 3** and **Stage 4** troubleshooting notes before stage 5). Stages 0–4 are complete: engine runs at `Engine_Init(3,3)` + `#version 330 compatibility` (`libphx/src/Shader.cpp:27`). Key changes landed with stage 4:
-- All 73 `gl_FragColor` fragment shaders → explicit `layout(location=0) out vec4 fragColor;`; output for the 9 brush shaders declared inside `include/brush.glsl` (macro blind spot: grep audits must also check `#define` bodies).
-- **Offline shader validator:** `python3 configure.py test` → `tools/validate_glsl.py`, compiles+links all 113 shaders headlessly via moderngl/EGL at the engine's current GLSL level (auto-parsed from `Shader.cpp`). EGL can't do compatibility profiles, so it validates at `<NNN> core` — stricter than runtime and now legal everywhere since zero compat-only builtins remain. Run it before every stage bump.
-- Stage-4 sweep repaired 12 pre-existing broken shaders that had never compiled (undeclared `outColor` writers, `uv_metal` missing paren, `triplanar` duplicate uniforms, `desat` missing include, `ptracer` embedded `#version 450` + `SCENE_DESC` + 420pack initializers) and removed the dead `GL_EXT_gpu_shader4` block from `common.glsl`.
-- Legacy-token counts after stage 4, all ZERO: `gl_FragColor/gl_FragData`, `varying/attribute`, legacy texture fns, embedded `#version`.
+#### Stage Ladder Progress (Aug 2026): 4.2 / GLSL 420 CORE — GREEN
+The version-ladder plan lives in `opengl-glsl-upgrade.md` (**read its Stage 5 notes before
+touching rendering code**). Stages **0–7 are complete**: engine runs at `Engine_Init(4,2)`
+CORE profile + `#version 420 core` (`libphx/src/Shader.cpp:27`). Key changes landed with
+stages 5–7:
+- **Global VAO:** core profile has no default VAO; one is created after `glewInit()` in `OpenGL_Init` and bound for the process lifetime.
+- **No program-0 draws:** Mesa core rasterizes nothing (silently!) when no program is bound — `Renderer:present/presentAll/startPostEffects-downsample` explicitly run `Cache.Shader('ui','filter/identity')`. Every new draw path MUST start a program.
+- **Immediate mode fully removed:** `Draw.cpp` provides internal `Imm_*` VBO API (`DrawInternal.h`); Tex1D/Tex2D/Mesh_DrawNormals converted; dead `Tex3D_Draw` deleted (+ Lua FFI bindings). `GLMatrix.cpp` is pure-CPU stacks (equivalence-proven vs the old fixed-function path).
+- **Validator stub fix:** `tools/validate_glsl.py` stub shaders previously used `v_`-prefixed names that never matched real interfaces — Mesa ≤4.1 linked leniently, 420 rejected. Stubs now use exact interface names; genuine 113/113 at 410 AND 420.
+- Debug tooling kept env-gated: `PHX_DEBUG_TEXCUBE=1`, `PHX_DEBUG_TEXCUBE_DUMP=<prefix>`, `PHX_DEBUG_DUMP=<frame>` (GameView pipeline PNG dumps), `[GL]` context banner at boot.
+- Remaining: stage 8 (4.3 compute/SSBO era), then 4.4/4.5/4.6; optional feature adoption (`textureGather` etc.) planned as separate optimization branch first.
 
-Stage-3 recap (still relevant):
+Historical stage-3/4 recap (still relevant):
+- All 73 `gl_FragColor` fragment shaders → explicit `layout(location=0) out vec4 fragColor;`; output for the 9 brush shaders declared inside `include/brush.glsl` (macro blind spot: grep audits must also check `#define` bodies).
+- **Offline shader validator:** `python3.13 configure.py test` → `tools/validate_glsl.py`, compiles+links all 113 shaders headlessly via moderngl/EGL at the engine's current GLSL level (auto-parsed from `Shader.cpp`). EGL can't do compatibility profiles, so it validates at `<NNN> core`. Run before every stage bump. NOTE: use `python3.13` — moderngl lives under its site-packages on this host.
+- Stage-4 sweep repaired 12 pre-existing broken shaders that had never compiled (undeclared `outColor` writers, `uv_metal` missing paren, `triplanar` duplicate uniforms, `desat` missing include, `ptracer` embedded `#version 450` + `SCENE_DESC` + 420pack initializers) and removed the dead `GL_EXT_gpu_shader4` block from `common.glsl`.
+- Legacy-token counts after stage 5, all ZERO everywhere (shaders AND C++): `gl_FragColor/gl_FragData`, `varying/attribute`, legacy texture fns, embedded `#version`, `glBegin/glVertex*`, fixed-function matrix calls.
 - `ui.glsl`/`ui3D.glsl` migrated off `gl_ProjectionMatrix/gl_ModelViewMatrix` onto `mProjUI/mViewUI`, pushed/popped by `Viewport_Push/Pop` (`libphx/src/Viewport.cpp`).
 - **Eager autovar trap:** `Shader_Start` uploads `#autovar` uniforms once, at start time. Passes that start a shader before pushing their render-target viewport bake in the window matrices — this was the skybox "gaps/squares" root cause; `TexCube_Generate` now starts inside the first RT push.
-- Debug tools kept env-gated: `PHX_DEBUG_TEXCUBE=1` (tiler bypass), `PHX_DEBUG_TEXCUBE_DUMP=<prefix>` (dump cubemap faces to PNG).
-- Remaining for stage 5 (4.0): flip `SDL_GL_CONTEXT_PROFILE_MASK` to CORE in `Engine.cpp` + bump to `400`; optional hardening: explicit `layout(location=0/1/2)` on `deferred.glsl` outputs.
 
-An attempt was made to bump `Engine_Init(2, 1)` → `(3, 3)` (`src/Main.cpp:15`) and `#version 130` → `#version 330` (`libphx/src/Shader.cpp:27`) together. **It builds but aborts at runtime** on the first shader compile, and has been **reverted** to keep the stable baseline. Findings, so the next attempt has a real roadmap:
-
-- **Root cause:** GLSL 330 is a *core*-profile GLSL that removes every deprecated fixed-function built-in the engine's shaders still use. The first failure is `CreateGLShader: Failed to compile shader: 'gl_MultiTexCoord0' undeclared / 'gl_Vertex' undeclared` (during `computeAO` at boot).
-- **The migration is NOT a one-line bump — it is a renderer migration.** Scope discovered:
-  - **4 vertex shaders** use fixed-function built-ins (`gl_Vertex`, `gl_MultiTexCoord0`, `gl_ModelViewMatrix`, `gl_ProjectionMatrix`): `res/shader/vertex/ui.glsl`, `identity.glsl`, `ui3D.glsl`, `worldray.glsl`. These must be rewritten to read generic `in` attributes and multiply by explicit `mView`/`mProj` uniforms.
-  - **~73 fragment shaders** use `gl_FragColor` / `gl_FragData[]` — must become explicit `out vec4`.
-  - **`libphx/src/Draw.cpp`** does all UI/debug drawing via **18 `glBegin`/`glVertex` immediate-mode blocks**, which do not exist in a core profile at all. This is a **C++ rewrite to VBOs/VAOs**, and is the hardest part.
-- **What's already modern (good news):** `libphx/src/Mesh.cpp` — the actual 3D geometry path — already submits generic attributes via `glVertexAttribPointer(0/1/2, ...)` for position/normal/uv (`Mesh.cpp:220-226`) and draws with `glDrawElements`. Only the *vertex shaders* need to switch from `gl_Vertex` to `layout(location=0) in vec3 ...` (locations 0=pos, 1=normal, 2=uv). The immediate-mode `glBegin` calls in `Mesh.cpp` are only in `Mesh_DrawNormals` (debug).
-- **Why it "builds but crashes":** we kept `SDL_GL_CONTEXT_PROFILE_COMPATIBILITY`, so the driver still grants a compatibility context (C++ `glBegin` keeps working), but the *shaders* at `#version 330` reject the legacy built-ins. Worst of both worlds.
-
-**Recommended incremental path for a future attempt (do NOT bump `#version` until all shaders are migrated):**
-1. Migrate the 4 vertex shaders to `layout(location=)` `in` attributes + `mView`/`mProj` uniforms, while still on `#version 130` (130 supports this syntax). Verify each still renders.
-2. Convert all `gl_FragColor`/`gl_FragData[]` fragment shaders to `out vec4` (the G-buffer material shaders are already done via `deferred.glsl`).
-3. Rewrite `Draw.cpp` immediate-mode drawing to a small VBO/VAO helper (position + uv + color streams).
-4. Only then bump `Shader.cpp:27` to `#version 330` **and** `src/Main.cpp:15` to `Engine_Init(3, 3)` together, and switch the profile to core if desired.
-5. Rebuild + run `LTheory`; watch stderr for `CreateGLShader: Failed to compile shader`.
+(The early July 2026 "330 bump attempted & reverted" saga and its migration roadmap are
+fully superseded — all of its items landed across stages 3–5. See git history and the
+ladder doc's stage notes if you need the archaeology.)
 
 ### Draw.cpp VBO Rewrite — DONE & Verified (July 2026)
 
@@ -402,10 +396,10 @@ chain, and `libphx/script/ffi/libphx.lua` loads `libphx64.so` by absolute path. 
 also run `./bin/lt64r LTheory` directly from the repo root without any env var.
 
 ### Next Steps
-1. **Bump `#version` to 330** — Change `versionString` in `Shader.cpp:27` from `"#version 130\n"` to `"#version 330\n"` and verify all shaders compile.
-2. **Replace corrupted textures** with real assets or procedural generation to restore visual quality.
-3. **Clean up `common.glsl` dead code** — Remove `#ifdef HIGHQ` guards or make them runtime-toggleable.
-4. **Complete GLSL 130 cleanup** — Replace remaining `texture2D`/`gl_FragColor` in filter/UI/compute shaders.
-5. **Extend the engine** for Freelancer-style 3D space environments (procedural nebulae, dust, sectors, etc.).
-6. **Pin LuaJIT** — Build LuaJIT 2.1 from a pinned source for reproducible Linux builds; smoke-test FFI bindings after any version bump.
+1. **Optional feature adoption (4.1+ features):** `textureGather` in blur/shadow passes — separate optimization branch, benchmark with the built-in profiler.
+2. **Stage 8 (4.3 / 430):** compute shaders + SSBOs become available; migrate legacy "compute" fragment passes (`computeAO` etc.) or leave as-is. See ladder doc.
+3. **Replace corrupted textures** with real assets or procedural generation to restore visual quality.
+4. **Extend the engine** for Freelancer-style 3D space environments (procedural nebulae, dust, sectors, etc.).
+5. **Pin LuaJIT** — Build LuaJIT 2.1 from a pinned source for reproducible Linux builds; smoke-test FFI bindings after any version bump.
+6. **Remaining ladder:** stages 9–11 (4.4/4.5/4.6) after 4.3 lands.
 7. **Update this document** as new milestones are reached.

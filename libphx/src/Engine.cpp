@@ -72,7 +72,7 @@ void Engine_Init (int glVersionMajor, int glVersionMinor) {
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, glVersionMinor);
   SDL_GL_SetAttribute(
     SDL_GL_CONTEXT_PROFILE_MASK,
-    SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+    SDL_GL_CONTEXT_PROFILE_CORE);
   SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
   SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
   SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
