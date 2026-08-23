@@ -47,6 +47,12 @@ static void Draw_Init () {
   GLCALL(glGenBuffers(1, &s_vbo));
 }
 
+void Draw_DrawArraysInstanced (int mode, int first, int count, int primcount) {
+  /* FRAME_BEGIN is intentionally omitted: callers drive their own profiling,
+   * and this draws nothing from the Imm_ scratch buffers. */
+  GLCALL(glDrawArraysInstanced((GLenum)mode, first, count, primcount))
+}
+
 /* Bind the VBO + attribute arrays for drawing. Mirrors Mesh_DrawBind. */
 static void Draw_Bind () {
   Draw_Init();

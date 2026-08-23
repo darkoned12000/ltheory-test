@@ -8,7 +8,8 @@ do -- C Definitions
     void Draw_Clear        (float r, float g, float b, float a);
     void Draw_ClearDepth   (float d);
     void Draw_Color        (float r, float g, float b, float a);
-    void Draw_Flush        ();
+    void Draw_DrawArraysInstanced (int mode, int first, int count, int primcount);
+   void Draw_Flush        ();
     void Draw_LineWidth    (float width);
     void Draw_PointSize    (float size);
     void Draw_PushAlpha    (float a);
@@ -40,6 +41,7 @@ do -- Global Symbol Table
     ClearDepth   = libphx.Draw_ClearDepth,
     Color        = libphx.Draw_Color,
     Flush        = libphx.Draw_Flush,
+    DrawArraysInstanced = libphx.Draw_DrawArraysInstanced,
     LineWidth    = libphx.Draw_LineWidth,
     PointSize    = libphx.Draw_PointSize,
     PushAlpha    = libphx.Draw_PushAlpha,

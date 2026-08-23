@@ -25,6 +25,7 @@
 local Entity = require('Game.Entity')
 local Material = require('Game.Material')
 local Explosion = require('Game.Entities.Explosion')
+local GPUParticles = require('Game.Entities.GPUParticles')
 
 -- NOTE: `Asteroid` is forward-declared here (rather than `local Asteroid = ...`)
 -- because the `fragment` closure below needs to spawn NEW asteroids. The
@@ -93,6 +94,11 @@ local function fragment (self, source)
     local v = self:getVelocity()
     root:addChild(Explosion(p, v, 0.0))
   end
+
+  -- GPU-particle burst: hundreds of additive sprites simulated entirely in
+  -- compute (see GPUParticles.lua). Scales with the rock so big asteroids
+  -- pop bigger than small ones.
+  GPUParticles.explode(self:getPos(), self:getVelocity(), self:getScale())
 end
 
 -- Asteroid constructor. `seed` drives the procedural shape; `scale` is the
