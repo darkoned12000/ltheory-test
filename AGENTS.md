@@ -241,7 +241,7 @@ stages 5–7:
 - **Immediate mode fully removed:** `Draw.cpp` provides internal `Imm_*` VBO API (`DrawInternal.h`); Tex1D/Tex2D/Mesh_DrawNormals converted; dead `Tex3D_Draw` deleted (+ Lua FFI bindings). `GLMatrix.cpp` is pure-CPU stacks (equivalence-proven vs the old fixed-function path).
 - **Validator stub fix:** `tools/validate_glsl.py` stub shaders previously used `v_`-prefixed names that never matched real interfaces — Mesa ≤4.1 linked leniently, 420 rejected. Stubs now use exact interface names; genuine 113/113 at 410 AND 420.
 - Debug tooling kept env-gated: `PHX_DEBUG_TEXCUBE=1`, `PHX_DEBUG_TEXCUBE_DUMP=<prefix>`, `PHX_DEBUG_DUMP=<frame>` (GameView pipeline PNG dumps), `[GL]` context banner at boot.
-- Remaining: stage 8 (4.3 compute/SSBO era), then 4.4/4.5/4.6; optional feature adoption (`textureGather` etc.) planned as separate optimization branch first.
+- Stages 5–7 merged (GL 4.2/420 CORE); stage 8 (4.3/430) green on branch `upgrade-gl4_3`. Remaining ladder: 4.4/4.5/4.6. Half-tap Gaussian blur shipped (~2x fewer fetches, `filter/blur.glsl`); textureGather evaluated & rejected for RGBA pipeline (see ladder Stage 8 notes).
 
 Historical stage-3/4 recap (still relevant):
 - All 73 `gl_FragColor` fragment shaders → explicit `layout(location=0) out vec4 fragColor;`; output for the 9 brush shaders declared inside `include/brush.glsl` (macro blind spot: grep audits must also check `#define` bodies).

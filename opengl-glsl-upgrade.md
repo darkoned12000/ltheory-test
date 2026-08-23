@@ -39,7 +39,7 @@ GLSL versions map to OpenGL versions: 130→3.0, 140→3.1, 150→3.2, 330→3.3
 | 5 | **4.0** ⚠️ | `(4, 0)` core | `400` | **YES — last legacy removals** | done: CORE profile flip + global VAO (`OpenGL_Init`), `Imm_*` VBO API in `Draw.cpp` (Tex1D/Tex2D/Mesh_DrawNormals converted, `Tex3D_Draw` deleted), CPU matrix stacks in `GLMatrix.cpp` (equivalence-simulated), explicit passthrough shaders for window blits (`Renderer:present/presentAll/downsample`) | subroutines available; no shader changes needed | [x] done 2026-08-22 — see Stage 5 notes (black-screen root cause) |
 | 6 | **4.1** | `(4, 1)` core | `410` | No — low risk | none required (two-line bump) | optional: explicit uniform locations, `textureGather` — NOT adopted yet; follow-up optimization branch planned | [x] done 2026-08-22 — validator green, QA 3× clean |
 | 7 | **4.2** | `(4, 2)` core | `420` | No — but exposed a validator bug (see Stage 7 notes) | none required (two-line bump) | optional: image load/store, dual-source blending — not adopted | [x] done 2026-08-22 — validator stub-name fix, genuine 113/113, QA clean |
-| 8 | **4.3** ⚠️ | `(4, 3)` core | `430` | **YES — compute/SSBO era** | add `glDispatchCompute` plumbing if migrating legacy compute passes | optional: rewrite `computeAO`-style passes as native `.comp` + SSBOs | [ ] |
+| 8 | **4.3** ⚠️ | `(4, 3)` core | `430` | Only if ADOPTING compute — bump itself is additive | none required (two-line bump); `.comp` stage plumbing deferred until a compute feature justifies it | optional (NOT done): migrate `Mesh_ComputeAO` GPGPU-via-raster path to native `.comp` + SSBOs — see Stage 8 notes | [x] done 2026-08-22 — validator green, QA clean |
 | 9 | **4.4** | `(4, 4)` core | `440` | No — low risk | none required | optional: sparse texture access, non-uniform derivatives | [ ] |
 | 10 | **4.5** | `(4, 5)` core | `450` | No — low risk | none required | optional: transform-feedback stream/mode qualifiers, I/O interning | [ ] |
 | 11 | **4.6** ⚠️ | `(4, 6)` core | `460` | **YES — final gate** | verify GLEW exposes full 4.6; robust-buffer-access checks | final deprecation sweep: zero legacy syntax anywhere | [ ] |
@@ -208,6 +208,23 @@ supersample downsample in `startPostEffects()` now wrap their quads in
 Two-line bump (`Engine_Init(4,1)` + `#version 410 core`). Validator green, runtime QA
 green ×3. Optional features (explicit uniform locations, `textureGather`) NOT adopted —
 planned as a separate optimization branch starting with the blur filter family.
+
+## Stage 8 (4.3 / 430) Notes — DONE 2026-08-22
+
+Two-line bump; validator green; QA clean. Compute/SSBO adoption deliberately DEFERRED:
+
+- The engine's only "compute" pass is `Mesh_ComputeAO` (`libphx/src/Mesh_ComputeAO.cpp`),
+  which bakes per-vertex AO into unused `uv.x` at mesh-generation time via the classic
+  render-to-texture GPGPU trick + `fragment/compute/occlusion.glsl`. It runs at world-gen,
+  not per frame — no runtime pressure to migrate.
+- Real compute needs engine plumbing first: `Shader_Load` only handles vertex/fragment
+  pairs, so `.comp` support (stage enum, dispatch API, SSBO/buffer management) is a
+  feature project. Adopt alongside the first feature that needs it (GPU particles is the
+  leading candidate), not for its own sake.
+- textureGather/half-tap note: the opt branch (merged 2026-08-22) proved gather does NOT
+  fit this codebase's RGBA blur chain; half-tap bilinear merging landed instead
+  (`filter/blur.glsl`, ~2x fewer fetches). Gather stays relevant for future single-channel
+  passes (shadow-map PCF, depth-aware effects).
 
 ## Stage 7 (4.2 / 420) Notes — DONE 2026-08-22
 
