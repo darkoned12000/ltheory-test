@@ -17,6 +17,10 @@ function LTheory:generate ()
   if self.system then self.system:delete() end
   self.system = Entities.System(self.seed)
 
+  -- GPU particle pool (compute-simulated sprites). One per system; other
+  -- entities just call Entities.GPUParticles.explode(...) / .emit{...}.
+  self.system:addChild(Entities.GPUParticles())
+
   local ship
   do -- Player Ship
     ship = self.system:spawnShip()
