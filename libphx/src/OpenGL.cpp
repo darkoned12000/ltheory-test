@@ -22,15 +22,19 @@ void OpenGL_Init () {
     /* One-time context report — makes version/profile skew visible. */
     GLint profile = 0;
     SDL_GL_GetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, &profile);
+    /* Final ladder gate (GL 4.6): also report that the extension loader
+     * actually exposes the 4.6 entry points — a granted context does not by
+     * itself prove GLEW resolved every function we may call. */
     printf(
-      "[GL] %s | %s | GL %s | GLSL %s | profile %s\n",
+      "[GL] %s | %s | GL %s | GLSL %s | profile %s | glew-4.6 %s\n",
       glGetString(GL_VENDOR),
       glGetString(GL_RENDERER),
       glGetString(GL_VERSION),
       glGetString(GL_SHADING_LANGUAGE_VERSION),
       profile == SDL_GL_CONTEXT_PROFILE_CORE ? "CORE"
         : profile == SDL_GL_CONTEXT_PROFILE_COMPATIBILITY ? "COMPATIBILITY"
-        : "ES");
+        : "ES",
+      glewIsSupported("GL_VERSION_4_6") ? "yes" : "NO");
   }
 
   GLCALL(glDisable(GL_MULTISAMPLE))
