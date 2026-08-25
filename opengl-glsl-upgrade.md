@@ -32,18 +32,20 @@ GLSL versions map to OpenGL versions: 130→3.0, 140→3.1, 150→3.2, 330→3.3
 
 | # | Stage | GL context (`Engine_Init`) | GLSL `#version` | Structural trouble? | C++ work required | Shader work required | Status |
 |---|-------|---------------------------|-----------------|---------------------|-------------------|----------------------|--------|
-| 0 | Baseline (today) | `(2, 1)` compat | `130` | — | none | none | [x] done |
-| 1 | **3.0** | `(3, 0)` compat | `130` (unchanged) | No — low risk | none (context only) | none | [x] done 2026-08-22 (via 3.1 bump, context 3.0 verified) |
-| 2 | **3.1** | `(3, 1)` compat | `140` | No — low risk | optional: UBOs become available | optional: adopt uniform buffers | [x] done 2026-08-22 — `Engine_Init(3,1)` `versionString 140` clean, `gl_FragColor` at 140 compat OK |
-| 3 | **3.2** | `(3, 2)` compat | `150 compat` | **YES — more than expected**: `gl_ProjectionMatrix` rejected at 150 (even w/ COMPAT ctx) forced the `ui`/`ui3D` migration + `Viewport` `mProjUI/mViewUI`; `TexCube_Generate` autovar-order fix | done: ui/ui3D modernization, all legacy texture fns → `texture()`, `starbg` discard, `MasterControl` guards, TexCube shader-start reorder | see Stage 3 notes below | [x] done 2026-08-22 — 5 clean runs, skybox/stars/HUD verified vs 140 baseline |
-| 4 | **3.3** ⚠️ | `(3, 3)` compat* | `330 compatibility` | **YES — core-language cutover**, plus latent-bug sweep (see Stage 4 notes) | keep COMPAT mask until C++ is clean; later flip to CORE. Built clean first try | checklist A done: 73 fragment files → `layout(location=0) out vec4 fragColor;` (146 files / 148 call sites incl. master tree); `BRUSH_OUTPUT` macro blind spot fixed by declaring the output inside `brush.glsl`; 12 pre-existing broken shaders repaired (`outColor` never declared, uv_metal missing paren, triplanar dup uniforms, desat missing include, ptracer embedded `#version 450` + `SCENE_DESC` + 420pack, common.glsl gpu_shader4 removal) | [x] done 2026-08-22 — 113/113 offline compile at 330 core + runtime QA green (skybox/stars/sun/flight/weapons/thrusters) |
-| 5 | **4.0** ⚠️ | `(4, 0)` core | `400` | **YES — last legacy removals** | done: CORE profile flip + global VAO (`OpenGL_Init`), `Imm_*` VBO API in `Draw.cpp` (Tex1D/Tex2D/Mesh_DrawNormals converted, `Tex3D_Draw` deleted), CPU matrix stacks in `GLMatrix.cpp` (equivalence-simulated), explicit passthrough shaders for window blits (`Renderer:present/presentAll/downsample`) | subroutines available; no shader changes needed | [x] done 2026-08-22 — see Stage 5 notes (black-screen root cause) |
-| 6 | **4.1** | `(4, 1)` core | `410` | No — low risk | none required (two-line bump) | optional: explicit uniform locations, `textureGather` — NOT adopted yet; follow-up optimization branch planned | [x] done 2026-08-22 — validator green, QA 3× clean |
-| 7 | **4.2** | `(4, 2)` core | `420` | No — but exposed a validator bug (see Stage 7 notes) | none required (two-line bump) | optional: image load/store, dual-source blending — not adopted | [x] done 2026-08-22 — validator stub-name fix, genuine 113/113, QA clean |
-| 8 | **4.3** ⚠️ | `(4, 3)` core | `430` | Only if ADOPTING compute — bump itself is additive | none required (two-line bump); `.comp` stage plumbing deferred until a compute feature justifies it | optional (NOT done): migrate `Mesh_ComputeAO` GPGPU-via-raster path to native `.comp` + SSBOs — see Stage 8 notes | [x] done 2026-08-22 — validator green, QA clean |
-| 9 | **4.4** | `(4, 4)` core | `440` | No — low risk | none required | optional: sparse texture access, non-uniform derivatives | [x] done 2026-08-22 — validator green, QA clean |
-| 10 | **4.5** | `(4, 5)` core | `450` | No — low risk | none required | optional: transform-feedback stream/mode qualifiers, I/O interning | [x] done 2026-08-22 — validator green, QA clean |
-| 11 | **4.6** ⚠️ | `(4, 6)` core | `460` | **YES — final gate** | done: GLEW capability flag added to `[GL]` boot banner (`glewIsSupported("GL_VERSION_4_6")`) | done: final deprecation sweep — ZERO legacy tokens in all 113 shaders AND all C++ (only doc comments mention the removed legacy APIs) | [x] done 2026-08-22 — LADDER COMPLETE |
+| 0 | Baseline (today) | `(2, 1)` compat | `130` | — | none | none | done |
+| 1 | **3.0** | `(3, 0)` compat | `130` (unchanged) | No — low risk | none (context only) | none | done (via 3.1 bump) |
+| 2 | **3.1** | `(3, 1)` compat | `140` | No — low risk | optional: UBOs become available | optional: adopt uniform buffers | done |
+| 3 | **3.2** | `(3, 2)` compat | `150 compat` | **YES**: `gl_ProjectionMatrix` rejected at 150 forced the `ui`/`ui3D` migration + `Viewport` `mProjUI/mViewUI`; TexCube autovar-order fix | done: ui/ui3D modernization, legacy texture fns → `texture()`, starbg discard, MasterControl guards, TexCube reorder | see Stage 3 notes | done |
+| 4 | **3.3** ⚠️ | `(3, 3)` compat* | `330 compatibility` | **YES — core-language cutover**, plus latent-bug sweep (see Stage 4 notes) | keep COMPAT mask until C++ is clean; later flip to CORE. Built clean first try | checklist A: 73 fragment files → `layout(location=0) out vec4 fragColor;` (146/148 call sites); BRUSH_OUTPUT macro blind spot fixed; 12 pre-existing broken shaders repaired | done — 113/113 offline at 330 core + runtime QA green |
+| 5 | **4.0** ⚠️ | `(4, 0)` core | `400` | **YES — last legacy removals** | done: CORE flip + global VAO (`OpenGL_Init`), `Imm_*` VBO API in `Draw.cpp` (Tex1D/Tex2D/Mesh_DrawNormals converted, Tex3D_Draw deleted), CPU matrix stacks (`GLMatrix.cpp`), passthrough blit shaders | subroutines available; no shader changes needed | done — see Stage 5 notes (black-screen root cause) |
+| 6 | **4.1** | `(4, 1)` core | `410` | No — low risk | none required (two-line bump) | optional: explicit uniform locations, textureGather — NOT adopted yet | done |
+| 7 | **4.2** | `(4, 2)` core | `420` | No — but exposed a validator bug (see Stage 7 notes) | none required (two-line bump) | optional: image load/store, dual-source blending — not adopted | done |
+| 8 | **4.3** ⚠️ | `(4, 3)` core | `430` | Only if ADOPTING compute — bump itself is additive | none required; `.comp` plumbing deferred until a feature justifies it | optional (NOT done): migrate Mesh_ComputeAO to native `.comp` + SSBOs — see Stage 8 notes | done |
+| 9 | **4.4** | `(4, 4)` core | `440` | No — low risk | none required | optional: sparse texture access, non-uniform derivatives | done |
+| 10 | **4.5** | `(4, 5)` core | `450` | No — low risk | none required | optional: transform-feedback qualifiers, I/O interning | done |
+| 11 | **4.6** ⚠️ | `(4, 6)` core | `460` | **YES — final gate** | done: GLEW capability flag in `[GL]` banner (`glewIsSupported("GL_VERSION_4_6")`) | done: final deprecation sweep — ZERO legacy tokens; only doc comments mention removed APIs | LADDER COMPLETE (stages 9–11 landed together) |
+
+\* Stage 4 keeps the COMPATIBILITY mask on purpose: it lets us bump GLSL to 330 (core-profile language) while any straggler C++ calls still work, then flip to CORE at stage 5 once everything is verified.
 
 \* Stage 4 keeps the COMPATIBILITY mask on purpose: it lets us bump GLSL to 330 (core-profile language) while any straggler C++ calls still work, then flip to CORE at stage 5 once everything is verified.
 
@@ -354,4 +356,69 @@ validated at every intermediate level before moving on:
   "Post-4.6 Modernization Backlog" with its trigger condition — adopt when the
   corresponding feature work starts, never speculatively.
 
-**Next milestone:** Post-4.6 backlog, led by compute plumbing (`.comp` stage) and GPU particles.
+## Runtime Hardening — Post-4.6 (2026-08-25)
+
+The ladder makes shaders *portable across versions*; this work makes them *safe at runtime*
+and the engine *runnable on weak + strong hardware*. Ordered by value-to-risk, all additive:
+
+### 1. Offline validator restored + runnable headlessly (DONE)
+`python3 configure.py test` was failing with `ModuleNotFoundError: No module named 'moderngl'`.
+Cause: moderngl is **not** a system package on this host; AGENTS.md's ladder notes assume it
+is already present ("use python3.13 — moderngl lives under its site-packages"). It isn't, so
+the pre-flight gate was effectively dead.
+
+- **Fix:** `python3.13 -m pip install --break-system-packages moderngl pytest`. Now the validator
+  runs headlessly via llvmpipe/EGL at the engine's GLSL level:
+  ```bash
+  python3.13 configure.py test        # 118 OK, 0 FAIL at 460 core (verified)
+  ```
+- **Why it matters:** this is the single most important hardening step for "not prone to small
+  syntax failures during runtime." A typo in a `.glsl` now fails at configure time, not mid-game.
+- **Caveat:** `configure.py` uses `sys.executable`, so *always* invoke it as `python3.13`. Using
+  the system `python3` (3.14 here) both blocks pip and can't run moderngl's headless backend.
+
+### 2. GPU particle emitters — validated feature work, ready to commit (DONE / not yet committed)
+The working tree carried a full "GPU particle explosions" implementation that replaces the
+legacy CPU `Explosion` billboards:
+- `Explodable.lua`: one scale-boosted `GPUParticles.explode(...)` burst instead of 8 billboards.
+- `Asteroid.lua`: destruction debris now emits from the GPU pool (dropped the 6-board billboard loop).
+- `ShipType.lua`: thruster mount search flipped to **+Z hull rear** (`Vec3f(0,0,1)`) — ships fly
+  along −Z, so mounting on −Z normals was firing plumes straight through the nose. This is the
+  *actual* root cause of the "tail looks like a wall/glass / crawls up" symptom: thrusters were
+  placed on the wrong side of the hull.
+- `GameView.lua`: death-guard so the post-view skips drawing when the player's world was swept
+  from the system (no nil `beginRender` crash).
+- Compute kernels (`particle_spawn`/`particle_simulate`) + `gpu_particle.glsl` got a streak-shaping
+  exhaust-vector field.
+
+**Validated:** `python3.13 configure.py test` → **118 OK, 0 FAIL at 460 core**, including the modified
+`gpu_particle.glsl`. Cleaned up my throwaway capture harness (`script/App/CaptureThruster.lua`,
+`cap_*.png`) before this — do not commit screenshots.
+
+### 3. Build-time validation gate (PENDING)
+`configure.py test` works but is run *manually* per the ladder procedure (§ "Per-Stage Procedure").
+To make it a hard pre-flight step, wire it into `CMakeLists.txt` / `configure.py` so a build fails if
+any shader won't compile+link offline. Zero runtime cost; eliminates the last path to an in-game
+shader crash that the validator doesn't cover (real vs/fs pair link mismatches — see § "Known Failure
+Modes").
+
+### 4. Graceful runtime shader failure (PENDING)
+Currently a bad `#version`/typo at first draw → `Fatal()` / abort with no context. Design: log the
+exact failing stage + source, fall back to a cached-good program if one exists, else show an in-game
+overlay ("shader X failed to compile"). This is what turns "black screen mid-flight" into recoverable.
+
+### 5. GPU-quality settings panel (PENDING — biggest portability win)
+No options menu exists; quality is fixed at max → modern machines run fine but old ones stall. Design:
+a `Config.gpu` block (`maxParticles`, `computeShadows`, `bloom`, `superSample`) with a runtime toggle,
+so the same binary scales from integrated GPU to RTX. This directly serves "perform well on older and
+newer machines."
+
+### GLEW vs GLAD (advisory)
+Keep **GLEW 2.2.0** for now — it works and exposes every extension through 4.6; switching mid-project
+is churn. If you optimize for the "fail fast, not silently" goal, **GLAD** is worth a future pass:
+regenerating the loader pins *exactly* which version/profile gets loaded (e.g. `4.6 core`), so a typo'd
+function name or accidental legacy call fails at generation time rather than on some random driver at
+runtime. The inverse risk it adds — forgetting to regenerate after adding an extension — is manageable
+with the build-time gate (§3). **Not needed for the current hardening pass.**
+
+### Next milestone: Post-4.6 backlog, led by compute plumbing (`.comp` stage) and GPU particles.

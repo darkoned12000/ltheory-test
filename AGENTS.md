@@ -79,22 +79,17 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 - **Asset Loading:** IMPROVING. Corrupted texture placeholders have been replaced with real assets. The engine still handles any remaining missing textures gracefully with magenta fallbacks.
 - **Shaders:** COMPLETE. GLSL 130 modernization applied across all critical shaders. G-buffer refactored to use `out vec4` instead of deprecated `gl_FragData[]`. Fog re-enabled. Ambient lighting added.
 
-### Build & Link Fixes (Completed)
-1. **CMake version:** Bumped `cmake_minimum_required` from 3.0.2 to 3.5 in both root and `libphx/CMakeLists.txt`.
-2. **System dependencies installed:** `libglu1-mesa-dev libglew-dev libsdl2-dev libfreetype6-dev liblz4-dev libluajit-5.1-dev libbullet-dev`.
-3. **Pre-compiled Bullet libs relocated:** Moved `libphx/ext/lib/linux64/Bullet*.so` to `bullet_backup/` so the system Bullet 3.24 libraries are used instead of the bundled Bullet 2.87 binaries.
-4. **`libphx/CMakeLists.txt` link configuration:** Removed `target_link_directories` for `ext/lib`, switched FMOD/fmodstudio to absolute paths, added `LinearMath` to the link list (required by system Bullet).
-5. **FMOD symlinks:** Created symlinks (`libfmod.so.10 -> libfmod.so`, etc.) in `ext/lib/linux64/` so the FMOD runtime loader finds the correct soname.
-6. **`libphx64.so` symlink:** Created `libphx64.so -> libphx64r.so` in `bin/` for the Lua FFI loader.
-7. **SDL version check disabled:** Commented out the SDL version assertion in `libphx/src/Engine.cpp` to allow newer SDL2 (2.32) to work.
-8. **CProfileManager removed:** Commented out `CProfileManager::dumpAll()` in `libphx/src/Physics.cpp` (not available in system Bullet 3).
-9. **LuaJIT version check disabled:** Modified `script/jit/dump2.lua` to skip strict version check.
+### Build & Link Fixes (Completed) — host-rebuild-critical items only; other one-offs are in git history
 
-10. **LuaJIT on Linux is 2.1.x:** The build links the system `luajit-5.1` package (libphx/CMakeLists.txt:92), which is **LuaJIT 2.1.1761786044** (OpenResty-maintained branch, Lua 5.1 ABI). The bundled `lua51.dll`/headers under `libphx/ext` are Windows-only (and are 2.1.0-beta3). There is no bundled Linux LuaJIT `.so`. See "LuaJIT Status" below.
-11. **Global shadowing warnings fixed:** `Namespace.LoadInline('Game')` (Main.lua:20) injected every `Game.*` submodule into `_G`, and `Game.SocketType`/`Game.Socket` collided with the existing `PHX.FFI.SocketType`/`PHX.FFI.Socket` globals. Renamed `Game/SocketType.lua` → `Game/SocketKind.lua` and `Game/Socket.lua` → `Game/SocketObj.lua` (and updated the `require(...)` calls) so the injected keys no longer clash.
-12. **Runtime Lua errors fixed (regression from a bad prior refactor):** `Game.SocketType` returns the `LTheory_SocketType` table directly, so `SocketType.LTheory_SocketType` was `nil`, and `Sockets.lua` referenced a non-existent `GameSocket` global. Corrected all references to use the module tables directly (e.g. `require('Game.SocketKind')`, local `LTheory_Socket`).
-13. **Mesh degenerate-geometry warnings fixed:** Added `Shape:cleanup(eps)` (welds coincident/near-coincident vertices and drops degenerate/bowtie polys) and call it from `Shape:finalize()` before triangulation. This eliminates the `Bad normal at poly` and `BSP Incoming Mesh Error: Vertex Position Degenerate` warnings at their source. The verbose `getFaceNormal` print is now gated behind `Config.gen.debug` (default `false`). Ships build and display cleanly.
-14. **`LD_LIBRARY_PATH` no longer required:** Added `$ORIGIN`-based `RUNPATH` to `lt64r` and `libphx64r.so` (CMake `BUILD_RPATH`/`INSTALL_RPATH` in `CMakeLists.txt` and `libphx/CMakeLists.txt`), and made `ffi.load` resolve `libphx64.so` via an absolute path derived from the script location (`libphx/script/ffi/libphx.lua`). Also fixed the bundled `libfmod.so`, which carried an executable-stack flag (`GNU_STACK = RWE`) that modern kernels reject on `dlopen` — its `p_flags` was patched to `RW` in place. Added `run.sh` (launcher) and `bootstrap.sh` (one-command install+configure+build) at the repo root. Bumped `cmake_minimum_required` to 3.16 and the C++ standard to C++17 (`libphx/script/build/Shared.cmake`).
+Still needed to rebuild on this Debian host: **FMOD soname symlinks** (`ext/lib/linux64/`, build fix #5),
+the `libphx64.so → libphx64r.so` symlink for the FFI loader (#6), the disabled SDL2 version assert in
+`Engine.cpp` (#7), and `$ORIGIN` RUNPATH + absolute-path `ffi.load` so **`LD_LIBRARY_PATH` is no longer
+required** (run.sh / bootstrap.sh, #14).
+
+Collapsed history: CMake floor bumped 3.0→3.5 then →3.16; deps installed (`libglu1-mesa-dev`,
+`libglew-dev`, `libsdl2-dev`, `libfreetype6-dev`, `liblz4-dev`, `libluajit-5.1-dev`, `libbullet-dev`);
+Bullet 2.87 libs moved to `bullet_backup/`; CMake link list rewired (FMOD→absolute, +`LinearMath`);
+system Bullet 3 headers include path added — see "The Bullet Physics Fix".
 
 ### Session: Asteroid Interaction, Targeting & Cleanup (July 2026)
 
@@ -133,13 +128,11 @@ Nearly all texture assets in `res/` are corrupted 130-byte placeholder files (th
 - `libphx/src/TexCube.cpp`: `TexCube_Load()` now creates fallback cubemap faces instead of aborting when individual faces fail to load.
 
 ### Remaining Non-Fatal Warnings
-- **`envMap` in `global.glsl`:** `HIGHQ` is always defined (forced in `common.glsl:16`), so the `#else` branch using `envMap` is dead code. The GLSL compiler correctly optimizes it out. Harmless.
-- **Remaining `texture2D` calls (~55):** Found in filter/UI/compute/brush shaders — deprecated but functional in GLSL 130. Low priority.
-- **Remaining `gl_FragColor` usage:** In some filter/compute shaders — deprecated but functional in GLSL 130.
+- **`envMap` in `global.glsl`:** dead code (`HIGHQ` always defined, `common.glsl:16`) — GLSL compiler optimizes it out. Harmless.
+- **Remaining `texture2D` (~55) / `gl_FragColor` (some filter/compute):** deprecated but functional in GLSL 130. Low priority.
 
 ### Fixed Warnings (Non-Fatal, Now Resolved)
-- **"Bad normal at poly":** Was emitted by `Shape:getFaceNormal` for degenerate/bowtie polys generated during ship mesh construction. Resolved by the `Shape:cleanup()` weld + degenerate-drop pass in `Shape:finalize()` (build fix #13). The offending print is gated behind `Config.gen.debug`.
-- **"BSP Incoming Mesh Error: Vertex Position Degenerate":** Was emitted by `Mesh_Validate` (C) for coincident vertices in the finalized ship mesh. Resolved by the same vertex-welding step in `Shape:cleanup()`.
+- **"Bad normal at poly" + "BSP Incoming Mesh Error: Vertex Position Degenerate":** both from degenerate/bowtie polys in ship mesh construction; resolved by `Shape:cleanup()` weld + degenerate-drop pass in `Shape:finalize()`. The verbose `getFaceNormal` print is gated behind `Config.gen.debug` (default off). (See "Collapsed history" above for the exact build-fix.)
 
 ### Shader Fixes (Completed)
 The deferred rendering shaders had numerous `#autovar` declarations for uniforms that the GLSL compiler optimized out because they were unused in the final compiled shader. Each `#autovar` line registers a variable for automatic ShaderVar stack binding, but if the compiler drops the uniform, `glGetUniformLocation` returns -1 and a warning fires.

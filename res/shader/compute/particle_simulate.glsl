@@ -10,6 +10,7 @@ struct Particle {
   vec4 posSize;
   vec4 velLife;
   vec4 colMaxLife;
+  vec4 aux;        /* xyz = exhaust dir*speed (streak shaping), w = spare */
 };
 
 layout(std430, binding = 0) buffer Pool {

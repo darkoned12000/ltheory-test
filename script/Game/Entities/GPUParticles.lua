@@ -35,7 +35,8 @@ local ShaderBarrier = Shader.Barrier
 local POOL_SIZE = 131072
 local LOCAL_SIZE = 64
 local MAX_SPAWNS_PER_FRAME = 8192
-local RECORD_FLOATS = 12 -- three vec4s
+local RECORD_FLOATS = 16 -- four vec4s (last = exhaust axis used only for
+                          -- streak shaping, so plume geometry is flight-independent)
 local DRAG = 1.2         -- exponential velocity damping factor (per second)
 
 -- glDrawArraysInstanced primitive enum for two-triangle quads.
@@ -75,8 +76,10 @@ Preload.Add (function ()
   simShader   = Cache.Compute('particle_simulate')
   drawShader  = Cache.Shader('particles', 'effect/gpu_particle')
 
-  poolBuf  = GPUBuffer.Create(POOL_SIZE * 48)  -- zeroed => life 0 => all dead
-  spawnBuf = GPUBuffer.Create(MAX_SPAWNS_PER_FRAME * 48)
+  poolBuf  = GPUBuffer.Create(POOL_SIZE * RECORD_FLOATS * 4) -- MUST track
+  -- RECORD_FLOATS: kernels write full 64B structs; a stale byte-count here
+  -- turns every simulate dispatch into an out-of-bounds write
+  spawnBuf = GPUBuffer.Create(MAX_SPAWNS_PER_FRAME * RECORD_FLOATS * 4)
   metaBuf  = GPUBuffer.Create(16)
 
   -- Binding points are context-global and nothing else in the engine uses
@@ -98,8 +101,26 @@ end)
     r,g,b        color
     life         seconds until fade-out completes
 ]]
+local freeRecords = {}
+
+--[[ Records are recycled after packing: emitters call this ~1000x/sec while
+  cruising, so allocating a fresh table per sprite made the GC sweep every
+  second or two -- which showed up as a visible pulse in the trail. ]]
 function GPUParticles.emit (record)
-  if #queue < MAX_SPAWNS_PER_FRAME * 4 then queue[#queue + 1] = record end
+  if #queue < MAX_SPAWNS_PER_FRAME * 4 then
+    queue[#queue + 1] = record
+  else
+    freeRecords[#freeRecords + 1] = record
+  end
+end
+
+local function recycle (record)
+  for k in pairs(record) do record[k] = nil end
+  freeRecords[#freeRecords + 1] = record
+end
+
+function GPUParticles.newRecord ()
+  return table.remove(freeRecords) or {}
 end
 
 --[[
@@ -138,7 +159,7 @@ function GPUParticles:update (state)
     elseif self.burstDone and not self.checked and self.st > 1.5 then
       local samples = 256
       local probe = ffi.new('float[?]', samples * RECORD_FLOATS)
-      GPUBuffer.Download(poolBuf, probe, samples * 48)
+      GPUBuffer.Download(poolBuf, probe, samples * 64)
       local alive = 0
       for i = 0, samples - 1 do
         if probe[i * RECORD_FLOATS + 7] > 0 then alive = alive + 1 end
@@ -162,13 +183,19 @@ function GPUParticles:update (state)
       spawnData[o + 6]  = r.vz spawnData[o + 7]  = r.life
       spawnData[o + 8]  = r.r  spawnData[o + 9]  = r.g
       spawnData[o + 10] = r.b  spawnData[o + 11] = r.life
+      -- Exhaust/shaping vector: emitters that care (thrusters) pass their
+      -- pure nozzle direction here; everything else falls back to velocity.
+      local ax, ay, az = r.ax or r.vx, r.ay or r.vy, r.az or r.vz
+      spawnData[o + 12] = ax    spawnData[o + 13] = ay
+      spawnData[o + 14] = az    spawnData[o + 15] = 0.0
     end
-    -- Consume n records, preserving any overflow for next frame.
+    -- Recycle packed records, preserving any overflow for next frame.
+    for i = 1, n do recycle(queue[i]) end
     local remaining = #queue - n
     for i = 1, remaining do queue[i] = queue[i + n] end
     for i = remaining + 1, #queue do queue[i] = nil end
 
-    GPUBuffer.Upload(spawnBuf, spawnData, n * 48)
+    GPUBuffer.Upload(spawnBuf, spawnData, n * 64)
     metaData[0] = n
     -- Upload ONLY the count word; the tail cursor is GPU-owned state.
     GPUBuffer.Upload(metaBuf, metaData, 4)

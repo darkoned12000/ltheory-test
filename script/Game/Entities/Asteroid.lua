@@ -24,7 +24,6 @@
 
 local Entity = require('Game.Entity')
 local Material = require('Game.Material')
-local Explosion = require('Game.Entities.Explosion')
 local GPUParticles = require('Game.Entities.GPUParticles')
 
 -- NOTE: `Asteroid` is forward-declared here (rather than `local Asteroid = ...`)
@@ -86,18 +85,10 @@ local function fragment (self, source)
     end
   end
 
-  -- Always spawn a debris/dust burst: a few short-lived Explosion billboards
-  -- that fade out on their own (see Explosion.lua, which deletes itself after
-  -- ~10s). This is the visible "pop" when something dies.
-  for i = 1, 6 do
-    local p = self:getPos() + rng:getSphere():scale(4.0 * self:getScale())
-    local v = self:getVelocity()
-    root:addChild(Explosion(p, v, 0.0))
-  end
-
-  -- GPU-particle burst: hundreds of additive sprites simulated entirely in
-  -- compute (see GPUParticles.lua). Scales with the rock so big asteroids
-  -- pop bigger than small ones.
+  -- Debris burst: GPU-particle explosion scaled with the rock (hundreds of
+  -- additive sprites simulated entirely in compute; see GPUParticles.lua).
+  -- This is the visible "pop" when something dies. The legacy Explosion
+  -- billboard entity is no longer spawned anywhere.
   GPUParticles.explode(self:getPos(), self:getVelocity(), self:getScale())
 end
 

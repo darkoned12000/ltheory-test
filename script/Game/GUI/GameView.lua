@@ -46,6 +46,16 @@ function GameView:draw (focus, active)
   self.camera:beginDraw()
 
   local world = self.player:getRoot()
+  -- If the player died and sweepDestroyed detached it from the system,
+  -- getRoot() returns the orphaned player, which has no world methods.
+  -- Skip drawing instead of erroring every frame (death handling TODO).
+  if world == self.player or not world.beginRender then
+    ClipRect.PopDisabled()
+    RenderState.PopAllDefaults()
+    self.camera:endDraw()
+    Profiler.End()
+    return
+  end
   local eye = self.camera.pos
   world:beginRender()
 
