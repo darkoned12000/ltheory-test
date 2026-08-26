@@ -104,7 +104,8 @@ process. Committed as C++ null-guard + Lua nil-guards + offline gate (the gate a
 1. **C++ stops aborting on shader failure.** `CreateGLShader`/`CreateGLProgram`/`LoadCompute`
    (`libphx/src/Shader.cpp`) now log the failing stage + source name to `stderr` and return NULL,
    instead of `Fatal()`-aborting mid-load. This is the real fix — previously a bad `#version`/typo
-   at first draw → `Fatal()` / abort with no context (the PENDING item #4 in `opengl-glsl-upgrade.md`).
+    at first draw → `Fatal()` / abort with no context (this #4a crash-prevention half is now committed; the
+    cached-good fallback + overlay that complete item #4 landed in commit `74f717a`).
 2. **`Shader_Start` null-guard** (`libphx/src/Shader.cpp:302`) — `if (!self) return;`. A broken
    shader that returns NULL now skips the pass instead of dereferencing `self->program` and SIGSEGV-ing.
    **This is why it's safe:** the crash was in C++ *inside* `Shader_Start`, before Lua ever checked the
@@ -123,12 +124,25 @@ process. Committed as C++ null-guard + Lua nil-guards + offline gate (the gate a
 gracefully (app alive through full window, exit 124, no SIGSEGV/abort). Clean tree: build passes the
 validator gate, run is healthy.
 
-**Still PENDING for FULL graceful runtime failure (opengl-glsl-upgrade.md §4):** a cached-good program
-fallback + an in-game overlay. Per that doc, do NOT rush it — `Shader_Load` returning NULL isn't enough
-downstream if nothing good is cached, and the FFI metatype bug (`onDef_Vec3f_t`/`onDef_*` defined but
-never invoked → intermittent `'struct Vec3f' has no member named 'x'`) must be sorted first. That risk
-lives in the risky graphics/FFI layer. Current state = crash prevention (done) + graceful degradation of
-most Lua callers; full fallback is a separate, gated item.
+**FULL graceful runtime failure — DONE (commit `74f717a`).** The cached-good fallback + in-game overlay
+landed on top of the earlier crash-prevention commit (`4385699`):
+- **C++ null-guard + non-abort.** `CreateGLShader`/`CreateGLProgram`/`LoadCompute` log the failing stage +
+  source name to `stderr` and return NULL instead of `Fatal()`-aborting. `Shader_Start` guards
+  (`if (!self) return;`) so a NULL shader skips the pass rather than dereferencing `program` → SIGSEGV.
+- **Cached-good fallback** (`script/phx/util/Cache.lua`): `goodShaders[key]` holds the last-known-good
+  program per key; `Shader_Load` returning NULL degrades to it instead of nil.
+- **In-game overlay** (`script/phx/util/Application.lua:183`): draws "SHADER FAILED TO COMPILE" + the failing
+  key from `Cache.lastError`.
+
+**Key enabler:** caches + error flag are now real fields on the `Cache` table, not locals. In LuaJIT a bare
+assignment inside a function lands in `_G`, not on the returned module table — which is why the overlay never
+drew before this change. Top-level field assignments make them reachable; `Cache.Clear()` + all callers updated.
+
+**FFI metatype note (was the original gate):** struct member access works at runtime (`Vec3f().x/y/z` verified).
+The `onDef_*_t` callbacks are defined in hand-written `libphx/script/ffiext/*.lua` and invoked by the generated
+`libphx/script/ffi/*.lua` metatype blocks via `if onDef_%s_t then ... end`. They couple through global scope as a
+side effect of load order — functional but fragile (an explicit load-order contract would harden it). Not a crash;
+left as-is.
 
 ### Build & Link Fixes (Completed) — host-rebuild-critical items only; other one-offs are in git history
 

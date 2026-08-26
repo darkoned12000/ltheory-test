@@ -400,36 +400,30 @@ legacy CPU `Explosion` billboards:
 step so a build/run fails if any shader won't compile+link offline:
 - **Fix:** validated via `python3.13 configure.py` → `[configure.py] shader validation OK (offline compile+link)` before producing anything. Zero runtime cost; eliminates the last path to an in-game shader crash that the validator doesn't cover (real vs/fs pair link mismatches — see § "Known Failure Modes").
 
-### 4. Graceful runtime shader failure (PARTIALLY DONE — crash prevention + Lua guards; fallback still gated)
+### 4. Graceful runtime shader failure (DONE — commit `74f717a`)
 
-Currently a bad `#version`/typo at first draw → `Fatal()` / abort with no context. Design: log the
-exact failing stage + source, fall back to a cached-good program if one exists, else show an in-game
-overlay ("shader X failed to compile"). This is what turns "black screen mid-flight" into recoverable.
+All three sub-parts now land together: C++ non-abort (#4a, commit `4385699`) + a
+cached-good program fallback (#4b) + an in-game overlay (#4c). The full path turns
+"black screen mid-flight" into recoverable: a broken pass logs the failing stage +
+source, degrades to the last-known-good program if one exists, and otherwise shows
+an on-screen banner naming the bad shader.
 
-**Crash prevention — DONE (2026-08-26, commit on `feat-gpu-emitters`).** My first 2026-08-25 pass made
-`Shader_Load/LoadCompute` return NULL on a failed stage (Warn + free partial allocation instead of Fatal),
-which *did* stop the abort — but it was not actually graceful downstream: with no cached-good program, Lua
-got a nil from `Cache.Shader()` and the next draw blew up anyway. Worse, probing that layer surfaced a
-pre-existing bug in the FFI metatype code (`onDef_Vec3f_t` / `onDef_*` callbacks are defined but never
-invoked anywhere), so even basic struct member access can intermittently hit `'struct Vec3f' has no member
-named 'x'`. That risk lives exactly in the risky graphics/FFI layer, which is why the original pass was pulled.
+- **#4a C++ null-guard + non-abort.** `CreateGLShader`/`CreateGLProgram`/`LoadCompute` log the failing
+  stage + source name to `stderr` and return NULL instead of `Fatal()`-aborting. `Shader_Start` guards
+  (`if (!self) return;`) so a NULL shader skips the pass rather than dereferencing `program` → SIGSEGV.
+- **#4b cached-good fallback** (`script/phx/util/Cache.lua`): `goodShaders[key]` holds the last-known-good
+  program per `(vs,fs)` / compute key. When `Shader.Load` returns NULL, `Cache.Shader`/`Cache.Compute` return
+  that good version instead of nil; only when nothing is cached do they set `lastError` (caller skips draw).
+- **#4c in-game overlay** (`script/phx/util/Application.lua:183`): draws "SHADER FAILED TO COMPILE" + the
+  failing key from `Cache.lastError`.
 
-**What landed now (the part that's actually safe):**
-- **C++ null-guard + non-abort.** `CreateGLShader`/`CreateGLProgram`/`LoadCompute` log the failing stage +
-  source name to `stderr` and return NULL instead of `Fatal()`-aborting. `Shader_Start` has a guard
-  (`if (!self) return;`) so a NULL shader skips the pass rather than dereferencing `program` → SIGSEGV. gdb
-  confirmed the crash was *inside* C++ `Shader_Start` (Lua would never see the nil), so Lua guards alone were
-  not enough — the C++ guard is what makes it safe.
-- **Lua nil-guards** on every `Cache.Shader` caller (`Renderer`, `GameView`, `DrawEx`, `Material`, `Cache`)
-  with balanced buffer push/pop/swap on each skip.
+**Key fix enabling #4b/#4c:** the caches and error flag are now **real fields on the `Cache` table**, not
+locals. In LuaJIT a bare assignment inside a function lands in `_G`, not on the returned module table —
+which is exactly why the overlay never drew before this change. Top-level field assignments make
+`goodShaders`/`shaders`/`lastError` reachable; `Cache.Clear()` and all callers updated to use `Cache.`.
 
-**Verified:** inject a broken `identity.glsl` → engine logs `shader compile failed <...>` and degrades
-gracefully (app alive through full window, exit 124, no SIGSEGV). Clean tree: build passes the validator gate,
-run is healthy.
-
-**Still PENDING for FULL graceful runtime failure:** a cached-good program fallback + an in-game overlay.
-Per this note, do NOT rush it — `Shader_Load` returning NULL isn't enough downstream if nothing good is
-cached, and the FFI metatype wiring must be sorted first. That risk lives in the risky graphics/FFI layer.
+**Verified:** broken `identity.glsl` → engine logs `shader compile failed <...>`, degrades to last-good
+program, app stays alive through the full window (exit 124, no SIGSEGV). Clean tree: validator gate green.
 
 ### 5. GPU-quality settings panel (DONE — commit `0f5fecc`, biggest portability win)
 No options menu existed; quality was fixed at max → modern machines run fine but old ones stall. Added a
