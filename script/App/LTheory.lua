@@ -62,8 +62,26 @@ function LTheory:generate ()
     self.system:spawnAsteroidField(500, 10)
   end
 
-  for i = 1, 0 do
-    self.system:spawnPlanet()
+  for i = 1, 1 do
+    local planet = self.system:spawnPlanet()
+    -- Keep the player's ship clear of the surface so it starts with room to see
+    -- and fly around instead of spawning at/at the (huge) planet. If one exists
+    -- inside the target viewing distance, push it outward along the line between
+    -- them; bearing is preserved so it stays in view.
+    local controlling = self.player:getControlling()
+    if controlling then
+      local center   = planet:getPos()
+      local sp       = controlling:getPos()
+      local dx, dy, dz = sp.x - center.x, sp.y - center.y, sp.z - center.z
+      local dist     = math.sqrt(dx * dx + dy * dy + dz * dz)
+      if dist < Config.gen.planetViewDist then
+        local nx, ny, nz = dx / dist, dy / dist, dz / dist
+        controlling:setPos(Vec3f(
+          center.x + nx * Config.gen.planetViewDist,
+          center.y + ny * Config.gen.planetViewDist,
+          center.z + nz * Config.gen.planetViewDist))
+      end
+    end
   end
 end
 

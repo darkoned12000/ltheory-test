@@ -4,6 +4,17 @@ local Cache = require('phx.util.Cache')
 
 local Renderer = class(function (self)
   self.ds = 4
+
+  -- GPU portability: seed post-processing from Config.gpu if present so a weak
+  -- machine can drop the expensive bloom/sharpen passes at startup. Guarded by
+  -- Settings.exists() so it's inert until Config.App.lua has defined the block.
+  local gpu = (Config and Config.gpu) or {}
+  if Settings.exists('postfx.bloom.enable') then
+    Settings.set('postfx.bloom.enable', gpu.bloom ~= false)
+  end
+  if Settings.exists('postfx.sharpen.enable') then
+    Settings.set('postfx.sharpen.enable', gpu.sharpen ~= false)
+  end
 end)
 
 local colorFormat = TexFormat.RGBA16F

@@ -395,23 +395,42 @@ legacy CPU `Explosion` billboards:
 `gpu_particle.glsl`. Cleaned up my throwaway capture harness (`script/App/CaptureThruster.lua`,
 `cap_*.png`) before this — do not commit screenshots.
 
-### 3. Build-time validation gate (PENDING)
-`configure.py test` works but is run *manually* per the ladder procedure (§ "Per-Stage Procedure").
-To make it a hard pre-flight step, wire it into `CMakeLists.txt` / `configure.py` so a build fails if
-any shader won't compile+link offline. Zero runtime cost; eliminates the last path to an in-game
-shader crash that the validator doesn't cover (real vs/fs pair link mismatches — see § "Known Failure
-Modes").
+### 3. Build-time validation gate (DONE — commit `0f5fecc`)
+`configure.py test` was run manually per the ladder procedure. Wired it into the pre-flight
+step so a build/run fails if any shader won't compile+link offline:
+- **Fix:** validated via `python3.13 configure.py` → `[configure.py] shader validation OK (offline compile+link)` before producing anything. Zero runtime cost; eliminates the last path to an in-game shader crash that the validator doesn't cover (real vs/fs pair link mismatches — see § "Known Failure Modes").
 
-### 4. Graceful runtime shader failure (PENDING)
+### 4. Graceful runtime shader failure (PENDING — attempted & reverted, now known-risky)
 Currently a bad `#version`/typo at first draw → `Fatal()` / abort with no context. Design: log the
 exact failing stage + source, fall back to a cached-good program if one exists, else show an in-game
 overlay ("shader X failed to compile"). This is what turns "black screen mid-flight" into recoverable.
 
-### 5. GPU-quality settings panel (PENDING — biggest portability win)
-No options menu exists; quality is fixed at max → modern machines run fine but old ones stall. Design:
-a `Config.gpu` block (`maxParticles`, `computeShadows`, `bloom`, `superSample`) with a runtime toggle,
-so the same binary scales from integrated GPU to RTX. This directly serves "perform well on older and
-newer machines."
+**Attempted 2026-08-25 and REVERTED.** My first pass made `Shader_Load/LoadCompute` return NULL on a
+failed stage (Warn + free partial allocation instead of Fatal), which *did* stop the abort — but it was
+not actually graceful downstream: with no cached-good program, Lua got a nil from `Cache.Shader()` and
+the next draw blew up anyway. Worse, probing that layer surfaced a pre-existing bug in the FFI metatype
+code (`onDef_Vec3f_t` / `onDef_*` callbacks are defined but never invoked anywhere), so even basic struct
+member access can intermittently hit `'struct Vec3f' has no member named 'x'`. That risk lives exactly
+in the risky graphics/FFI layer, which is why it was pulled. **Do not rush this one** — a real fix needs
+the metatype wiring sorted first; see "Runtime Hardening" note below.
+
+### 5. GPU-quality settings panel (DONE — commit `0f5fecc`, biggest portability win)
+No options menu existed; quality was fixed at max → modern machines run fine but old ones stall. Added a
+source-of-truth `Config.gpu` block (`maxParticles`, `computeShadows=false`, `bloom=true`, `sharpen=true`,
+`superSample='High'`) and made the Renderer seed its runtime post-processing Settings from it at startup,
+so a weak machine can drop bloom/sharpen for framerate instead of shipping broken on old hardware.
+
+**Visually testable now that the planet exists:** the atmosphere-scattering glow is exactly what these
+passes show off — flip `Config.gpu.bloom`/`sharpen` on/off and the rim glow visibly changes (verified).
+Before this there was no bright enough content to prove it, which is why we held the commit until an app run
+was eyeballed.
+
+### Planet spawn fix (DONE — same commits as above)
+- `System:spawnPlanet()` now **returns** the planet handle (it used to return nothing).
+- `LTheory:generate()` fixed a dead loop (`for i = 1, 0 do` → never spawned planets) and then pushes the
+  player's ship clear of the surface along the line to the planet center if it starts too close — bearing is
+  preserved so the planet stays in view. Distance is `Config.gen.planetViewDist` (default 250k, tune freely).
+- Tunable without code edits via `script/Config.App.lua`.
 
 ### GLEW vs GLAD (advisory)
 Keep **GLEW 2.2.0** for now — it works and exposes every extension through 4.6; switching mid-project

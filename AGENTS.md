@@ -79,6 +79,22 @@ Limit Theory is an open-world space simulation game engine and game project. It 
 - **Asset Loading:** IMPROVING. Corrupted texture placeholders have been replaced with real assets. The engine still handles any remaining missing textures gracefully with magenta fallbacks.
 - **Shaders:** COMPLETE. GLSL 130 modernization applied across all critical shaders. G-buffer refactored to use `out vec4` instead of deprecated `gl_FragData[]`. Fog re-enabled. Ambient lighting added.
 
+### Session: Planet Spawn + GPU Quality Settings (2026-08-25) — items 3 & 5 committed
+
+1. **Planet now spawns in LTheory** (`LTheory.lua:generate()`): the spawn loop was `for i = 1, 0 do`
+   (dead → no planet ever). Changed to `for i = 1, 1 do`. The Planet entity + atmosphere-scattering glow
+   already existed and validated at 460 core; it just wasn't instantiated by the app.
+2. **Ship kept clear of the surface:** added `System:spawnPlanet()` returning its handle (it returned
+   nothing before), then after spawn, if the controlling ship is closer than `Config.gen.planetViewDist`
+   (default 250k) to the planet center, push it outward along their connecting line — bearing preserved so
+   the planet stays framed. Fully tunable via config; no code edits needed per HW/seed.
+3. **GPU-quality settings panel** (`Config.gpu` block in `script/Config.App.lua`; Renderer seeds bloom/sharpen
+   from it at startup): source-of-truth portability defaults so a weak machine drops the expensive post-passes
+   instead of shipping broken on old hardware. Fields: `maxParticles`, `computeShadows=false`, `bloom=true`,
+   `sharpen=true`, `superSample='High'`. **Now visually testable** — the planet's atmosphere rim glow changes
+   visibly with bloom/sharpen, which is exactly what those passes are for; before this there was no bright
+   enough content to prove it.
+
 ### Build & Link Fixes (Completed) — host-rebuild-critical items only; other one-offs are in git history
 
 Still needed to rebuild on this Debian host: **FMOD soname symlinks** (`ext/lib/linux64/`, build fix #5),

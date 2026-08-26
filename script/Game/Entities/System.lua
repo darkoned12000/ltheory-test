@@ -284,6 +284,7 @@ function System:spawnPlanet ()
   planet:setPos(pos)
   planet:setScale(scale)
   self:addChild(planet)
+  return planet
 end
 
 function System:spawnShip ()
