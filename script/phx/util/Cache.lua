@@ -3,12 +3,17 @@ local Cache = {}
 local files    = {}
 local fonts    = {}
 local shaders  = {}
+-- First program that compiled successfully for each (vs, fs) / compute key. Used to
+-- degrade gracefully: if a later load of the same pass fails (e.g. you edited its .glsl),
+-- we keep rendering with this last-known-good version instead of crashing. See item 4.
+local goodShaders = {}
 local textures = {}
 
 function Cache.Clear ()
-  for k, v in pairs(shaders) do v:free() end
+  for k, v in pairs(shaders) do if v then v:free() end end
   for k, v in pairs(textures) do v:free() end
   shaders = {}
+  goodShaders = {}
   textures = {}
 end
 
@@ -38,7 +43,15 @@ function Cache.Shader (vs, fs)
   local self = shaders[key]
   if self then return self end
   self = Shader.Load('vertex/' .. vs, 'fragment/' .. fs)
+  if not self then
+    -- C++ returned NULL: the shader failed to compile/link. Fall back to the last-good
+    -- version of this pass so a broken .glsl degrades instead of aborting mid-flight;
+    -- otherwise surface it (caller skips this draw). See item 4.
+    if goodShaders[key] then Log.Warning('Shader <%s> failed to compile/link; using last good version', key) end
+    return goodShaders[key]
+  end
   shaders[key] = self
+  goodShaders[key] = self
   return self
 end
 
@@ -47,7 +60,12 @@ function Cache.Compute (cs)
   local self = shaders[key]
   if self then return self end
   self = Shader.LoadCompute('compute/' .. cs)
+  if not self then
+    if goodShaders[key] then Log.Warning('Compute shader <%s> failed to compile/link; using last good version', key) end
+    return goodShaders[key]
+  end
   shaders[key] = self
+  goodShaders[key] = self
   return self
 end
 

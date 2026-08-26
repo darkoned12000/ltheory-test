@@ -62,6 +62,7 @@ end
 function Material:reload ()
   if self.state then self.state:free() end
   local shader = Cache.Shader('wvp', self.name)
+  if not shader then return end   -- item 4: skip this material (broken wvp pass) instead of crashing ShaderState.Create(nil)
   self.state = ShaderState.Create(shader)
 
   if self.texDiffuse and shader:hasVariable('texDiffuse') then

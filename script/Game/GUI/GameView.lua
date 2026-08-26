@@ -78,45 +78,51 @@ function GameView:draw (focus, active)
     end
 
     do -- Global lighting (environment)
-      self.renderer.buffer2:push()
-      Draw.Clear(0, 0, 0, 0)
       local shader = Cache.Shader('worldray', 'light/global')
-      shader:start()
-      Shader.SetTex2D('texDepth', self.renderer.zBufferL)
-      Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
-      Draw.Rect(-1, -1, 2, 2)
-      shader:stop()
-      self.renderer.buffer2:pop()
-    end
-
-    do -- Local lighting
-      self.renderer.buffer2:push()
-      BlendMode.PushAdditive()
-      local shader = Cache.Shader('worldray', 'light/point')
-      shader:start()
-      for i, v in ipairs(lights) do
-        -- TODO : Batching
-        Shader.SetFloat3('lightColor', v.color.x, v.color.y, v.color.z)
-        Shader.SetFloat3('lightPos', v.pos.x, v.pos.y + 5, v.pos.z)
+      if shader then
+        self.renderer.buffer2:push()
+        Draw.Clear(0, 0, 0, 0)
+        shader:start()
         Shader.SetTex2D('texDepth', self.renderer.zBufferL)
         Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
         Draw.Rect(-1, -1, 2, 2)
+        shader:stop()
+        self.renderer.buffer2:pop()
       end
-      shader:stop()
-      BlendMode.Pop()
-      self.renderer.buffer2:pop()
+    end
+
+    do -- Local lighting
+      local shader = Cache.Shader('worldray', 'light/point')
+      if shader then
+        self.renderer.buffer2:push()
+        BlendMode.PushAdditive()
+        shader:start()
+        for i, v in ipairs(lights) do
+          -- TODO : Batching
+          Shader.SetFloat3('lightColor', v.color.x, v.color.y, v.color.z)
+          Shader.SetFloat3('lightPos', v.pos.x, v.pos.y + 5, v.pos.z)
+          Shader.SetTex2D('texDepth', self.renderer.zBufferL)
+          Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
+          Draw.Rect(-1, -1, 2, 2)
+        end
+        shader:stop()
+        BlendMode.Pop()
+        self.renderer.buffer2:pop()
+      end
     end
 
     do -- Composite albedo & accumulated light buffer
-      self.renderer.buffer1:push()
       local shader = Cache.Shader('worldray', 'light/composite')
-      shader:start()
-      Shader.SetTex2D('texAlbedo', self.renderer.buffer0)
-      Shader.SetTex2D('texDepth', self.renderer.zBufferL)
-      Shader.SetTex2D('texLighting', self.renderer.buffer2)
-      Draw.Rect(-1, -1, 2, 2)
-      shader:stop()
-      self.renderer.buffer1:pop()
+      if shader then
+        self.renderer.buffer1:push()
+        shader:start()
+        Shader.SetTex2D('texAlbedo', self.renderer.buffer0)
+        Shader.SetTex2D('texDepth', self.renderer.zBufferL)
+        Shader.SetTex2D('texLighting', self.renderer.buffer2)
+        Draw.Rect(-1, -1, 2, 2)
+        shader:stop()
+        self.renderer.buffer1:pop()
+      end
       if GameView.__dumpGBuffer then GameView.__dumpLit() end
     end
 

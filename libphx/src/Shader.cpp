@@ -59,7 +59,7 @@ static int GetUniformIndex (Shader* self, cstr name, bool mustSucceed = false) {
   return index;
 }
 
-static uint CreateGLShader (cstr src, GLenum type) {
+static uint CreateGLShader (cstr name, cstr src, GLenum type) {
   uint self = glCreateShader(type);
 
   cstr srcs[] = {
@@ -70,7 +70,9 @@ static uint CreateGLShader (cstr src, GLenum type) {
   GLCALL(glShaderSource(self, 2, srcs, 0))
   GLCALL(glCompileShader(self))
 
-  /* Check for compile errors. */ {
+  /* Return NULL on compile failure. The caller logs stage + source; returning here
+   * (instead of aborting) lets Lua degrade gracefully — a broken shader no longer kills
+   * the whole process at first draw. */ {
     int status;
     GLCALL(glGetShaderiv(self, GL_COMPILE_STATUS, &status))
     if (status == GL_FALSE) {
@@ -78,7 +80,8 @@ static uint CreateGLShader (cstr src, GLenum type) {
       GLCALL(glGetShaderiv(self, GL_INFO_LOG_LENGTH, &length))
       char* infoLog = (char*)MemAllocZero(length + 1);
       GLCALL(glGetShaderInfoLog(self, length, 0, infoLog))
-      Fatal("CreateGLShader: Failed to compile shader:\n%s", infoLog);
+      fprintf(stderr, "phx: shader compile failed <%s>:\n%s\n", name, infoLog);
+      return 0;
     }
   }
   return self;
@@ -97,7 +100,7 @@ static uint CreateGLProgram (uint vs, uint fs) {
 
   GLCALL(glLinkProgram(self))
 
-  /* Check for link errors. */ {
+  /* Check for link errors. Return NULL on failure (caller logs stage + source). */ {
     int status;
     GLCALL(glGetProgramiv(self, GL_LINK_STATUS, &status))
     if (status == GL_FALSE) {
@@ -105,7 +108,8 @@ static uint CreateGLProgram (uint vs, uint fs) {
       GLCALL(glGetProgramiv(self, GL_INFO_LOG_LENGTH, &length))
       char* infoLog = (char*)MemAllocZero(length + 1);
       GLCALL(glGetProgramInfoLog(self, length, 0, infoLog))
-      Fatal("CreateGLProgram: Failed to link program:\n%s", infoLog);
+      fprintf(stderr, "phx: shader link failed [vs:%p fs:%p]:\n%s\n", vs, fs, infoLog);
+      return 0;
     }
   }
   return self;
@@ -117,7 +121,7 @@ static uint CreateGLComputeProgram (uint cs) {
   GLCALL(glAttachShader(self, cs))
   GLCALL(glLinkProgram(self))
 
-  /* Check for link errors. */ {
+  /* Check for link errors. Return NULL on failure (caller logs stage + source). */ {
     int status;
     GLCALL(glGetProgramiv(self, GL_LINK_STATUS, &status))
     if (status == GL_FALSE) {
@@ -125,7 +129,8 @@ static uint CreateGLComputeProgram (uint cs) {
       GLCALL(glGetProgramiv(self, GL_INFO_LOG_LENGTH, &length))
       char* infoLog = (char*)MemAllocZero(length + 1);
       GLCALL(glGetProgramInfoLog(self, length, 0, infoLog))
-      Fatal("CreateGLComputeProgram: Failed to link program:\n%s", infoLog);
+      fprintf(stderr, "phx: compute shader link failed <%p>:\n%s\n", cs, infoLog);
+      return 0;
     }
   }
   return self;
@@ -205,14 +210,17 @@ static void Shader_BindVariables (Shader* self) {
 /* --- Creation ------------------------------------------------------------- */
 
 Shader* Shader_Create (cstr vs, cstr fs) {
-  Shader* self = MemNew(Shader);
+  Shader* self = MemNewZero(Shader);
   RefCounted_Init(self);
   ArrayList_Init(self->vars);
   vs = GLSL_Preprocess(StrDup(vs), self);
   fs = GLSL_Preprocess(StrDup(fs), self);
-  self->vs = CreateGLShader(vs, GL_VERTEX_SHADER);
-  self->fs = CreateGLShader(fs, GL_FRAGMENT_SHADER);
+  self->vs = CreateGLShader(vs, vs, GL_VERTEX_SHADER);
+  if (!self->vs) { MemFree(self); return NULL; }
+  self->fs = CreateGLShader(fs, fs, GL_FRAGMENT_SHADER);
+  if (!self->fs) { Shader_Free(self); return NULL; }
   self->program = CreateGLProgram(self->vs, self->fs);
+  if (!self->program) { Shader_Free(self); fprintf(stderr, "phx: anonymous shader link failed\n"); return NULL; }
   self->texIndex = 1;
   self->name = StrFormat("[anonymous shader @ %p]", self);
   StrFree(vs);
@@ -222,7 +230,7 @@ Shader* Shader_Create (cstr vs, cstr fs) {
 }
 
 Shader* Shader_Load (cstr vName, cstr fName) {
-  Shader* self = MemNew(Shader);
+  Shader* self = MemNewZero(Shader);
   RefCounted_Init(self);
   ArrayList_Init(self->vars);
   self->vs = 0;
@@ -231,9 +239,15 @@ Shader* Shader_Load (cstr vName, cstr fName) {
   self->compute = false;
   cstr vs = GLSL_Load(vName, self);
   cstr fs = GLSL_Load(fName, self);
-  self->vs = CreateGLShader(vs, GL_VERTEX_SHADER);
-  self->fs = CreateGLShader(fs, GL_FRAGMENT_SHADER);
-  self->program = CreateGLProgram(self->vs, self->fs);
+  uint vsh = CreateGLShader(vName, vs, GL_VERTEX_SHADER);
+  if (!vsh) { MemFree(self); return NULL; }
+  uint fsh = CreateGLShader(fName, fs, GL_FRAGMENT_SHADER);
+  if (!fsh) { Shader_Free(self); return NULL; }
+  uint program = CreateGLProgram(vsh, fsh);
+  if (!program) { Shader_Free(self); return NULL; }
+  self->vs = vsh;
+  self->fs = fsh;
+  self->program = program;
   self->texIndex = 1;
   self->name = StrFormat("[vs: %s , fs: %s]", vName, fName);
   Shader_BindVariables(self);
@@ -241,7 +255,7 @@ Shader* Shader_Load (cstr vName, cstr fName) {
 }
 
 Shader* Shader_LoadCompute (cstr cName) {
-  Shader* self = MemNew(Shader);
+  Shader* self = MemNewZero(Shader);
   RefCounted_Init(self);
   ArrayList_Init(self->vars);
   self->vs = 0;
@@ -249,9 +263,12 @@ Shader* Shader_LoadCompute (cstr cName) {
   self->cs = 0;
   self->compute = true;
   cstr cs = GLSL_Load(cName, self);
-  self->cs = CreateGLShader(cs, GL_COMPUTE_SHADER);
+  uint csh = CreateGLShader(cName, cs, GL_COMPUTE_SHADER);
+  if (!csh) { MemFree(self); return NULL; }
   StrFree(cs);
-  self->program = CreateGLComputeProgram(self->cs);
+  uint program = CreateGLComputeProgram(csh);
+  if (!program) { Shader_Free(self); return NULL; }
+  self->cs = csh;
   self->texIndex = 1;
   self->name = StrFormat("[cs: %s]", cName);
   Shader_BindVariables(self);
@@ -282,6 +299,7 @@ ShaderState* Shader_ToShaderState (Shader* self) {
 /* --- Usage ---------------------------------------------------------------- */
 
 void Shader_Start (Shader* self) {
+  if (!self) return; /* Item 4: broken shader load returned NULL; skip the pass instead of dereferencing program/vars, preventing SIGSEGV in Lua caller */
   FRAME_BEGIN;
   GLCALL(glUseProgram(self->program))
   current = self;

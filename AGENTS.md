@@ -93,7 +93,42 @@ Limit Theory is an open-world space simulation game engine and game project. It 
    instead of shipping broken on old hardware. Fields: `maxParticles`, `computeShadows=false`, `bloom=true`,
    `sharpen=true`, `superSample='High'`. **Now visually testable** — the planet's atmosphere rim glow changes
    visibly with bloom/sharpen, which is exactly what those passes are for; before this there was no bright
-   enough content to prove it.
+    enough content to prove it.
+
+### Graceful Runtime Shader Failure (DONE — commit on `feat-gpu-emitters`)
+
+**Goal:** a broken shader at runtime should degrade instead of crashing the whole app, so the
+engine is "more solid" and easier for us to generate content without fear of one typo wiping the
+process. Committed as C++ null-guard + Lua nil-guards + offline gate (the gate already existed).
+
+1. **C++ stops aborting on shader failure.** `CreateGLShader`/`CreateGLProgram`/`LoadCompute`
+   (`libphx/src/Shader.cpp`) now log the failing stage + source name to `stderr` and return NULL,
+   instead of `Fatal()`-aborting mid-load. This is the real fix — previously a bad `#version`/typo
+   at first draw → `Fatal()` / abort with no context (the PENDING item #4 in `opengl-glsl-upgrade.md`).
+2. **`Shader_Start` null-guard** (`libphx/src/Shader.cpp:302`) — `if (!self) return;`. A broken
+   shader that returns NULL now skips the pass instead of dereferencing `self->program` and SIGSEGV-ing.
+   **This is why it's safe:** the crash was in C++ *inside* `Shader_Start`, before Lua ever checked the
+   guard — so Lua nil-guards alone would NOT have caught it (confirmed via gdb: `#0 Shader_Start()`).
+3. **Lua `Cache.Shader` callers guarded** (`Renderer.lua`, `GameView.lua`, `DrawEx.lua`, `Material.lua`,
+   `Cache.lua`) with `if not shader then return end` / skip-blocks so a broken pass degrades instead of
+   calling `.start()` on nil. Every skip keeps its buffer push/pop/swap **balanced** (verified) — an
+   unbalanced skip would corrupt the RT stack and crash later.
+4. **`identity.glsl NOT rewritten.** It's correct at 460 core (`outColor = texture(src, uv)` passthrough).
+   It's the engine's per-frame blit used by `present`/`presentAll`/supersample-downsample (Finding B in
+   the ladder doc — core profile has no fixed-function fallback, so every draw MUST start a program;
+   identity is that program). It runs every frame, so it was the crash site. Left untouched: rewriting a
+   working shader just to commit adds risk with zero benefit. The offline validator catches breakage here.
+
+**Verified:** inject a broken `identity.glsl` → engine logs `shader compile failed <...>` and degrades
+gracefully (app alive through full window, exit 124, no SIGSEGV/abort). Clean tree: build passes the
+validator gate, run is healthy.
+
+**Still PENDING for FULL graceful runtime failure (opengl-glsl-upgrade.md §4):** a cached-good program
+fallback + an in-game overlay. Per that doc, do NOT rush it — `Shader_Load` returning NULL isn't enough
+downstream if nothing good is cached, and the FFI metatype bug (`onDef_Vec3f_t`/`onDef_*` defined but
+never invoked → intermittent `'struct Vec3f' has no member named 'x'`) must be sorted first. That risk
+lives in the risky graphics/FFI layer. Current state = crash prevention (done) + graceful degradation of
+most Lua callers; full fallback is a separate, gated item.
 
 ### Build & Link Fixes (Completed) — host-rebuild-critical items only; other one-offs are in git history
 

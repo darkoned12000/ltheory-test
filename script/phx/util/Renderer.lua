@@ -57,6 +57,7 @@ end
 function Renderer:aberration (strength)
   Draw.Color(1, 1, 1, 1)
   local shader = Cache.Shader('ui', 'filter/aberration')
+  if not shader then return end   -- item 4: skip broken pass; buffer push/pop stay balanced below
   self.buffer1:pushLevel(self.level)
   shader:start()
     Shader.SetFloat('strength', strength)
@@ -70,6 +71,7 @@ end
 
 function Renderer:applyFilter (frag, onSetVars)
   local shader = Cache.Shader('ui', 'filter/' .. frag)
+  if not shader then return end   -- item 4: skip broken pass; buffer push/pop stay balanced below
   self.buffer1:pushLevel(self.level)
   shader:start()
     Shader.SetTex2D('src', self.buffer0)
@@ -87,14 +89,16 @@ function Renderer:bloom (radius)
   local A = self.dsBuffer0
   local B = self.dsBuffer1
 
-  do
+  do -- bloompre: guarded (item 4) so a broken pass skips cleanly without leaving A un-pushed
     local shader = Cache.Shader('ui', 'filter/bloompre')
-    A:push()
-    shader:start()
-      Shader.SetTex2D('src', self.buffer0)
-      Draw.Rect(0, 0, self.resX / self.ds, self.resY / self.ds)
-    shader:stop()
-    A:pop()
+    if shader then
+      A:push()
+      shader:start()
+        Shader.SetTex2D('src', self.buffer0)
+        Draw.Rect(0, 0, self.resX / self.ds, self.resY / self.ds)
+      shader:stop()
+      A:pop()
+    end
   end
 
   for i = 1, 3 do
@@ -102,19 +106,22 @@ function Renderer:bloom (radius)
     self:blur(A, B, 0, 1, radius, width)
 
     local shader = Cache.Shader('ui', 'filter/bloomcomposite')
-    self.buffer1:pushLevel(self.level)
-    shader:start()
-      Shader.SetTex2D('src', self.buffer0)
-      Shader.SetTex2D('srcBlur', A)
-      Draw.Rect(0, 0, self.resX, self.resY)
-    shader:stop()
-    self.buffer1:pop()
-    self:swap()
+    if shader then -- item 4: skip broken composite; blur loop above already guarded internally
+      self.buffer1:pushLevel(self.level)
+      shader:start()
+        Shader.SetTex2D('src', self.buffer0)
+        Shader.SetTex2D('srcBlur', A)
+        Draw.Rect(0, 0, self.resX, self.resY)
+      shader:stop()
+      self.buffer1:pop()
+      self:swap()
+    end
   end
 end
 
 function Renderer:blur (dst, src, dx, dy, radius)
   local shader = Cache.Shader('ui', 'filter/blur')
+  if not shader then return end   -- item 4: skip broken pass; dst push/pop stay balanced below
   local size = src:getSize()
   dst:push()
   shader:start()
@@ -131,6 +138,7 @@ end
 
 function Renderer:colorGrade (curve1, curve2)
   local shader = Cache.Shader('ui', 'filter/colorgrade')
+  if not shader then return end   -- item 4: skip broken pass; buffer push/pop/swap stay balanced below
   self.buffer1:pushLevel(self.level)
   shader:start()
     Shader.SetTex2D('src', self.buffer0)
@@ -161,6 +169,9 @@ function Renderer:present (x, y, sx, sy, useMips)
   -- NOTE : core-profile — program 0 has no fixed-function fallback, so the
   -- final window blit must run through an explicit passthrough shader.
   local shader = Cache.Shader('ui', 'filter/identity')
+  if not shader then
+    RenderState.PopAll()   -- item 4: balance PushAllDefaults above; render black this frame instead of crashing on a broken identity pass
+    return end
   shader:start()
   if false and useMips then
     self.buffer0:genMipmap()
@@ -178,7 +189,9 @@ function Renderer:presentAll (x, y, sx, sy)
   Draw.Color(1, 1, 1, 1)
   RenderState.PushAllDefaults()
   local shader = Cache.Shader('ui', 'filter/identity')
-  shader:start()
+  if not shader then
+    RenderState.PopAll()   -- item 4: balance PushAllDefaults above; render black this frame instead of crashing on a broken identity pass
+    return end
   self.buffer0:draw(x, y + sy / 2, sx / 2, -sy / 2)
   self.buffer1:draw(x + sx / 2, y + sy / 2, sx / 2, -sy / 2)
   self.buffer2:draw(x, y + sy, sx / 2, -sy / 2)
@@ -190,29 +203,33 @@ end
 function Renderer:sharpen (radius, sigma, strength)
   Draw.Color(1, 1, 1, 1)
 
-  do -- Blur
+  do -- Blur (guarded, item 4)
     local shader = Cache.Shader('ui', 'filter/blur2d')
-    self.buffer2:pushLevel(self.level)
-    shader:start()
-      Shader.SetInt('radius', radius)
-      Shader.SetFloat('sigma', sigma)
-      Shader.SetFloat2('size', self.resX, self.resY)
-      Shader.SetTex2D('src', self.buffer0)
-      Draw.Rect(0, 0, self.resX, self.resY)
-    shader:stop()
-    self.buffer2:pop()
+    if shader then
+      self.buffer2:pushLevel(self.level)
+      shader:start()
+        Shader.SetInt('radius', radius)
+        Shader.SetFloat('sigma', sigma)
+        Shader.SetFloat2('size', self.resX, self.resY)
+        Shader.SetTex2D('src', self.buffer0)
+        Draw.Rect(0, 0, self.resX, self.resY)
+      shader:stop()
+      self.buffer2:pop()
+    end
   end
 
-  do -- High pass blend
+  do -- High pass blend (guarded, item 4)
     local shader = Cache.Shader('ui', 'filter/sharpen')
-    self.buffer1:pushLevel(self.level)
-    shader:start()
-      Shader.SetFloat('strength', strength)
-      Shader.SetTex2D('src', self.buffer0)
-      Shader.SetTex2D('srcBlur', self.buffer2)
-      Draw.Rect(0, 0, self.resX, self.resY)
-    shader:stop()
-    self.buffer1:pop()
+    if shader then
+      self.buffer1:pushLevel(self.level)
+      shader:start()
+        Shader.SetFloat('strength', strength)
+        Shader.SetTex2D('src', self.buffer0)
+        Shader.SetTex2D('srcBlur', self.buffer2)
+        Draw.Rect(0, 0, self.resX, self.resY)
+      shader:stop()
+      self.buffer1:pop()
+    end
   end
 
   self:swap()
@@ -284,10 +301,15 @@ function Renderer:startPostEffects ()
       self.buffer1:pushLevel(self.level)
       -- NOTE : core-profile — explicit passthrough program (no fixed-function fallback)
       local dsShader = Cache.Shader('ui', 'filter/identity')
-      dsShader:start()
-      self.buffer0:draw(0, 0, self.sx / factor, self.sy / factor)
-      dsShader:stop()
-      self.buffer1:pop()
+      if not dsShader then
+        -- item 4: broken identity pass -> skip the downsample draw but keep buffer1 balanced
+        self.buffer1:pop()
+      else
+        dsShader:start()
+        self.buffer0:draw(0, 0, self.sx / factor, self.sy / factor)
+        dsShader:stop()
+        self.buffer1:pop()
+      end
 
       -- Constrain all buffers to the new active mip level
       self.buffer0:setMipRange(self.level, self.level)
@@ -337,12 +359,14 @@ function Renderer:stopUI ()
   BlendMode.PushDisabled()
   self.buffer2:push()
   local shader = Cache.Shader('ui', 'ui/composite')
-  shader:start()
-    Shader.SetTex2D('srcBottom', self.buffer0)
-    Shader.SetTex2D('srcTop', self.buffer1)
-    Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.sx, self.sy)
-  shader:stop()
+  if shader then -- item 4: broken composite -> skip the draw, but still pop + swap to keep buffer state balanced
+    shader:start()
+      Shader.SetTex2D('srcBottom', self.buffer0)
+      Shader.SetTex2D('srcTop', self.buffer1)
+      Draw.Color(1, 1, 1, 1)
+      Draw.Rect(0, 0, self.sx, self.sy)
+    shader:stop()
+  end
   self.buffer2:pop()
   self.buffer2, self.buffer0 = self.buffer0, self.buffer2
   BlendMode.Pop()
@@ -354,6 +378,7 @@ end
 
 function Renderer:tonemap ()
   local shader = Cache.Shader('ui', 'filter/tonemap')
+  if not shader then return end   -- item 4: skip broken pass; buffer push/pop/swap stay balanced below
   self.buffer1:pushLevel(self.level)
   shader:start()
     Shader.SetInt('hdrOut', 0)
@@ -370,6 +395,7 @@ function Renderer:vignette ()
   local strength = Settings.get('postfx.vignette.strength') or 0.5
   local hardness = Settings.get('postfx.vignette.hardness') or 8.0
   local shader = Cache.Shader('ui', 'filter/vignette')
+  if not shader then return end   -- item 4: skip broken pass; buffer push/pop/swap stay balanced below
   self.buffer1:pushLevel(self.level)
   shader:start()
     Shader.SetFloat('strength', strength)
