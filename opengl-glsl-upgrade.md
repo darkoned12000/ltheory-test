@@ -9,7 +9,7 @@ Goal: migrate the engine from its baseline up to **OpenGL 4.6 / GLSL 460**, one 
 - One global VAO bound for the process lifetime (core profile has none) in `OpenGL_Init`.
 - Zero legacy tokens across shaders AND C++: `gl_FragColor`/`gl_FragData`, `varying`/`attribute`, legacy texture fns, embedded `#version`, `glBegin/glEnd`, fixed-function matrix calls. Only doc comments mention removed APIs.
 
-**All 12 ladder stages (0–11) are done.** The only remaining work is the **Pre-Main Checklist** below — feature investments, not correctness fixes; do them before merging to main.
+**All 12 ladder stages (0–11) are done.** The GL/GLSL upgrade is **complete**: the Pre-Main required items (#1, #2) are DONE, and #3 / #4 are deferred non-blocking TODOs tracked in `AGENTS.md`. Nothing here blocks merging to main.
 
 ## Version Ladder
 GLSL↔GL: 130→3.0 … 460→4.6.
@@ -40,12 +40,12 @@ GLSL↔GL: 130→3.0 … 460→4.6.
 - **Planet spawn**: `System:spawnPlanet()` returns its handle; app pushes the ship clear of the surface if too close (bearing preserved).
 
 ## Pre-Main Checklist (do these before merging to MAIN)
-Ordered by expected impact. All currently **NOT started**. Engine runs fully functional now — these are feature investments, not correctness fixes.
+Ordered by expected impact. Engine runs fully functional now — these are feature investments, not correctness fixes.
 
-1. **Point-light shadow maps** — deferred light passes (`light/global.glsl`, `light/point.glsl`) do unshadowed radial falloff. Shadow depth maps make textureGather relevant (PCF) and enable SSAO from depth.
-2. **Explicit uniform locations on `deferred.glsl`** — `fragData0/1/2` currently rely on linker-assigned declaration order; add `layout(location=0/1/2)` to remove the driver fragility. Low-risk hardening, good first commit.
-3. **SPIR-V shader loading (4.6 feature)** — offline-compiled loads via `glShaderBinary`; low priority, driver support varies.
-4. **Replace corrupted texture assets** — most `res/` textures are 130-byte placeholders; magenta fallbacks still show through. Real assets or procedural gen.
+1. **Point-light shadow maps** — DONE. Per-light Depth32F ortho shadow maps + PCF test in `point.glsl`, rendered and fed from `GameView.lua:renderShadows` (commit `df8c1a8`). Tune via `render.shadow.{bias,scale,radius}`. Enables SSAO-from-depth later.
+2. **Explicit uniform locations on `deferred.glsl`** — DONE. `fragData0/1/2` now carry `layout(location=0/1/2)`; removes linker-assigned-order fragility. Matches the `layout(location=0)` convention already used by the effect shaders. Validator: 118 OK, 0 FAIL.
+3. **SPIR-V shader loading (4.6 feature)** — TODO (deferred). Offline-compiled loads via `glShaderBinary`/`glSpecializeShader`; low priority, driver support varies, and the engine's custom `#include`/`#autovar` preprocessor must be replicated in an offline tool. Startup-time win only; the offline validator already catches compile errors. Not required for merge.
+4. **Replace corrupted texture assets** — TODO (deferred; user-excluded). Most `res/` textures are real; only `res/texcube/{city,sunset}` + `res/tex2d/image/{vader,cantinaband}` are 130-byte placeholders (upstream ships the same). Fix = procedural sky/env cubemaps. Not required for merge.
 
 See `AGENTS.md` "Post-4.6 Modernization Backlog" for the same list with more detail and trigger conditions.
 

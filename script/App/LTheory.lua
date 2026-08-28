@@ -97,10 +97,10 @@ function LTheory:generate ()
     for i = 1, 30 do
       local ang = (i / 30) * 6.2831853
       -- Spread over a wide arc so some rocks stay in view even near the planet edge.
-      local r   = rng:getUniform() * 4000 + 900
+      local r   = rng:getUniform() * 12000 + 8000
       local off = Vec3f(
         math.cos(ang) * r,
-        (rng:getSphere():scale(250)).y,
+        (rng:getSphere():scale(800)).y,
         math.sin(ang) * r)
       insert(rockPos, ship:getPos() + off)
 
@@ -110,9 +110,10 @@ function LTheory:generate ()
       -- fine SDF geometry makes every rock look distinct.
       local lod  = Gen.Asteroid(seed)          -- multi-level SDF LodMesh (cached per seed)
       local a    = Entity()
-      local big  = lod:get(0):scale(12, 12, 12)   -- highest-detail level as a standalone Mesh
+      local big  = lod:get(0):scale(250, 250, 250)   -- highest-detail level as a standalone Mesh (250x ~ 20x ship-sized)
       a:addRigidBody(true, lod:get(0))         -- body required so the Rock material renders
       a.body:setCollidable(false)              -- collision OFF: no momentum transfer to ship
+      a:setPos(ship:getPos() + off)            -- place the rock around the ship (was never applied -> spawned at origin)
       a:addVisibleMesh(big, Material.Rock())
 
       self.system:addChild(a)
