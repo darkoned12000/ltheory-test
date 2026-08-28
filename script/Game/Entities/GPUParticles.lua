@@ -129,6 +129,15 @@ end
   size together so big rocks pop bigger than small ones.
 ]]
 function GPUParticles.explode (pos, baseVel, scale)
+  -- Audio: one-shot boom sized with the burst (one-shot voices free themselves).
+  local sfx = Config.audio.sfx.explosion
+  local sound = Sound.Load(sfx.sound, false, true)
+  sound:set3DPos(pos, baseVel)
+  sound:set3DMinMaxDistance(sfx.minDist, 0)
+  sound:setVolume(min(2.0, sfx.volume * (0.5 + 0.08 * scale)))
+  sound:setFreeOnFinish(true)
+  sound:play()
+
   local count = math.floor(min(400, max(60, scale * 60)))
   local speed = 6.0 + scale * 3.0
   local size  = clamp(scale, 0.5, 4.0)

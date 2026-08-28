@@ -68,20 +68,20 @@ function FMODTest:onInit ()
   self.particles = {}
 
   self.onKeyDown = {
-    [Key.S] = function () self.vel.z = self.vel.z + kMoveSpeed * self.dt end,
-    [Key.W] = function () self.vel.z = self.vel.z - kMoveSpeed * self.dt end,
-    [Key.D] = function () self.vel.x = self.vel.x + kMoveSpeed * self.dt end,
-    [Key.A] = function () self.vel.x = self.vel.x - kMoveSpeed * self.dt end,
+    [Button.Keyboard.S] = function () self.vel.z = self.vel.z + kMoveSpeed * self.dt end,
+    [Button.Keyboard.W] = function () self.vel.z = self.vel.z - kMoveSpeed * self.dt end,
+    [Button.Keyboard.D] = function () self.vel.x = self.vel.x + kMoveSpeed * self.dt end,
+    [Button.Keyboard.A] = function () self.vel.x = self.vel.x - kMoveSpeed * self.dt end,
   }
 
   self.onKeyPress = {
-    [Key.N1]    = function () Audio.Prepare(Audio.Load(SFX.Gun, true), true, false):play() end,
-    [Key.N2]    = function () Audio.Prepare(Audio.Load(SFX.Hero, true), false, false):play() end,
-    [Key.Left]  = function () self.pos = Vec3f( 10,  0,   0) end,
-    [Key.Right] = function () self.pos = Vec3f(-10,  0,   0) end,
-    [Key.Up]    = function () self.pos = Vec3f(  0,  0, -10) end,
-    [Key.Down]  = function () self.pos = Vec3f(  0,  0,  10) end,
-    [Key.Space] = function () self.pos = Vec3f(  0,  2,   0) end,
+    [Button.Keyboard.N1]    = function () Sound.LoadPlay(SFX.Gun, true, false) end,
+    [Button.Keyboard.N2]    = function () Sound.LoadPlay(SFX.Hero, false, false) end,
+    [Button.Keyboard.Left]  = function () self.pos = Vec3f( 10,  0,   0) end,
+    [Button.Keyboard.Right] = function () self.pos = Vec3f(-10,  0,   0) end,
+    [Button.Keyboard.Up]    = function () self.pos = Vec3f(  0,  0, -10) end,
+    [Button.Keyboard.Down]  = function () self.pos = Vec3f(  0,  0,  10) end,
+    [Button.Keyboard.Space] = function () self.pos = Vec3f(  0,  2,   0) end,
   }
 end
 

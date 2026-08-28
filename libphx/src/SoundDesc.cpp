@@ -1,55 +1,101 @@
 #include "Audio.h"
 #include "File.h"
-#include "FMODError.h"
+#include "PhxMath.h"
 #include "PhxMemory.h"
 #include "Resource.h"
 #include "Sound.h"
 #include "SoundDesc.h"
 #include "SoundDef.h"
 #include "PhxString.h"
-#include "fmod/fmod.h"
+#include <miniaudio/miniaudio.h>
+
+/* Notification object fired by the resource manager's job threads when an
+ * asynchronous load finishes (on success OR failure; the actual result is
+ * probed afterwards). Layout-compatible with ma_async_notification: the first
+ * member must be the callback pointer miniaudio invokes. */
+struct SoundNotify {
+  void       (*onSignal) (ma_async_notification*);
+  SoundDesc* desc;
+};
+
+static void SoundNotify_OnSignal (ma_async_notification* pNotification) {
+  SoundNotify* self = (SoundNotify*) pNotification;
+  self->desc->loadResult = 1;
+}
+
+static void SoundDesc_CacheDuration (SoundDesc* self) {
+  ma_uint64 length;
+  ma_result result = ma_resource_manager_data_source_get_length_in_pcm_frames(self->ds, &length);
+  if (result != MA_SUCCESS)
+    Fatal("SoundDesc_CacheDuration: Failed to query length.\n  Path: %s", self->path);
+  ma_engine* engine = (ma_engine*) Audio_GetHandle();
+  self->duration = (float) ((double) length / ma_engine_get_sample_rate(engine));
+}
 
 void SoundDesc_FinishLoad (SoundDesc* self, cstr func) {
+  if (self->loadResult != 0) return;
+
+  /* Async load still in flight. Blocking the main thread mirrors the FMOD
+   * implementation: warn once, then spin until the job thread signals. */
   bool warned = false;
-  FMOD_OPENSTATE openState;
-  while (true) {
-    FMODCALL(FMOD_Sound_GetOpenState(self->handle, &openState, 0, 0, 0));
-
-    if (openState == FMOD_OPENSTATE_ERROR)
-      Fatal("%s: Background file load has failed.\n  Path: %s", func, self->path);
-
-    if (openState == FMOD_OPENSTATE_READY || openState == FMOD_OPENSTATE_PLAYING)
-      break;
-
+  while (self->loadResult == 0) {
     if (!warned) {
       warned = true;
       Warn("%s: Background file load hasn't finished. Blocking the main thread.\n  Path: %s", func, self->path);
     }
   }
+
+  /* The done notification fires on failure as well; probe the data source to
+   * distinguish the two. */
+  ma_uint64 length;
+  ma_result result = ma_resource_manager_data_source_get_length_in_pcm_frames(self->ds, &length);
+  if (result != MA_SUCCESS)
+    Fatal("%s: Background file load has failed.\n  Path: %s", func, self->path);
+  self->loadResult = 1;
+  SoundDesc_CacheDuration(self);
 }
 #define SoundDesc_FinishLoad(...) SoundDesc_FinishLoad(__VA_ARGS__, __func__)
 
 SoundDesc* SoundDesc_Load (cstr name, bool immediate, bool isLooped, bool is3D) {
   cstr mapKey = StrAdd(isLooped ? "LOOPED:" : "UNLOOPED:", name);
   SoundDesc* self = Audio_AllocSoundDesc(mapKey);
+  if (!self->mapKey) self->mapKey = StrDup(mapKey);
   StrFree(mapKey);
 
   if (!self->name) {
     cstr path = Resource_GetPath(ResourceType_Sound, name);
-    FMOD_MODE mode = 0;
-    mode |= FMOD_CREATESAMPLE;
-    mode |= FMOD_IGNORETAGS;
-    mode |= FMOD_ACCURATETIME;
-    mode |= isLooped ? FMOD_LOOP_NORMAL : FMOD_LOOP_OFF;
-    mode |= is3D ? (FMOD_3D | FMOD_3D_WORLDRELATIVE) : FMOD_2D;
+    ma_resource_manager* rm = ma_engine_get_resource_manager((ma_engine*) Audio_GetHandle());
+
+    ma_uint32 flags = MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_DECODE;
     if (!immediate)
-      mode |= FMOD_NONBLOCKING;
+      flags |= MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_ASYNC;
 
-    FMODCALL(FMOD_System_CreateSound((FMOD_SYSTEM*) Audio_GetHandle(), path, mode, 0, &self->handle));
-    FMODCALL(FMOD_Sound_SetUserData(self->handle, self));
-
+    self->ds = (ma_resource_manager_data_source*) MemAlloc(sizeof(ma_resource_manager_data_source));
+    self->notif = (SoundNotify*) MemAlloc(sizeof(SoundNotify));
+    self->notif->onSignal = SoundNotify_OnSignal;
+    self->notif->desc = self;
     self->name = StrDup(name);
     self->path = StrDup(path);
+    self->isLooped = isLooped;
+    self->is3D = is3D;
+    self->loadResult = 0;
+    self->duration = 0.0f;
+
+    if (immediate) {
+      /* DECODE without ASYNC blocks inside init until fully decoded. */
+      ma_result result = ma_resource_manager_data_source_init(rm, path, flags, 0, self->ds);
+      if (result != MA_SUCCESS)
+        Fatal("SoundDesc_Load: Failed to load sound (ma_result %i).\n  Path: %s", result, path);
+      self->loadResult = 1;
+      SoundDesc_CacheDuration(self);
+    } else {
+      ma_resource_manager_pipeline_notifications notifications = ma_resource_manager_pipeline_notifications_init();
+      notifications.done.pNotification = (ma_async_notification*) self->notif;
+      ma_result result = ma_resource_manager_data_source_init(rm, path, flags, &notifications, self->ds);
+      if (result != MA_SUCCESS)
+        Fatal("SoundDesc_Load: Failed to start async load.\n  Path: %s", path);
+    }
+
     RefCounted_Init(self);
   } else {
     RefCounted_Acquire(self);
@@ -67,23 +113,28 @@ void SoundDesc_Acquire (SoundDesc* self) {
 
 void SoundDesc_Free (SoundDesc* self) {
   RefCounted_Free(self) {
+    cstr mapKey = self->mapKey;
     cstr name = self->name;
     cstr path = self->path;
-    FMODCALL(FMOD_Sound_Release(self->handle));
+    if (self->notif) {
+      MemFree(self->notif);
+      self->notif = 0;
+    }
+    if (self->ds) {
+      ma_resource_manager_data_source_uninit(self->ds);
+      MemFree(self->ds);
+      self->ds = 0;
+    }
     Audio_DeallocSoundDesc(self);
+    StrFree(mapKey);
     StrFree(name);
     StrFree(path);
-    /* TODO : Remove when StrMap_Remove is implemented */
-    MemZero(self, sizeof(SoundDesc));
   }
 }
 
 float SoundDesc_GetDuration (SoundDesc* self) {
   SoundDesc_FinishLoad(self);
-
-  uint32 duration;
-  FMODCALL(FMOD_Sound_GetLength(self->handle, &duration, FMOD_TIMEUNIT_MS));
-  return (float) duration / 1000.0f;
+  return self->duration;
 }
 
 cstr SoundDesc_GetName (SoundDesc* self) {
@@ -95,70 +146,63 @@ cstr SoundDesc_GetPath (SoundDesc* self) {
 }
 
 void SoundDesc_ToFile (SoundDesc* self, cstr name) {
-  /* TODO : Finish this.
-   *        There's some sort of signed/unsigned issue with the current
-   *        implementation. 8-bit PCM is unsigned according to the spec.
-   *        However, inspecting thybidding.wav in a hex editor sure looks like
-   *        signed data to me. The data read from FMOD is 'correct' but appears
-   *        to be unsigned (e.g. offset by a constant 0x80 / 0d128).
-   *
-   *        I'm extremely confused hy this as the FMOD data seems to be correct
-   *        while the actual file appears to be incorrect, yet VLC and Audacity
-   *        both play the original file correctly and the file output here
-   *        sounds like ass. Further, exporting the original wav to a new file
-   *        looks like the original file, further supporting that it is correct
-   *        and well formed.
-   *
-   *        Possible solutions:
-   *        1) Post a question on the FMOD site to gather more information.
-   *        2) Use Sound::readData instead (probably going to get the same result)
-   *        3) Create a second System and use System::setOutput to set
-   *           FMOD_OUTPUTTYPE_WAVWRITER_NRT
-   *
-   *        I've already spent too much time on this so I'm tabling it until
-   *        more of the audio API is fleshed out (namely, FMOD Studio is
-   *        integrated, Rigidbody updates are processed, and HRTF solutions are
-   *        explored).
-   */
   SoundDesc_FinishLoad(self);
 
-  uint32 length;
-  int32 channels;
-  int32 bitsPerSample;
-  FMODCALL(FMOD_Sound_GetLength(self->handle, &length, FMOD_TIMEUNIT_RAWBYTES));
-  FMODCALL(FMOD_Sound_GetFormat(self->handle, 0, 0, &channels, &bitsPerSample));
-  int32 bytesPerSample = bitsPerSample / 8;
+  ma_format format;
+  uint32 channels;
+  uint32 sampleRate;
+  ma_result result = ma_resource_manager_data_source_get_data_format(
+    self->ds, &format, &channels, &sampleRate, 0, 0);
+  if (result != MA_SUCCESS)
+    Fatal("SoundDesc_ToFile: Failed to query format.\n  Path: %s", self->path);
+  Assert(format == ma_format_f32);
 
-  float sampleRate;
-  FMOD_Sound_GetDefaults(self->handle, &sampleRate, 0);
+  ma_uint64 length;
+  result = ma_resource_manager_data_source_get_length_in_pcm_frames(self->ds, &length);
+  if (result != MA_SUCCESS)
+    Fatal("SoundDesc_ToFile: Failed to query length.\n  Path: %s", self->path);
 
-  void* ptr1; uint32 len1;
-  void* ptr2; uint32 len2;
-  FMODCALL(FMOD_Sound_Lock(self->handle, 0, length, &ptr1, &ptr2, &len1, &len2));
-  Assert(ptr2 == 0 && len2 == 0);
-  Assert(len1 == length);
+  uint32 bitsPerSample = 16;
+  uint32 bytesPerSample = bitsPerSample / 8;
 
-  /* Write the file */ {
+  /* Write the file (decoded f32 -> s16 PCM WAV) */ {
     File* file = File_Create(name);
     if (!file)
       Fatal("SoundDesc_ToFile: Failed to create file.\nPath: %s", name);
 
-    File_Write   (file, "RIFF", 4                                       ); // Chunk ID
-    File_WriteI32(file, 36 + length                                     ); // Chunk Size
-    File_Write   (file, "WAVE", 4                                       ); // Wave ID
-    File_Write   (file, "fmt ", 4                                       ); // Chunk ID
-    File_WriteI32(file, 16                                              ); // Chunk Size
-    File_WriteI16(file, 1                                               ); // Format Code (PCM)
-    File_WriteI16(file, (int16) channels                                ); // Channels
-    File_WriteI32(file, (int32) sampleRate                              ); // Sample Rate
-    File_WriteI32(file, (int32) (bytesPerSample * channels * sampleRate)); // Data Rate
-    File_WriteI16(file, (int16) (bytesPerSample * channels)             ); // Frame Size
-    File_WriteI16(file, (int16) (bitsPerSample)                         ); // Bits Per Sample
-    File_Write   (file, "data", 4                                       );
-    File_WriteI32(file, length                                          );
-    File_Write   (file, ptr1, length                                    );
-    File_Close   (file);
-  }
+    File_Write   (file, "RIFF", 4                                                    ); // Chunk ID
+    File_WriteI32(file, 36 + (int32) (length * bytesPerSample * channels)            ); // Chunk Size
+    File_Write   (file, "WAVE", 4                                                    ); // Wave ID
+    File_Write   (file, "fmt ", 4                                                    ); // Chunk ID
+    File_WriteI32(file, 16                                                           ); // Chunk Size
+    File_WriteI16(file, 1                                                            ); // Format Code (PCM)
+    File_WriteI16(file, (int16) channels                                             ); // Channels
+    File_WriteI32(file, (int32) sampleRate                                           ); // Sample Rate
+    File_WriteI32(file, (int32) (bytesPerSample * channels * sampleRate)             ); // Data Rate
+    File_WriteI16(file, (int16) (bytesPerSample * channels)                          ); // Frame Size
+    File_WriteI16(file, (int16) bitsPerSample                                        ); // Bits Per Sample
+    File_Write   (file, "data", 4                                                    );
+    File_WriteI32(file, (int32) (length * bytesPerSample * channels)                 );
 
-  FMODCALL(FMOD_Sound_Unlock(self->handle, ptr1, ptr2, len1, len2));
+    /* Read the decoded source in chunks, converting f32 -> s16. */
+    uint32 const framesPerChunk = 4096;
+    float buffer[4096 * 8];
+    ma_uint64 cursor = 0;
+    while (cursor < length) {
+      ma_uint64 framesRead = 0;
+      ma_uint64 remaining = length - cursor;
+      ma_uint64 toRead = remaining < (ma_uint64) framesPerChunk ? remaining : (ma_uint64) framesPerChunk;
+      result = ma_resource_manager_data_source_read_pcm_frames(self->ds, buffer, toRead, &framesRead);
+      if (result != MA_SUCCESS)
+        Fatal("SoundDesc_ToFile: Failed to read decoded data.\n  Path: %s", self->path);
+      for (ma_uint64 i = 0; i < framesRead * channels; ++i) {
+        float sample = Clamp(buffer[i], -1.0f, 1.0f);
+        int16 out = (int16) Round(sample * 32767.0f);
+        File_Write(file, &out, sizeof(out));
+      }
+      cursor += framesRead;
+    }
+
+    File_Close(file);
+  }
 }

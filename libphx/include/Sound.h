@@ -38,6 +38,7 @@ PHX_API bool    Sound_IsPlaying              (Sound*);
 
 PHX_API void    Sound_Attach3DPos            (Sound*, Vec3f const* pos, Vec3f const* vel);
 PHX_API void    Sound_Set3DLevel             (Sound*, float);
+PHX_API void    Sound_Set3DMinMaxDistance    (Sound*, float minDist, float maxDist);
 PHX_API void    Sound_Set3DPos               (Sound*, Vec3f const* pos, Vec3f const* vel);
 PHX_API void    Sound_SetFreeOnFinish        (Sound*, bool);
 PHX_API void    Sound_SetPan                 (Sound*, float);
@@ -59,6 +60,7 @@ PHX_API void    Sound_ClonePlayFreeAttached  (Sound*, Vec3f const* pos, Vec3f co
 /* --- Private API ---------------------------------------------------------- */
 
 PRIVATE void    Sound_Update                 (Sound*);
+PRIVATE void    Sound_PollFinished           (Sound*);
 PRIVATE bool    Sound_IsFreed                (Sound*);
 
 #endif

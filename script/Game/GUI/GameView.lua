@@ -355,6 +355,12 @@ function GameView:onUpdate (state)
     self.camera.rot:getUp())
   Audio.Update()
 
+  -- M toggles music playback. TODO : move into a proper audio settings UI.
+  if Input.GetPressed(Button.Keyboard.M) then
+    self.musicMuted = not self.musicMuted
+    if self.musicMuted then self.music:pause() else self.music:play() end
+  end
+
   self.camera:pop()
 end
 
@@ -407,6 +413,13 @@ function GameView.Create (player)
   self:setOrbit(false)
   self.eyeLast = self.camera.pos:clone()
   self.eyeVel  = self.player:getControlling():getVelocity():clone()
+
+  -- Ambient music: looping 2D track (2D = unattenuated by distance/position).
+  -- Track + volume configurable via Config.audio (see Config.App.lua).
+  -- TODO : Playlist rotation + music/SFX volume settings UI.
+  self.music = Sound.Load(Config.audio.music, true, false)
+  self.music:setVolume(Config.audio.musicVolume)
+  self.music:play()
   return self
 end
 

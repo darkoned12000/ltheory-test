@@ -56,10 +56,33 @@ Config.gen = {
   playerShipSize = 4,
 }
 
+Config.audio = {
+  -- Name of the ambient music track res/sound/<name>.{mp3,ogg,wav}, and its
+  -- volume (2D, unattenuated). Override in Config.Local.lua, e.g.:
+  --   Config.audio.music       = 'duelofthefates'
+  --   Config.audio.musicVolume = 0.2
+  music       = 'system/ambiance/089',
+  musicVolume = 0.35,
+
+  -- Gameplay sound effects, keyed by logical effect name. Each entry:
+  --   sound   = asset name under res/sound/ (extension auto-probed)
+  --   volume  = linear gain multiplier (1.0 = file's native loudness,
+  --             0.0 = silent, >1 boosts but may clip)
+  --   minDist = 3D full-volume radius in world units (no attenuation inside
+  --             this range; beyond it the engine's global rolloff applies)
+  -- Add new effects here as weapons/systems are added (afterburner, shieldHit,
+  -- hullHit, uiClick, ...). Override anything in Config.Local.lua to test
+  -- different assets/volumes without touching gameplay code.
+  sfx = {
+    blaster   = { sound = 'blaster',     volume = 2.2, minDist = 40  },
+    explosion = { sound = 'explosion',   volume = 1.0, minDist = 200 },
+    engine    = { sound = 'engine_loop', volume = 1.0, minDist = 60  },
+  },
+}
+
 Config.game = {
   boostCost = 10,
   rateOfFire = 10,
-
   autoTarget             = false,
   pulseDamage            = 40,
   pulseSize              = 64,

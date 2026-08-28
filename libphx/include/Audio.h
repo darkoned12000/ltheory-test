@@ -20,6 +20,9 @@ PHX_API int32       Audio_GetTotalCount      ();
 /* --- Private API ---------------------------------------------------------- */
 
 PRIVATE void*       Audio_GetHandle          ();
+PRIVATE float       Audio_GetDoppler         ();
+PRIVATE float       Audio_GetScale           ();
+PRIVATE float       Audio_GetRolloff         ();
 PRIVATE SoundDesc*  Audio_AllocSoundDesc     (cstr name);
 PRIVATE void        Audio_DeallocSoundDesc   (SoundDesc*);
 PRIVATE Sound*      Audio_AllocSound         ();
@@ -29,17 +32,15 @@ PRIVATE void        Audio_SoundStateChanged  (Sound*);
 #endif
 
 /* NOTE : Primary */
-/* TODO : Implement the FMOD Studio API and test with an FMOD project */
-/* TODO : Investigate Oculus' HRTF */
+/* TODO : Investigate HRTF (miniaudio's spatializer is panned stereo; OpenAL
+ *        Soft-style HRTF binaural output would need a custom node) */
 
 /* NOTE : Secondary */
 /* TODO : What happens when there is no audio device or the audio device is disconnected? */
 /* TODO : Finish Sound_ToFile */
-/* TODO : Where is CoInitialize being called? I don't see a warning from FMOD */
-/* TODO : Respect the default device if it changes at runtime. This can't be done
- *        with FMOD alone. We'll need to detect default device changes some other way.
- *        http://www.fmod.org/questions/question/detecting-playback-device-change-in-windows/ */
+/* TODO : Respect the default device if it changes at runtime. miniaudio's
+ *        device enumeration + a re-route handler would be needed. */
 
-/* NOTE : If we ever decide to use streams or internet sounds all sound APIs
- *        must be carefully updated to support it. In those cases channels have
- *        additional open states that we don't currently handle. */
+/* NOTE : If we ever decide to use streams (MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_STREAM)
+ *        all sound APIs must be carefully updated to support it. In those
+ *        cases sounds have additional readiness states we don't currently handle. */

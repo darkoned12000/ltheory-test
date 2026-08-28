@@ -26,83 +26,35 @@ set_target_properties (phx PROPERTIES
 
 # ------------------------------------------------------------------------------
 
-if (WINDOWS)
+# NOTE : Windows support was removed on 2026-08-28 (ext/lib/win32|win64 and the
+#        bundled FMOD SDKs were deleted). Shared.cmake still carries Windows
+#        compile flags; re-add an extlib block here if a Windows port happens.
 
-  # register an external shared library
-  function (add_extlib name lib dll)
-    add_library (${name} SHARED IMPORTED GLOBAL)
-    set_property (TARGET ${name} PROPERTY IMPORTED_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/ext/lib/${PLATARCH}/${lib}")
-    set_property (TARGET ${name} PROPERTY IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/ext/lib/${PLATARCH}/${dll}")
-  endfunction ()
-
-  # link target to an external library; also add a post-build step to
-  # copy the library DLL into the bin folder
-  function (target_link_extlib target lib)
-    target_link_libraries (${target} ${lib})
-    add_custom_command (TARGET ${target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      $<TARGET_FILE:${lib}> $<TARGET_FILE_DIR:${target}>
-    )
-  endfunction ()
-
-  add_extlib (glew glew32.lib glew32.dll)
-  add_extlib (lz4 liblz4.lib liblz4.dll)
-  add_extlib (lua51 lua51.lib lua51.dll)
-  add_extlib (sdl2 SDL2.lib SDL2.dll)
-
-  if (ARCH EQUAL "32")
-    add_extlib (fmod fmodL_vc.lib fmodL.dll)
-    add_extlib (fmodstudio fmodstudioL_vc.lib fmodstudioL.dll)
-  else ()
-    add_extlib (fmod fmodL64_vc.lib fmodL64.dll)
-    add_extlib (fmodstudio fmodstudioL64_vc.lib fmodstudioL64.dll)
-  endif ()
-
-elseif (LINUX)
-
-  # TODO
-
-endif ()
-
-# ------------------------------------------------------------------------------
-
-if (WINDOWS)
-
-  target_link_libraries (phx
-    opengl32.lib
-    user32.lib winmm.lib Ws2_32.lib
-    freetype.lib
-    BulletCollision.lib BulletDynamics.lib LinearMath.lib)
-
-  target_link_extlib (phx glew)
-  target_link_extlib (phx sdl2)
-  target_link_extlib (phx lz4)
-  target_link_extlib (phx lua51)
-  target_link_extlib (phx fmod)
-  target_link_extlib (phx fmodstudio)
-
-elseif (LINUX)
+if (LINUX)
 
   target_link_libraries (phx
     GL
     GLEW
     dl
+    m
+    pthread
     SDL2
     freetype
     luajit-5.1
     lz4
-    "${CMAKE_CURRENT_SOURCE_DIR}/ext/lib/${PLATARCH}/libfmod.so"
-    "${CMAKE_CURRENT_SOURCE_DIR}/ext/lib/${PLATARCH}/libfmodstudio.so"
     BulletCollision BulletDynamics LinearMath)
 
-  # $ORIGIN-based rpath: resolve engine + ext libs from any working directory,
-  # so the game runs without LD_LIBRARY_PATH. $ORIGIN = dir of this .so;
-  # $ORIGIN/.. = project root (for bin/), $ORIGIN/../ext/lib/${PLATARCH} = FMOD.
+  # miniaudio (header-only, libphx/ext/include/miniaudio) dlopens its backends
+  # at runtime; pthread covers the mixer + resource-manager job threads.
+
+  # $ORIGIN-based rpath: resolve the engine .so from any working directory, so
+  # the game runs without LD_LIBRARY_PATH. $ORIGIN = dir of this .so;
+  # $ORIGIN/.. = project root (for bin/).
   set_target_properties (phx PROPERTIES
     BUILD_RPATH_USE_ORIGIN TRUE
-    BUILD_RPATH "$ORIGIN;$ORIGIN/..;$ORIGIN/../ext/lib/${PLATARCH}"
+    BUILD_RPATH "$ORIGIN;$ORIGIN/.."
     INSTALL_RPATH_USE_ORIGIN TRUE
-    INSTALL_RPATH "$ORIGIN;$ORIGIN/..;$ORIGIN/../ext/lib/${PLATARCH}")
+    INSTALL_RPATH "$ORIGIN;$ORIGIN/..")
 
   # The Lua FFI loader (libphx/script/ffi/libphx.lua) dlopens "libphx${ARCH}.so"
   # in release builds, but the Release output name carries a suffix

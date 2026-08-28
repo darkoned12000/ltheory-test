@@ -1,19 +1,22 @@
 #include "ArrayList.h"
 #include "Audio.h"
-#include "FMODError.h"
 #include "MemPool.h"
 #include "PhxMath.h"
 #include "Sound.h"
 #include "SoundDef.h"
 #include "StrMap.h"
 #include "Vec3.h"
-#include "fmod/fmod.h"
+#define MINIAUDIO_IMPLEMENTATION
+#include <miniaudio/miniaudio.h>
 
+/* NOTE : miniaudio has no fixed voice limit; this only feeds the debug warning
+ *        that mirrors the old FMOD channel cap. */
 #define AUDIO_CHANNELS 1024
 #define SOUNDPOOL_BLOCK_SIZE 128
 
 struct Audio {
-  FMOD_SYSTEM*      handle;
+  ma_engine*        handle;
+  ma_resource_manager rm;
   StrMap*           descMap;
   MemPool*          soundPool;
   ArrayList(Sound*, playingSounds);
@@ -23,50 +26,67 @@ struct Audio {
   Vec3f const* autoVel;
   Vec3f const* autoFwd;
   Vec3f const* autoUp;
+
+  float doppler;
+  float scale;    /* World units per meter (FMOD 'distance factor' equivalent). */
+  float rolloff;
 } static self;
 
 void Audio_Init () {
-    /* Initialize Debugging. */ {
-      FMOD_DEBUG_FLAGS flags = 0;
-      NCHECK(flags |= FMOD_DEBUG_LEVEL_NONE);
-      CHECK1(flags |= FMOD_DEBUG_LEVEL_ERROR);
-      CHECK1(flags |= FMOD_DEBUG_LEVEL_WARNING);
-      CHECK2(flags |= FMOD_DEBUG_LEVEL_LOG);
+  /* Resource manager: decode everything to f32 so the mixing path and the
+   * SoundDesc_ToFile export see a uniform format. One job thread handles
+   * async (Sound_LoadAsync) loads. */ {
+    ma_resource_manager_config rmConfig = ma_resource_manager_config_init();
+    rmConfig.decodedFormat = ma_format_f32;
+    if (ma_resource_manager_init(&rmConfig, &self.rm) != MA_SUCCESS)
+      Fatal("Audio_Init: Failed to initialize miniaudio resource manager");
+  }
 
-      FMOD_RESULT res;
-      res = FMOD_Debug_Initialize(flags, FMOD_DEBUG_MODE_FILE, 0, "log/fmod.txt");
-      if (res != FMOD_OK && res != FMOD_ERR_UNSUPPORTED)
-        FMODCALL(res);
-    }
-
-  /* Initialize FMOD. */ {
-    FMODCALL(FMOD_System_Create(&self.handle));
-
-    uint version;
-    FMODCALL(FMOD_System_GetVersion(self.handle, &version));
-    if (version < FMOD_VERSION)
-      Fatal("Audio_Create: FMOD library link/compile version mismatch");
-
-    /* NOTE : The fake HRTF mentioned in FMOD_INIT_CHANNEL_LOWPASS and
-     *        FMOD_ADVANCEDSETTINGS has been removed from FMOD.
-     *        http://www.fmod.org/questions/question/hrtf-does-not-appear-to-work/ */
-
-    FMOD_INITFLAGS flags = 0;
-    flags |= FMOD_INIT_NORMAL;
-    flags |= FMOD_INIT_3D_RIGHTHANDED;
-    flags |= FMOD_INIT_CHANNEL_DISTANCEFILTER;
-    CHECK2(flags |= FMOD_INIT_PROFILE_ENABLE);
-    FMODCALL(FMOD_System_Init(self.handle, AUDIO_CHANNELS, flags, 0));
+  /* Engine. Backends are probed at runtime (PulseAudio/ALSA/JACK via dlopen on
+   * Linux; WASAPI on Windows; CoreAudio on macOS). The mixer is forced to
+   * stereo so spatialized 3D sounds always land in FL/FR — with the native
+   * channel count (e.g. a 5.1 Pulse profile) a sound dead-ahead of the camera
+   * would be panned into the center channel and vanish on stereo speakers. */ {
+    self.handle = (ma_engine*) MemAlloc(sizeof(ma_engine));
+    ma_engine_config config = ma_engine_config_init();
+    config.pResourceManager = &self.rm;
+    config.channels = 2;
+    /* Bigger device periods + smoothed gains: small periods underrun under
+     * game load (audible crackle), and unsmoothed per-frame volume/pitch
+     * changes produce zipper noise. */
+    config.periodSizeInMilliseconds = 40;
+    config.gainSmoothTimeInMilliseconds = 100;
+    config.defaultVolumeSmoothTimeInPCMFrames = 4800; /* 100ms @ 48 kHz */
+    if (ma_engine_init(&config, self.handle) != MA_SUCCESS)
+      Fatal("Audio_Init: Failed to initialize miniaudio engine");
   }
 
   /* Initialize audio instance data. */ {
     self.descMap = StrMap_Create(128);
     self.soundPool = MemPool_Create(sizeof(Sound), SOUNDPOOL_BLOCK_SIZE);
+    self.doppler = 0.0f;
+    self.scale = 1.0f;
+    self.rolloff = 1.0f;
   }
 }
 
 void Audio_Free () {
-  FMODCALL(FMOD_System_Release(self.handle));
+  /* Release any sounds that are still alive so their voices are uninit'd
+   * before the engine goes away. */
+  ArrayList_ForEachI(self.playingSounds, i) {
+    Sound* sound = ArrayList_Get(self.playingSounds, i);
+    if (!Sound_IsFreed(sound)) Sound_Free(sound);
+  }
+  ArrayList_ForEachI(self.freeingSounds, i) {
+    Sound* sound = ArrayList_Get(self.freeingSounds, i);
+    Audio_DeallocSound(sound);
+  }
+  ArrayList_Clear(self.freeingSounds);
+
+  ma_engine_uninit(self.handle);
+  MemFree(self.handle);
+  self.handle = 0;
+  ma_resource_manager_uninit(&self.rm);
   StrMap_Free(self.descMap);
   MemPool_Free(self.soundPool);
   ArrayList_Free(self.playingSounds);
@@ -82,7 +102,11 @@ void Audio_AttachListenerPos (Vec3f const* pos, Vec3f const* vel, Vec3f const* f
 }
 
 void Audio_Set3DSettings (float doppler, float scale, float rolloff) {
-  FMODCALL(FMOD_System_Set3DSettings(self.handle, doppler, scale, rolloff));
+  /* Applied per-voice at voice creation (ma_sound_set_doppler_factor etc.);
+   * miniaudio has no engine-wide doppler/rolloff switch. */
+  self.doppler = doppler;
+  self.scale = scale;
+  self.rolloff = rolloff;
 }
 
 void Audio_SetListenerPos (
@@ -91,23 +115,17 @@ void Audio_SetListenerPos (
   Vec3f const* fwd,
   Vec3f const* up)
 {
-  Assert(sizeof(*pos) == sizeof(FMOD_VECTOR));
   Assert(!fwd || Approx(Vec3f_Length(*fwd), 1));
   Assert(!up || Approx(Vec3f_Length(*up), 1));
   Assert(!fwd || !up || Approx(Vec3f_Dot(*fwd, *up), 0));
 
-  FMODCALL(FMOD_System_Set3DListenerAttributes(
-    self.handle,
-    0,
-    (FMOD_VECTOR*) pos,
-    (FMOD_VECTOR*) vel,
-    (FMOD_VECTOR*) fwd,
-    (FMOD_VECTOR*) up
-  ));
+  if (pos) ma_engine_listener_set_position(self.handle, 0, pos->x, pos->y, pos->z);
+  if (vel) ma_engine_listener_set_velocity(self.handle, 0, vel->x, vel->y, vel->z);
+  if (fwd) ma_engine_listener_set_direction(self.handle, 0, fwd->x, fwd->y, fwd->z);
+  if (up)  ma_engine_listener_set_world_up(self.handle, 0, up->x, up->y, up->z);
 }
 
 void Audio_Update () {
-  FMODCALL(FMOD_System_Update(self.handle));
   Audio_SetListenerPos(self.autoPos, self.autoVel, self.autoFwd, self.autoUp);
 
   ArrayList_ForEachI(self.playingSounds, i) {
@@ -115,6 +133,10 @@ void Audio_Update () {
     /* TODO : Refine the API to make this less awkward */
     if (!Sound_IsFreed(sound) && Sound_IsPlaying(sound)) {
       Sound_Update(sound);
+      /* State was polled from the mixer via channel callbacks under FMOD; with
+       * miniaudio we poll at_end here, so finished sounds lag by at most one
+       * Audio_Update. */
+      Sound_PollFinished(sound);
     } else {
       ArrayList_RemoveAtFast(self.playingSounds, i--);
     }
@@ -147,6 +169,18 @@ void* Audio_GetHandle () {
   return self.handle;
 }
 
+float Audio_GetDoppler () {
+  return self.doppler;
+}
+
+float Audio_GetScale () {
+  return self.scale;
+}
+
+float Audio_GetRolloff () {
+  return self.rolloff;
+}
+
 SoundDesc* Audio_AllocSoundDesc (cstr name) {
   SoundDesc* desc = (SoundDesc*) StrMap_Get(self.descMap, name);
   if (!desc) {
@@ -157,7 +191,7 @@ SoundDesc* Audio_AllocSoundDesc (cstr name) {
 }
 
 void Audio_DeallocSoundDesc (SoundDesc* desc) {
-  StrMap_Remove(self.descMap, desc->name);
+  StrMap_Remove(self.descMap, desc->mapKey);
   MemFree(desc);
 }
 
@@ -166,6 +200,11 @@ Sound* Audio_AllocSound () {
 }
 
 void Audio_DeallocSound (Sound* sound) {
+  if (sound->handle) {
+    ma_sound_uninit(sound->handle);
+    MemFree(sound->handle);
+    sound->handle = 0;
+  }
   MemPool_Dealloc(self.soundPool, sound);
 }
 

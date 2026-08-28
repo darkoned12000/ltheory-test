@@ -1,38 +1,36 @@
 #include "Audio.h"
-#include "Bytes.h"
-#include "FMODError.h"
 #include "PhxMemory.h"
 #include "PhxMath.h"
 #include "Sound.h"
 #include "SoundDesc.h"
 #include "SoundDef.h"
 #include "Vec3.h"
-#include "fmod/fmod.h"
+#include <miniaudio/miniaudio.h>
 
 static void Sound_SetState(Sound*, SoundState);
-
-static FMOD_RESULT F_CALLBACK Sound_Callback (
-  FMOD_CHANNELCONTROL*              channel,
-  FMOD_CHANNELCONTROL_TYPE          controlType,
-  FMOD_CHANNELCONTROL_CALLBACK_TYPE callbackType,
-  void*, void*)
-{
-  if (callbackType == FMOD_CHANNELCONTROL_CALLBACK_END) {
-    Assert(controlType == FMOD_CHANNELCONTROL_CHANNEL);
-    Sound* self;
-    FMODCALL(FMOD_Channel_GetUserData((FMOD_CHANNEL*) channel, (void**) &self));
-    Sound_SetState(self, SoundState_Finished);
-  }
-
-  return FMOD_OK;
-}
 
 inline static void Sound_EnsureLoadedImpl (Sound* self, cstr func) {
   if (self->state == SoundState_Loading) {
     SoundDesc_FinishLoad(self->desc, func);
-    FMODCALL(FMOD_System_PlaySound((FMOD_SYSTEM*) Audio_GetHandle(), self->desc->handle, 0, true, &self->handle));
-    FMODCALL(FMOD_Channel_SetUserData(self->handle, self));
-    FMODCALL(FMOD_Channel_SetCallback(self->handle, Sound_Callback));
+
+    self->handle = (ma_sound*) MemAlloc(sizeof(ma_sound));
+    ma_result result = ma_sound_init_from_file(
+      (ma_engine*) Audio_GetHandle(),
+      self->desc->path,
+      MA_SOUND_FLAG_DECODE,
+      0, 0, self->handle);
+    if (result != MA_SUCCESS)
+      Fatal("%s: Failed to create sound voice.\n  Path: %s", func, self->desc->path);
+
+    /* NOTE : Looping/spatialization are per-voice in miniaudio (FMOD put them
+     *        in the sound's mode bits). The resource manager dedupes the
+     *        decoded data by path, so clones share decoded memory but each
+     *        voice keeps its own cursor. */
+    ma_sound_set_looping(self->handle, self->desc->isLooped);
+    ma_sound_set_spatialization_enabled(self->handle, self->desc->is3D);
+    ma_sound_set_doppler_factor(self->handle, Audio_GetDoppler());
+    ma_sound_set_min_distance(self->handle, Audio_GetScale());
+    ma_sound_set_rolloff(self->handle, Audio_GetRolloff());
     Sound_SetState(self, SoundState_Paused);
 
     if (Sound_Get3D(self)) {
@@ -68,15 +66,17 @@ static void Sound_SetState (Sound* self, SoundState nextState) {
       break;
 
     case SoundState_Playing:
-      FMODCALL(FMOD_Channel_SetPaused(self->handle, false));
+      ma_sound_start(self->handle);
       break;
 
     case SoundState_Paused:
-      FMODCALL(FMOD_Channel_SetPaused(self->handle, true));
+      ma_sound_stop(self->handle);
       break;
 
     case SoundState_Finished:
-      FMODCALL(FMOD_Channel_Stop(self->handle));
+      /* Reached naturally when the mixer hits the end (polled in Audio_Update)
+       * or forced by Sound_Free. */
+      ma_sound_stop(self->handle);
       break;
 
     case SoundState_Freed:
@@ -150,14 +150,12 @@ void Sound_Pause (Sound* self) {
 
 void Sound_Rewind (Sound* self) {
   Sound_EnsureState(self);
-  FMODCALL(FMOD_Channel_SetPosition(self->handle, 0, FMOD_TIMEUNIT_PCM));
+  ma_sound_seek_to_pcm_frame(self->handle, 0);
 }
 
 bool Sound_Get3D (Sound* self) {
   Sound_EnsureState(self);
-  FMOD_MODE mode;
-  FMODCALL(FMOD_Channel_GetMode(self->handle, &mode));
-  return (mode & FMOD_3D) == FMOD_3D;
+  return self->desc->is3D;
 }
 
 float Sound_GetDuration (Sound* self) {
@@ -167,9 +165,7 @@ float Sound_GetDuration (Sound* self) {
 
 bool Sound_GetLooped (Sound* self) {
   Sound_EnsureState(self);
-  FMOD_MODE mode;
-  FMODCALL(FMOD_Channel_GetMode(self->handle, &mode));
-  return (mode & FMOD_LOOP_NORMAL) == FMOD_LOOP_NORMAL;
+  return self->desc->isLooped;
 }
 
 cstr Sound_GetName (Sound* self) {
@@ -199,15 +195,25 @@ void Sound_Attach3DPos (Sound* self, Vec3f const* pos, Vec3f const* vel) {
 
 void Sound_Set3DLevel (Sound* self, float level) {
   Sound_EnsureState(self);
-  FMODCALL(FMOD_Channel_Set3DLevel(self->handle, level));
+  /* Approximation of FMOD's 2D/3D level blend: any nonzero level gets full
+   * spatialization; 0 disables it. */
+  ma_sound_set_spatialization_enabled(self->handle, level > 0.0f);
+}
+
+void Sound_Set3DMinMaxDistance (Sound* self, float minDist, float maxDist) {
+  Sound_EnsureState(self);
+  ma_sound_set_min_distance(self->handle, Max(0.001f, minDist));
+  if (maxDist > 0.0f)
+    ma_sound_set_max_distance(self->handle, maxDist);
 }
 
 void Sound_Set3DPos (Sound* self, Vec3f const* pos, Vec3f const* vel) {
   Sound_EnsureState(self);
-  Assert(sizeof(*pos) == sizeof(FMOD_VECTOR));
-  FMODCALL(FMOD_Channel_Set3DAttributes(
-    self->handle, (FMOD_VECTOR*) pos, (FMOD_VECTOR*) vel, 0
-  ));
+  Vec3f zero = { 0, 0, 0 };
+  Vec3f p = pos ? *pos : zero;
+  Vec3f v = vel ? *vel : zero;
+  ma_sound_set_position(self->handle, p.x, p.y, p.z);
+  ma_sound_set_velocity(self->handle, v.x, v.y, v.z);
 }
 
 void Sound_SetFreeOnFinish (Sound* self, bool freeOnFinish) {
@@ -216,25 +222,25 @@ void Sound_SetFreeOnFinish (Sound* self, bool freeOnFinish) {
 
 void Sound_SetPan (Sound* self, float pan) {
   Sound_EnsureState(self);
-  FMODCALL(FMOD_Channel_SetPan(self->handle, pan));
+  ma_sound_set_pan(self->handle, pan);
 }
 
 void Sound_SetPitch (Sound* self, float pitch) {
   Sound_EnsureState(self);
-  FMODCALL(FMOD_Channel_SetPitch(self->handle, pitch));
+  ma_sound_set_pitch(self->handle, pitch);
 }
 
 void Sound_SetPlayPos (Sound* self, float seconds) {
-  /* NOTE : Currently this has only millisecond accuracy. */
   Sound_EnsureState(self);
   Assert(seconds >= 0.0f);
-  unsigned int ms = (unsigned int) Round(seconds * 1000.0f);
-  FMODCALL(FMOD_Channel_SetPosition(self->handle, ms, FMOD_TIMEUNIT_MS));
+  ma_engine* engine = (ma_engine*) Audio_GetHandle();
+  ma_uint64 frame = (ma_uint64) Round(seconds * (float) ma_engine_get_sample_rate(engine));
+  ma_sound_seek_to_pcm_frame(self->handle, frame);
 }
 
 void Sound_SetVolume (Sound* self, float volume) {
   Sound_EnsureState(self);
-  FMODCALL(FMOD_Channel_SetVolume(self->handle, volume));
+  ma_sound_set_volume(self->handle, volume);
 }
 
 Sound* Sound_LoadPlay (cstr name, bool isLooped, bool is3D) {
@@ -300,22 +306,19 @@ bool Sound_IsFreed (Sound* self) {
   return self->state == SoundState_Freed;
 }
 
-/* NOTE : We start the sound instance in the paused state so that we can change
- *        position, pitch, etc. via the Sound API *before* samples start getting
- *        mixed. */
+void Sound_PollFinished (Sound* self) {
+  if (self->state == SoundState_Playing && self->handle && ma_sound_at_end(self->handle))
+    Sound_SetState(self, SoundState_Finished);
+}
 
-/* NOTE : By default, 3D channels are set to the *current position* of the
+/* NOTE : We create the voice only once the (possibly async) load has finished
+ *        so that per-voice settings can be applied *before* samples start
+ *        getting mixed. */
+
+/* NOTE : By default, 3D sounds are positioned at the *current position* of the
  *        listener! That's confusing and almost never what we want, so we reset
  *        the position immediately for consistency. */
 
-/* NOTE : Generally self->state is updated through callbacks triggered by
- *        FMOD_System_Update and thus is slightly stale at all times. This means
- *        a sound could have finished earlier in the frame and we won't know
- *        until the beginning of the next frame when Audio_Update is called. */
-
-/* OPTIMIZE : Sometimes we do redundant work:
- *            - When loading a sound synchronously or pausing a currently
- *            loading sound we call FMOD_Channel_SetPaused on an already paused
- *            sound.
- *            - When freeing a loading sound we block to finish the load just to
- *            free the sound. */
+/* NOTE : Finished sounds are detected by polling ma_sound_at_end in
+ *        Audio_Update, so a sound could have finished earlier in the frame and
+ *        we won't know until the next update. */

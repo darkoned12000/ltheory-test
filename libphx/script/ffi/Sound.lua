@@ -23,6 +23,7 @@ do -- C Definitions
     bool   Sound_IsPlaying             (Sound*);
     void   Sound_Attach3DPos           (Sound*, Vec3f const* pos, Vec3f const* vel);
     void   Sound_Set3DLevel            (Sound*, float);
+    void   Sound_Set3DMinMaxDistance   (Sound*, float minDist, float maxDist);
     void   Sound_Set3DPos              (Sound*, Vec3f const* pos, Vec3f const* vel);
     void   Sound_SetFreeOnFinish       (Sound*, bool);
     void   Sound_SetPan                (Sound*, float);
@@ -60,6 +61,7 @@ do -- Global Symbol Table
     IsPlaying             = libphx.Sound_IsPlaying,
     Attach3DPos           = libphx.Sound_Attach3DPos,
     Set3DLevel            = libphx.Sound_Set3DLevel,
+    Set3DMinMaxDistance   = libphx.Sound_Set3DMinMaxDistance,
     Set3DPos              = libphx.Sound_Set3DPos,
     SetFreeOnFinish       = libphx.Sound_SetFreeOnFinish,
     SetPan                = libphx.Sound_SetPan,
@@ -101,6 +103,7 @@ do -- Metatype for class instances
       isPlaying             = libphx.Sound_IsPlaying,
       attach3DPos           = libphx.Sound_Attach3DPos,
       set3DLevel            = libphx.Sound_Set3DLevel,
+      set3DMinMaxDistance   = libphx.Sound_Set3DMinMaxDistance,
       set3DPos              = libphx.Sound_Set3DPos,
       setFreeOnFinish       = libphx.Sound_SetFreeOnFinish,
       setPan                = libphx.Sound_SetPan,

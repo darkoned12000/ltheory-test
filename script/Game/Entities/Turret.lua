@@ -98,6 +98,15 @@ function Turret:fire ()
   e.lifeMax = self.projLife
   e.life = e.lifeMax
 
+  -- Audio: one-shot blaster at the muzzle (one-shot voices free themselves).
+  local sfx = Config.audio.sfx.blaster
+  local sound = Sound.Load(sfx.sound, false, true)
+  sound:set3DPos(e.pos, self:getParent():getVelocity())
+  sound:set3DMinMaxDistance(sfx.minDist, 0)
+  sound:setVolume(sfx.volume)
+  sound:setFreeOnFinish(true)
+  sound:play()
+
   -- NOTE : In the future, it may be beneficial to store the actual turret
   --        rather than the parent. It would allow, for example, data-driven
   --        AI threat analysis by keeping track of which weapons have caused
