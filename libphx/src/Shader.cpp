@@ -108,7 +108,7 @@ static uint CreateGLProgram (uint vs, uint fs) {
       GLCALL(glGetProgramiv(self, GL_INFO_LOG_LENGTH, &length))
       char* infoLog = (char*)MemAllocZero(length + 1);
       GLCALL(glGetProgramInfoLog(self, length, 0, infoLog))
-      fprintf(stderr, "phx: shader link failed [vs:%p fs:%p]:\n%s\n", vs, fs, infoLog);
+      fprintf(stderr, "phx: shader link failed [vs:%u fs:%u]:\n%s\n", vs, fs, infoLog);
       return 0;
     }
   }
@@ -129,7 +129,7 @@ static uint CreateGLComputeProgram (uint cs) {
       GLCALL(glGetProgramiv(self, GL_INFO_LOG_LENGTH, &length))
       char* infoLog = (char*)MemAllocZero(length + 1);
       GLCALL(glGetProgramInfoLog(self, length, 0, infoLog))
-      fprintf(stderr, "phx: compute shader link failed <%p>:\n%s\n", cs, infoLog);
+      fprintf(stderr, "phx: compute shader link failed <%u>:\n%s\n", cs, infoLog);
       return 0;
     }
   }

@@ -15,6 +15,7 @@ function Entity:hasLight ()
 end
 
 function Entity:setLight (r, g, b)
+  if not self.light then self:addLight(r, g, b) end
   self.light.x = r
   self.light.y = g
   self.light.z = b

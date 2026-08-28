@@ -83,7 +83,47 @@ function LTheory:generate ()
       end
     end
   end
+
+  -- Visibility cloud: the planet is so large it hides asteroids spawned near it,
+  -- and spawnAsteroidField places rocks ~100k+ units out (tiny/pebbles at that
+  -- range), so spawn a dense ring of ship-comparable rocks around the player for
+  -- testing shadows. We build each rock from a visibly-scaled copy of its high-detail
+  -- level and use `addVisibleMesh` (always draws the finest LOD level, unlike the
+  -- distance-gated addVisibleLodMesh) so they render regardless of how far they are.
+  local Entity = require('Game.Entity')
+  local Material = require('Game.Material')
+  if ship then
+    local rockPos = {}
+    for i = 1, 30 do
+      local ang = (i / 30) * 6.2831853
+      -- Spread over a wide arc so some rocks stay in view even near the planet edge.
+      local r   = rng:getUniform() * 4000 + 900
+      local off = Vec3f(
+        math.cos(ang) * r,
+        (rng:getSphere():scale(250)).y,
+        math.sin(ang) * r)
+      insert(rockPos, ship:getPos() + off)
+
+      local seed = rng:get31()
+      -- Baked-scale (12x) the highest-detail level so each rock is ship-sized;
+      -- draw it unconditionally via addVisibleMesh (same pattern ships use). The
+      -- fine SDF geometry makes every rock look distinct.
+      local lod  = Gen.Asteroid(seed)          -- multi-level SDF LodMesh (cached per seed)
+      local a    = Entity()
+      local big  = lod:get(0):scale(12, 12, 12)   -- highest-detail level as a standalone Mesh
+      a:addRigidBody(true, lod:get(0))         -- body required so the Rock material renders
+      a.body:setCollidable(false)              -- collision OFF: no momentum transfer to ship
+      a:addVisibleMesh(big, Material.Rock())
+
+      self.system:addChild(a)
+    end
+
+    -- NOTE : if this reads 0 the block above broke (e.g. an API change); the rocks
+    -- are otherwise invisible only if addVisibleMesh isn't drawing them at distance.
+    printf('[dbg] visibility-cloud rocks=%d', #rockPos)
+  end
 end
+
 
 function LTheory:onInit ()
   self.player = Entities.Player()

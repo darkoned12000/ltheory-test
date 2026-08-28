@@ -21,6 +21,7 @@ do -- C Definitions
     Matrix* Matrix_LookAt             (Vec3f const* pos, Vec3f const* at, Vec3f const* up);
     Matrix* Matrix_LookUp             (Vec3f const* pos, Vec3f const* look, Vec3f const* up);
     Matrix* Matrix_Perspective        (float degreesFovY, float aspect, float zNear, float zFar);
+    Matrix* Matrix_Ortho              (float left, float right, float bottom, float top, float nearZ, float farZ);
     Matrix* Matrix_RotationX          (float rads);
     Matrix* Matrix_RotationY          (float rads);
     Matrix* Matrix_RotationZ          (float rads);
@@ -66,6 +67,7 @@ do -- Global Symbol Table
     LookAt             = libphx.Matrix_LookAt,
     LookUp             = libphx.Matrix_LookUp,
     Perspective        = libphx.Matrix_Perspective,
+    Ortho              = libphx.Matrix_Ortho,
     RotationX          = libphx.Matrix_RotationX,
     RotationY          = libphx.Matrix_RotationY,
     RotationZ          = libphx.Matrix_RotationZ,

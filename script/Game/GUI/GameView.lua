@@ -3,12 +3,96 @@ GameView.__index  = GameView
 setmetatable(GameView, UI.Container)
 
 GameView.name = 'Game View'
-
 local ssTable = { 1, 2, 4 }
 
 -- PHX_DEBUG_DUMP=<frame> : save pipeline checkpoints to PNGs once, at that frame.
 -- Set PHX_DEBUG_DUMP=120 to snapshot ~2s after boot.
 local dumpTargetFrame = tonumber(os.getenv('PHX_DEBUG_DUMP') or '')
+
+
+-- Point-light shadow maps (item #3). For each light we render the opaque world
+-- into a Depth32F texture using an ortho frustum centered on the light and
+-- aligned with the light->camera direction, then sample it in point.glsl with a
+-- PCF test. Cached per entity so the texture is built once per frame.
+local function shadowSize (sx, sy)
+  local scale = math.min(1024 / sx, 1024 / sy)
+  return math.max(256, math.floor(sx * scale)), math.max(256, math.floor(sy * scale))
+end
+
+function GameView:buildShadowFrustum (lightPos, eye, halfSize)
+  -- View +Z = light->camera direction so visible geometry lands near +Z and the
+  -- stored depth tracks distance-from-light. x/y are any orthonormal complement.
+  -- Floor the camera-to-light distance: when you fly right up to the ship (which is
+  -- your light) that vector collapses to ~0 and normalize() would assert; fall back
+  -- to +Y so shadows still compute instead of crashing.
+  local d = (eye - lightPos):length()
+  local z = Vec3f(0, math.max(d, 1e-4), 0):normalize()
+  local ref = (math.abs(z.y) < 0.999) and Vec3f(0, 1, 0) or Vec3f(1, 0, 0)
+  local x = (ref:cross(z)):normalize()
+  local y = (z:cross(x)):normalize()
+  local view = Matrix.FromBasis(x, y, z):product(Matrix.Translation(-lightPos.x, -lightPos.y, -lightPos.z))
+
+  -- Ortho box [L-h, L+h]^3. Depth encodes distance-from-light along +Z; bias in
+  -- point.glsl compensates for off-axis geometry (which has a smaller Z component).
+  local proj = Matrix.Ortho(-halfSize, halfSize, -halfSize, halfSize, 0.1, 2 * halfSize)
+  return view:product(proj)
+end
+
+-- Render per-light shadow maps into Depth32F textures (called before the light passes).
+function GameView:renderShadows (world, lights)
+  local eye = self.camera.pos
+  self.shadowTexts = {}
+  self.shadowProjs = {}
+  for i, light in ipairs(lights) do
+    local tex = self.shadowTexts[light.entity]
+
+    -- Create/cache a Depth32F shadow map at screen-scaled resolution. Cleared to
+    -- the far plane (depth 1) right before rendering below.
+    if not tex then
+      local sw, sh = shadowSize(self.sx, self.sy)
+      tex = Tex2D.Create(sw, sh, TexFormat.Depth32F)
+      tex:setMinFilter(TexFilter.Linear)
+      tex:genMipmap()
+      self.shadowTexts[light.entity] = tex
+    end
+
+    -- Ortho frustum centered on the light; its combined view-proj is reused by
+    -- point.glsl to map each fragment into shadow-map UV space. Using `lp` (the
+    -- final lit position, incl. the +5 lift) keeps this identical to the sampling pass.
+    local halfSize = math.max((eye - light.lp):length() * 0.5, 100000)
+    local proj = self:buildShadowFrustum(light.lp, eye, halfSize)
+    self.shadowProjs[light.entity] = proj
+
+    -- Push a fresh FBO and bind only the Depth32F tex as the depth attachment so
+    -- world:render() records distance-from-light (set below via `eye`).
+    RenderTarget.Push(self.sx, self.sy)
+    RenderTarget.BindTex2D(tex)   -- Depth32F is not a color format -> depth only
+
+    ShaderVar.PushMatrix('mView', proj)
+    ShaderVar.PushMatrix('mProj', Matrix.Identity())
+    -- setDepth() stores length(worldPos - eye); override eye with the light so the
+    -- shadow map records distance-from-light (not camera distance).
+    ShaderVar.PushFloat3('eye', light.lp.x, light.lp.y, light.lp.z)
+    BlendMode.PushDisabled()
+    CullFace.Push(CullFace.Back)
+    RenderState.PushDepthTest(true)
+    RenderState.PushDepthWritable(true)
+
+    Draw.ClearDepth(1)            -- clear depth to far plane (shadow map init)
+
+    world:render(Event.Render(BlendMode.Disabled, eye))
+
+    RenderState.PopDepthWritable()
+    RenderState.PopDepthTest()
+    CullFace.Pop()
+    BlendMode.Pop()
+    ShaderVar.Pop('mView')
+    ShaderVar.Pop('mProj')
+    ShaderVar.Pop('eye')
+    RenderTarget.Pop()
+  end
+end
+
 
 function GameView:draw (focus, active)
   if dumpTargetFrame then
@@ -69,11 +153,11 @@ function GameView:draw (focus, active)
   if GameView.__dumpGBuffer then GameView.__dumpGBuffer() end
 
   do -- Lighting
-    -- Gather light sources
+    -- Gather light sources (entity, world pos, final lit pos incl. +5 lift, color)
     local lights = {}
     for i, v in world:iterChildren() do
       if v:hasLight() then
-        insert(lights, { pos = v:getPos(), color = v:getLight() })
+        insert(lights, { entity = v, pos = v:getPos(), lp = Vec3f(v:getPos().x, v:getPos().y + 5, v:getPos().z), color = v:getLight() })
       end
     end
 
@@ -91,7 +175,8 @@ function GameView:draw (focus, active)
       end
     end
 
-    do -- Local lighting
+    do -- Local lighting (build per-light shadow maps first)
+      self:renderShadows(world, lights)
       local shader = Cache.Shader('worldray', 'light/point')
       if shader then
         self.renderer.buffer2:push()
@@ -99,17 +184,31 @@ function GameView:draw (focus, active)
         shader:start()
         for i, v in ipairs(lights) do
           -- TODO : Batching
+          local lightPos = v.lp
+
+          -- Cache the per-light shadow map built by renderShadows(); skip a
+          -- broken/missing one instead of drawing black.
+          local stex = self.shadowTexts[v.entity]
+          local sproj = self.shadowProjs[v.entity]
+
           Shader.SetFloat3('lightColor', v.color.x, v.color.y, v.color.z)
-          Shader.SetFloat3('lightPos', v.pos.x, v.pos.y + 5, v.pos.z)
+          Shader.SetFloat3('lightPos', lightPos.x, lightPos.y, lightPos.z)
+          if stex then
+            Shader.SetTex2D('texShadow', stex)
+            Shader.SetMatrix ('sShadowProj', sproj)
+            Shader.SetFloat  ('sShadowBias',   Settings.get('render.shadow.bias') or 0.001)
+            Shader.SetFloat  ('sShadowScale',  Settings.get('render.shadow.scale') or 0.0005)
+            Shader.SetFloat  ('sShadowRadius', Settings.get('render.shadow.radius') or 2.0)
+          end
           Shader.SetTex2D('texDepth', self.renderer.zBufferL)
           Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
           Draw.Rect(-1, -1, 2, 2)
         end
         shader:stop()
-        BlendMode.Pop()
-        self.renderer.buffer2:pop()
-      end
+      BlendMode.Pop()
+      self.renderer.buffer2:pop()
     end
+  end
 
     do -- Composite albedo & accumulated light buffer
       local shader = Cache.Shader('worldray', 'light/composite')

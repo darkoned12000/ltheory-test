@@ -228,6 +228,22 @@ Matrix* Matrix_Perspective (float degreesFovy, float aspect, float N, float F) {
   return Matrix_Clone(&result);
 }
 
+/* Orthographic projection. Maps [left,right] x [bottom,top] x [near,far] to clip
+ * NDC [-1,1]^3 with y flipped. Used for shadow maps (point-light frustums) and any
+ * fixed-volume ortho render. */
+Matrix* Matrix_Ortho (float left, float right, float bottom, float top, float nearZ, float farZ) {
+  double rl = right - left;
+  double tb = top - bottom;
+  double nf = nearZ - farZ;
+  Matrix result = {
+    (float)(2.0 / rl), 0, 0, 0,
+    0, (float)(2.0 / tb), 0, 0,
+    0, 0, (float)((farZ + nearZ) / (nearZ - farZ)), -1.0f,
+    -(float)((right + left) / rl), -(float)((top + bottom) / tb), -(float)((farZ + nearZ) / nf), 0,
+  };
+  return Matrix_Clone(&result);
+}
+
 Matrix* Matrix_Product (Matrix const* a, Matrix const* b) {
   Matrix result;
   float* pResult = result.m;
