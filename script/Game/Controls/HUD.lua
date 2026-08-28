@@ -241,8 +241,17 @@ function HUD:controlTurrets (e)
 
   local firing   = ShipBindings.Fire:get() > 0 and 1 or 0
   local camera   = self.gameView.camera
-  local ndc      = Vec3f(self.aimX, self.aimY)
-  local fallback = camera:mouseToRay(1):getPoint(e.socketRangeMin)
+  -- Reticle/turret parity: mouse aims via cursor (turrets along mouseToRay),
+  -- controller has no cursor so aims via stick NDC (turrets along ndcToRay).
+  -- drawReticle() uses the same branch, so the ring == impact point in both
+  -- cases. Keep mouse path unchanged to avoid regressing KBM.
+  local fallback
+  if Input.GetActiveDeviceType() == DeviceType.Mouse then
+    fallback = camera:mouseToRay(1):getPoint(e.socketRangeMin)
+  else
+    local ndc = Vec3f(self.aimX or 0, self.aimY or 0)
+    fallback = camera:ndcToRay(ndc, 1):getPoint(e.socketRangeMin)
+  end
 
   -- Compute a firing solution separately for each turret to support
   -- different projectile velocities & ranges

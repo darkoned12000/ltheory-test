@@ -39,6 +39,29 @@ def run_bytes_tests():
         luajit = 'luajit'
     return subprocess.run([luajit, exe]).returncode
 
+def run_sdl_tests():
+    print('[configure.py] Validating SDL pkg/header/init + input wiring')
+    rc = 0
+    for exe in [os.path.join('tools','validate_sdl.py'),
+                os.path.join('tools','validate_sdl_window.py'),
+                os.path.join('tools','validate_sdl_input.py')]:
+        if os.path.exists(exe):
+            rc |= subprocess.run([VALIDATOR_PY, exe]).returncode
+        else:
+            print(f'[configure.py] No {exe} found - skipping')
+    return rc
+
+def run_hud_tests():
+    print('[configure.py] Validating HUD reticle/turret parity (mouse vs gamepad)')
+    exe = os.path.join('tools','validate_hud_reticle.lua')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_hud_reticle.lua found - skipping')
+        return 0
+    luajit = os.path.join('libphx','ext','bin','linux64','luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    return subprocess.run([luajit, exe]).returncode
+
 def run_tests():
     result = 0
     exe = os.path.join('build', 'test', 'lte_tests')
@@ -57,6 +80,8 @@ def run_tests():
         print('[configure.py] No test executable found - skipping')
     result |= run_shader_tests()
     result |= run_bytes_tests()
+    result |= run_sdl_tests()
+    result |= run_hud_tests()
     return result
 
 def validate_shaders():
