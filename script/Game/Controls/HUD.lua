@@ -179,29 +179,29 @@ function HUD:drawLock (a)
 end
 
 function HUD:drawReticle (a)
-  local cx, cy = self.sx / 2, self.sy / 2
-  do -- Reticle
-    do -- Central Crosshair
-      local c = Color(0.1, 0.5, 1.0, a)
-      local phase = 0.125
-      local r1 = 24
-      local r2 = 28
-      local n = 3
-      for i = 0, n - 1 do
-        local angle = -(Math.Pi2 + (i / n) * Math.Tau)
-        local dx, dy = cos(angle), sin(angle)
-        UI.DrawEx.Line(cx + r1 * dx, cy + r1 * dy, cx + r2 * dx, cy + r2 * dy, c)
-      end
-    end
+  -- Hide the OS cursor during play; the game reticle is the only aim indicator.
+  Input.SetMouseVisible(false)
 
-    if false then -- Aim
-      local c = Color(0.1, 0.5, 1.0, a)
-      local yaw, pitch = ShipBindings.Yaw:get(), ShipBindings.Pitch:get()
-      local x = cx + 0.5 * self.sx * self.aimX
-      local y = cy - 0.5 * self.sy * self.aimY
-      UI.DrawEx.Ring(x, y, 16, c)
-    end
+  local cx, cy = self.sx / 2, self.sy / 2
+  local c = Color(0.1, 0.5, 1.0, a)
+  local x, y
+  -- Design: reticle tracks the aim input. With a mouse the aim point is the
+  -- cursor (and turrets fire along camera:mouseToRay, so the ring == impact
+  -- point on screen). With a controller (no cursor) it tracks the aim stick
+  -- (self.aimX/aimY from the thrust controller).
+  if Input.GetActiveDeviceType() == DeviceType.Mouse then
+    -- The HUD is composited through the supersampled backbuffer, so DrawEx
+    -- pixel space is `ss`x the OS-window pixel space that Input.GetMousePosition
+    -- returns. Scale the cursor into DrawEx space (and into the camera widget's
+    -- screen offset) so the ring sits exactly under the OS cursor == weapon aim.
+    local ss = ({ 1, 2, 4 })[Settings.get('render.superSample')] or 1
+    local w  = self.gameView.camera:windowToScreen(Input.GetMousePosition())
+    x, y = w.x * ss, w.y * ss
+  else
+    x = cx + 0.5 * self.sx * (self.aimX or 0)
+    y = cy - 0.5 * self.sy * (self.aimY or 0)
   end
+  UI.DrawEx.Ring(x, y, 16, c)
 end
 
 function HUD:drawDockPrompt (a)

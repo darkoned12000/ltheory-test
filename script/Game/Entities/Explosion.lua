@@ -1,3 +1,7 @@
+--[[ LEGACY -- superseded by GPUParticles (compute-simulated sprite pool).
+  No spawn sites remain; kept only as reference and for quick rollback.
+  See GPUParticles.explode() for the replacement. ]]
+
 local Entity = require('Game.Entity')
 
 local rng = RNG.Create(50123)

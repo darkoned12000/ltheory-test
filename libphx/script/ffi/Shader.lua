@@ -7,11 +7,14 @@ do -- C Definitions
   ffi.cdef [[
     Shader*      Shader_Create        (cstr vertCode, cstr fragCode);
     Shader*      Shader_Load          (cstr vertName, cstr fragName);
+    Shader*      Shader_LoadCompute   (cstr compName);
     void         Shader_Acquire       (Shader*);
     void         Shader_Free          (Shader*);
     ShaderState* Shader_ToShaderState (Shader*);
     void         Shader_Start         (Shader*);
     void         Shader_Stop          (Shader*);
+    void         Shader_Dispatch      (uint x, uint y, uint z);
+    void         Shader_MemoryBarrier (uint barriers);
     uint         Shader_GetHandle     (Shader*);
     int          Shader_GetVariable   (Shader*, cstr);
     bool         Shader_HasVariable   (Shader*, cstr);
@@ -45,14 +48,36 @@ do -- Global Symbol Table
   Shader = {
     Create        = libphx.Shader_Create,
     Load          = libphx.Shader_Load,
+    LoadCompute   = libphx.Shader_LoadCompute,
     Acquire       = libphx.Shader_Acquire,
     Free          = libphx.Shader_Free,
     ToShaderState = libphx.Shader_ToShaderState,
     Start         = libphx.Shader_Start,
     Stop          = libphx.Shader_Stop,
+    Dispatch      = libphx.Shader_Dispatch,
+    MemoryBarrier = libphx.Shader_MemoryBarrier,
     GetHandle     = libphx.Shader_GetHandle,
     GetVariable   = libphx.Shader_GetVariable,
     HasVariable   = libphx.Shader_HasVariable,
+
+    -- glMemoryBarrier bit masks (mirror GL_*_BARRIER_BIT constants).
+    Barrier = {
+      VertexAttrib      = 0x00000001,
+      ElementArray      = 0x00000002,
+      Uniform           = 0x00000004,
+      TextureFetch      = 0x00000008,
+      ShaderImageAccess = 0x00000020,
+      Command           = 0x00000040,
+      PixelBuffer       = 0x00000080,
+      TextureUpdate     = 0x00000100,
+      BufferUpdate      = 0x00000200,
+      Framebuffer       = 0x00000400,
+      TransformFeedback = 0x00000800,
+      AtomicCounter     = 0x00001000,
+      ShaderStorage     = 0x00002000,
+      QueryBuffer       = 0x00008000,
+      All               = 0xFFFFFFFF,
+    },
     ClearCache    = libphx.Shader_ClearCache,
     SetFloat      = libphx.Shader_SetFloat,
     SetFloat2     = libphx.Shader_SetFloat2,
@@ -92,6 +117,8 @@ do -- Metatype for class instances
       toShaderState = libphx.Shader_ToShaderState,
       start         = libphx.Shader_Start,
       stop          = libphx.Shader_Stop,
+      dispatch      = libphx.Shader_Dispatch,
+      memoryBarrier = libphx.Shader_MemoryBarrier,
       getHandle     = libphx.Shader_GetHandle,
       getVariable   = libphx.Shader_GetVariable,
       hasVariable   = libphx.Shader_HasVariable,

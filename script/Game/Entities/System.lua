@@ -244,7 +244,7 @@ end
 function System:spawnAsteroidField (count, oreCount)
   local rng = self.rng
   local zone = Entities.Zone(format('%s Field', genName(rng)))
-  zone.pos = rng:getDir3():scale(0.0 * kSystemScale * (1 + rng:getExp()))
+  zone.pos = rng:getDir3():scale(kSystemScale * (1.0 + rng:getExp()))
 
   for i = 1, count do
     local pos
@@ -284,6 +284,7 @@ function System:spawnPlanet ()
   planet:setPos(pos)
   planet:setScale(scale)
   self:addChild(planet)
+  return planet
 end
 
 function System:spawnShip ()

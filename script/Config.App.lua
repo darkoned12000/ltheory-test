@@ -47,6 +47,11 @@ Config.gen = {
   shipRes     = 8,
   nebulaRes   = 1024,
 
+  -- Minimum distance to keep the player's ship from a planet center at spawn:
+  -- keeps you just clear of the surface (and out of its "huge in your face" zone)
+  -- so there's room to see and fly around it. Tune freely; default ~1.25x radius.
+  planetViewDist = 250000,
+
   scalePlanet = 2000,
   playerShipSize = 4,
 }
@@ -89,6 +94,18 @@ Config.game = {
 Config.render = {
   fullscreen = false,
   vsync      = true,
+}
+
+-- GPU portability: same binary scales from integrated GPU to RTX. These are the
+-- source-of-truth defaults; Renderer/Application seed runtime Settings from them at
+-- startup (see Renderer.lua), so a weak machine can drop bloom / particle load for
+-- framerate instead of shipping broken on old hardware. Adjust per target HW.
+Config.gpu = {
+  maxParticles     = 131072, -- GPU particle pool capacity (VRAM-bound)
+  computeShadows   = false,  -- shadow-map lighting; no backend yet, kept for parity
+  bloom            = true,   -- expensive post-pass; disable to cut load on weak GPUs
+  sharpen          = true,
+  superSample      = 'High', -- Off / Low / Medium / High (context re-init gated)
 }
 
 Config.ui = {

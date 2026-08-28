@@ -215,7 +215,6 @@ Mesh* Mesh_FromObj (cstr bytes) {
   Mesh* mesh = Mesh_Create();
   int32 vertexCount = 0;
   int32 indexCount  = 0;
-  int32 faceCount   = 0;
 
   ArrayList(Vec3f, positions); ArrayList_Init(positions);
   ArrayList(Vec2f, uvs);       ArrayList_Init(uvs);
@@ -361,12 +360,10 @@ Mesh* Mesh_FromObj (cstr bytes) {
       }
 
       if (vertexIndicesCount == 3) {
-        faceCount  += 1;
         indexCount += vertexIndicesCount;
         Mesh_AddTri(mesh, vertexCount - 3, vertexCount - 2, vertexCount - 1);
       }
       else if (vertexIndicesCount == 4) {
-        faceCount  += 2;
         indexCount += vertexIndicesCount;
         Mesh_AddQuad(mesh, vertexCount - 4, vertexCount - 3, vertexCount - 2, vertexCount - 1);
       }

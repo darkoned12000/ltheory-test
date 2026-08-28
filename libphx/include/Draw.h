@@ -30,6 +30,14 @@ PHX_API void  Draw_Quad          (Vec2f const* p1, Vec2f const* p2, Vec2f const*
 PHX_API void  Draw_Rect          (float x, float y, float sx, float sy);
 PHX_API void  Draw_Tri           (Vec2f const* p1, Vec2f const* p2, Vec2f const* p3);
 
+/* --- Instanced API ---------------------------------------------------------- */
+
+/* Raw instanced draw for SSBO-driven geometry (GPU particles etc.): no
+ * attributes are bound; the active vertex shader sources everything from
+ * gl_VertexID / gl_InstanceID and its own buffer bindings. `mode` is a raw
+ * GL primitive enum (GL_TRIANGLES = 4). */
+PHX_API void  Draw_DrawArraysInstanced (int mode, int first, int count, int primcount);
+
 /* --- 3D API --------------------------------------------------------------- */
 
 PHX_API void  Draw_Axes          (Vec3f const* pos,

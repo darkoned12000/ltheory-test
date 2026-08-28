@@ -1,7 +1,12 @@
 #!/usr/bin/env python
 import os, re, sys, shutil, subprocess
 
-# Helper for test harness
+# The offline shader validator needs moderngl (headless llvmpipe/EGL), which is
+# installed under the 3.13 interpreter on this host — not the system python3.
+# configure.py uses sys.executable for the CMake build/run steps (fine there) but
+# pins python3.13 explicitly for the validator so it fails fast at *any* entry
+# point rather than mid-game with "No module named 'moderngl'".
+VALIDATOR_PY = os.environ.get('PHX_VALIDATOR_PY', 'python3.13')
 
 def current_glsl_version():
     # Parse the version the engine actually compiles with (single source of truth).
@@ -20,7 +25,7 @@ def run_shader_tests():
     if not os.path.exists(exe):
         print('[configure.py] No tools/validate_glsl.py found - skipping')
         return 0
-    return subprocess.run([sys.executable, exe, current_glsl_version()]).returncode
+    return subprocess.run([VALIDATOR_PY, exe, current_glsl_version()]).returncode
 
 def run_tests():
     result = 0
@@ -38,6 +43,22 @@ def run_tests():
     result |= run_shader_tests()
     return result
 
+def validate_shaders():
+    """Hard pre-flight gate: fail the build/run if any shader won't compile+link.
+
+    Runs BEFORE producing anything so a broken .glsl never reaches runtime (where
+    it would abort with no context). Returns 0 on success, non-zero on failure."""
+    exe = os.path.join('tools', 'validate_glsl.py')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_glsl.py found - skipping gate')
+        return 0
+    rc = subprocess.run([VALIDATOR_PY, exe, current_glsl_version()]).returncode
+    if rc == 0:
+        print('[configure.py] shader validation OK (offline compile+link)')
+    else:
+        print('[configure.py] FATAL: shader validation failed - refusing to build/run.', file=sys.stderr)
+    return rc
+
 # Main entry point
 
 def main():
@@ -47,11 +68,18 @@ def main():
         pass
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
-        if cmd == 'build':
-            subprocess.call(['cmake', '--build', './build', '--config', 'RelWithDebInfo'])
-        elif cmd == 'clean':
+        if cmd == 'clean':
             shutil.rmtree('bin', ignore_errors=True)
             shutil.rmtree('build', ignore_errors=True)
+            return 0
+
+        # Pre-flight gate for every command except clean. A failing validation is
+        # fatal here so the user never ships a binary that crashes at first draw.
+        if validate_shaders() != 0:
+            sys.exit(1)
+
+        if cmd == 'build':
+            subprocess.call(['cmake', '--build', './build', '--config', 'RelWithDebInfo'])
         elif cmd == 'run':
             exe = 'bin/lt64.exe' if os.name == 'nt' else 'bin/lt64r'
             subprocess.call([exe] + sys.argv[2:])
@@ -61,6 +89,8 @@ def main():
             subprocess.call(['cmake', '-S', './', '-B', './build'])
     else:
         # Default build
+        if validate_shaders() != 0:
+            sys.exit(1)
         subprocess.call(['cmake', '-S', './', '-B', './build'])
 
 if __name__ == '__main__':

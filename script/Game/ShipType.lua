@@ -30,7 +30,10 @@ local ShipType = class(function (self, seed, generator, scale)
   end
 
   for i = 1, Config.gen.nThrusters do
-    local p = Gen.GenUtil.FindMountPoint(self.mesh, self.bsp, rng, Vec3f(0, 0, -1), Vec3f(0, 0, -1), 1000)
+    -- Ships fly along -Z (Entity forward); rear-facing hull surfaces point
+    -- +Z. Searching -Z normals mounted engines on the NOSE, so their plumes
+    -- fired straight through the hull.
+    local p = Gen.GenUtil.FindMountPoint(self.mesh, self.bsp, rng, Vec3f(0, 0, 1), Vec3f(0, 0, 1), 1000)
     if p then
       insert(self.sockets[LTheory_SocketType.Thruster], p * Vec3f( 1, 1, 1))
       insert(self.sockets[LTheory_SocketType.Thruster], p * Vec3f(-1, 1, 1))

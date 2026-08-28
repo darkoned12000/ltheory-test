@@ -88,6 +88,7 @@
   OPAQUE_T Directory;
   OPAQUE_T File;
   OPAQUE_T Font;
+  OPAQUE_T GPUBuffer;
   OPAQUE_T HashGrid;
   OPAQUE_T HashGridElem;
   OPAQUE_T HashMap;

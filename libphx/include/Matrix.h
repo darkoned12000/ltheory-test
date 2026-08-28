@@ -51,6 +51,7 @@ PHX_API Matrix*  Matrix_Identity            ();
 PHX_API Matrix*  Matrix_LookAt              (Vec3f const* pos, Vec3f const* at, Vec3f const* up);
 PHX_API Matrix*  Matrix_LookUp              (Vec3f const* pos, Vec3f const* look, Vec3f const* up);
 PHX_API Matrix*  Matrix_Perspective         (float degreesFovY, float aspect, float zNear, float zFar);
+PHX_API Matrix*  Matrix_Ortho               (float left, float right, float bottom, float top, float nearZ, float farZ);
 PHX_API Matrix*  Matrix_RotationX           (float rads);
 PHX_API Matrix*  Matrix_RotationY           (float rads);
 PHX_API Matrix*  Matrix_RotationZ           (float rads);

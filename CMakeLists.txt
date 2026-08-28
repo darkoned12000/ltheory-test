@@ -3,9 +3,14 @@ project (LTheory)
 set (CMAKE_BUILD_TYPE Release)
 include (libphx/script/build/Shared.cmake)
 add_subdirectory(libphx)
-# removed test executable from root CMakeLists; add subdirectory after libphx
-#add_subdirectory(test)
-# nothing – test target is built in its own folder, no need to set properties here
+
+# The offline shader validator needs moderngl, which lives under the 3.13
+# interpreter on this host; pin it unless PHX_VALIDATOR_PY points elsewhere.
+find_package (Python3 COMPONENTS Interpreter QUIET)
+if (NOT Python3_EXECUTABLE AND NOT PHX_VALIDATOR_PY)
+  execute_process (COMMAND bash "-c" "command -v python3.13 || echo /usr/bin/python3" OUTPUT_VARIABLE _py OUTPUT_STRIP_TRAILING_WHITESPACE)
+  set (PHX_VALIDATOR_PY "${_py}" CACHE STRING "" FORCE)
+endif ()
 
 add_executable (lt "src/Main.cpp")
 phx_configure_output_dir (lt)
@@ -13,6 +18,18 @@ phx_configure_target_properties (lt)
 
 target_compile_definitions (lt PRIVATE DEBUG=0)
 target_link_libraries (lt phx)
+
+# --- Build-time shader validation gate --------------------------------------
+# The offline validator compiles+links every shader headlessly (moderngl/EGL).
+# Runs after `lt` is built so a broken .glsl fails the build now instead of
+# aborting at first draw at runtime. Failures make `cmake --build` return non-zero.
+add_custom_target (phx_validate_glsl
+  COMMAND "${PHX_VALIDATOR_PY}" tools/validate_glsl.py 460
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating GLSL shaders (offline compile+link)"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_glsl)
 
 set_target_properties (lt PROPERTIES
   OUTPUT_NAME_DEBUG "lt${ARCH}d"

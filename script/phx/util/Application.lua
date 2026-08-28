@@ -180,6 +180,15 @@ function Application:run ()
       end
     end
 
+    do -- Shader error overlay (item 4: make a broken pass visible, not a silent black screen)
+      if Cache.lastError then
+        local e = Cache.lastError
+        font:draw('SHADER FAILED TO COMPILE', 10, self.resY - 5, 1, 1, 1, 1)
+        font:draw(e.key, 10, self.resY - 23, 1, 0.85, 0.7, 0.55, 1)
+        font:draw('fix the .glsl or reload (F5)', 10, self.resY - 41, 1, 0.6, 0.6, 0.6, 1)
+      end
+    end
+
     do -- End Draw
       Profiler.SetValue('gcmem', GC.GetMemory())
       Profiler.Begin('App.SwapBuffers')

@@ -18,9 +18,9 @@ vec3 decodeNormal(vec2 n) {
   return vec3(scth.y * scphi.x, scth.x * scphi.x, scphi.y);
 }
 
-out vec4 fragData0;
-out vec4 fragData1;
-out vec4 fragData2;
+layout(location = 0) out vec4 fragData0;
+layout(location = 1) out vec4 fragData1;
+layout(location = 2) out vec4 fragData2;
 
 void setAlbedo(vec3 a) {
   fragData0.xyz = a;

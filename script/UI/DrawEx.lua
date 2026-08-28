@@ -35,6 +35,7 @@ end
 function DrawEx.Hex (x, y, r, c)
   local x, y, sx, sy = padAndCenter(padRing, x, y, r, r)
   local shader = Cache.Shader('ui', 'ui/hex')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   BlendMode.PushAdditive()
   shader:start()
@@ -52,6 +53,7 @@ function DrawEx.Hologram (mesh, x, y, sx, sy, color, radius, yaw, pitch)
   local mView = Matrix.ViewLookAt(eye, center, Vec3f(0, 1, 0))
   local mProj = Matrix.Perspective(70, sx / sy, 0.1, 1e6)
   local shader = Cache.Shader('ui3D', 'ui/hologram')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   BlendMode.PushAdditive()
   shader:start()
@@ -72,6 +74,7 @@ function DrawEx.Icon (icon, x, y, sx, sy, color)
   print(icon)
   local x, y, sx, sy = padAndCenter(0, x, y, sx, sy)
   local shader = Cache.Shader('ui', 'ui/icon')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   BlendMode.PushAdditive()
   shader:start()
@@ -90,6 +93,7 @@ function DrawEx.Line (x1, y1, x2, y2, color)
   local sx = xMax - xMin
   local sy = yMax - yMin
   local shader = Cache.Shader('ui', 'ui/line')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   BlendMode.PushAdditive()
   shader:start()
@@ -109,6 +113,7 @@ function DrawEx.Panel (x, y, sx, sy, color, innerAlpha)
   local alpha = alphaStack:last() or 1
   local x, y, sx, sy = padOffCenter(padPanel, x, y, sx, sy)
   local shader = Cache.Shader('ui', 'ui/panel')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   BlendMode.PushAlpha()
   shader:start()
     Shader.SetFloat('padding', padPanel)
@@ -123,6 +128,7 @@ end
 function DrawEx.PanelGlow (x, y, sx, sy, color)
   local x, y, sx, sy = padOffCenter(padPanel, x, y, sx, sy)
   local shader = Cache.Shader('ui', 'ui/panelglow')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   BlendMode.PushAdditive()
   shader:start()
@@ -138,6 +144,7 @@ function DrawEx.Point (x, y, r, color)
   local x, y, sx, sy = padAndCenter(padPoint, x, y, r, r)
   BlendMode.PushAdditive()
   local shader = Cache.Shader('ui', 'ui/circle')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   shader:start()
     Shader.SetFloat2('size', sx, sy)
@@ -165,6 +172,7 @@ end
 function DrawEx.Rect (x, y, sx, sy, color)
   local x, y, sx, sy = padOffCenter(padBox, x, y, sx, sy)
   local shader = Cache.Shader('ui', 'ui/box')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   BlendMode.PushAdditive()
   shader:start()
@@ -188,6 +196,7 @@ end
 function DrawEx.Ring (x, y, r, c)
   local x, y, sx, sy = padAndCenter(padRing, x, y, r, r)
   local shader = Cache.Shader('ui', 'ui/ring')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   BlendMode.PushAdditive()
   shader:start()
@@ -205,6 +214,7 @@ function DrawEx.Tri (x1, y1, x2, y2, x3, y3, color)
   local xMax = max(x1, max(x2, x3)) + padTri
   local yMax = max(y1, max(y2, y3)) + padTri
   local shader = Cache.Shader('ui', 'ui/triangle')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   BlendMode.PushAdditive()
   shader:start()
@@ -224,6 +234,7 @@ end
 function DrawEx.Wedge (x, y, r1, r2, to, tw, c, a)
   local x, y, sx, sy = padAndCenter(padWedge, x, y, 2.0 * r2, 2.0 * r2)
   local shader = Cache.Shader('ui', 'ui/wedge')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   BlendMode.PushAdditive()
   shader:start()
@@ -244,6 +255,7 @@ local function drawText (font, text, size, x, y, sx, sy, cr, cg, cb, ca, alignX,
   local font = Cache.Font(font, size)
   local bound = font:getSize(text)
   local shader = Cache.Shader('ui', 'ui/text')
+  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
   shader:start()
     Shader.SetFloat4('color', cr, cg, cb, ca * alpha)
