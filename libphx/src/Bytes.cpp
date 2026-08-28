@@ -71,20 +71,20 @@ Bytes* Bytes_Compress (Bytes* bytes) {
   if (inputLen > LZ4_MAX_INPUT_SIZE || inputLen > (UINT32_MAX - headerLen))
     Fatal("Bytes_Compress: Input is too large to compress.");
 
-  uint32 bufferLen = inputLen + headerLen;
+  int maxCompressed = LZ4_compressBound((int)inputLen);
+  if (maxCompressed <= 0)
+    Fatal("Bytes_Compress: LZ4_compressBound failed for input size %u", inputLen);
+
+  uint32 bufferLen = headerLen + (uint32)maxCompressed;
   char* buffer = MemNewArray(char, bufferLen);
   *(uint32*)buffer = header;
 
-  /* @NOTE: I'm not bothering to use LZ4_compressBound to reduce the size of the
-   * temp allocation. Due to the copy below, we're going to immediately throw the
-   * memory away, so why waste time calculating how much space is needed? */
-
-  uint32 resultLen = LZ4_compress_default(input, buffer + headerLen, inputLen, bufferLen - headerLen);
-  if (resultLen == 0)
-    Fatal("Bytes_Compress: LZ4 failed to compress.");
+  int resultLen = LZ4_compress_default(input, buffer + headerLen, (int)inputLen, maxCompressed);
+  if (resultLen <= 0)
+    Fatal("Bytes_Compress: LZ4 failed to compress (result %d).", resultLen);
 
   /* @OPTIMIZE: This is an entire buffer copy that could be avoided. */
-  Bytes* result = Bytes_FromData(buffer, resultLen + headerLen);
+  Bytes* result = Bytes_FromData(buffer, (uint32)resultLen + headerLen);
   MemFree(buffer);
   return result;
 }
@@ -94,22 +94,23 @@ Bytes* Bytes_Decompress (Bytes* bytes) {
 
   char* input = (char*)Bytes_GetData(bytes);
   uint32 inputLen = Bytes_GetSize(bytes);
-
-  uint32 header = *((uint32*)input);
-  uint32 headerLen = sizeof(header);
-  uint32 bufferLen = header;
-  char* buffer = MemNewArray(char, bufferLen);
+  uint32 headerLen = sizeof(uint32);
 
   if (inputLen < headerLen)
     Fatal("Bytes_Decompress: Input is smaller than the header size. Data is likely corrupted.");
 
-  int32 resultLen = LZ4_decompress_fast(input + headerLen, buffer, bufferLen);
+  uint32 header = *((uint32*)input);
+  uint32 bufferLen = header;
+  char* buffer = MemNewArray(char, bufferLen);
+
+  int32 compressedSize = (int32)(inputLen - headerLen);
+  int32 resultLen = LZ4_decompress_safe(input + headerLen, buffer, compressedSize, (int32)bufferLen);
   if (resultLen < 0)
     Fatal("Bytes_Decompress: LZ4 failed with return value: %i", resultLen);
 
-  if (resultLen + headerLen != inputLen)
+  if ((uint32)resultLen != bufferLen)
     Fatal("Bytes_Decompress: Decompressed length does not match expected result."
-          "Expected: %u, Actual: %u", inputLen - headerLen, resultLen);
+          "Expected: %u, Actual: %i", bufferLen, resultLen);
 
   /* @OPTIMIZE: This is an entire buffer copy that could be avoided. */
   Bytes* result = Bytes_FromData(buffer, bufferLen);

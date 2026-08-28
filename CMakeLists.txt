@@ -31,6 +31,19 @@ add_custom_target (phx_validate_glsl
 
 add_dependencies (lt phx_validate_glsl)
 
+# --- Build-time Bytes LZ4 validation gate -----------------------------------
+# Offline round-trip for Bytes_Compress/Decompress (libphx/src/Bytes.cpp).
+# Uses the vendored/bundled LuaJIT (libphx/ext/bin/linux64/luajit, now OpenResty
+# rolling) so it works without a system luajit. Fails the build if the
+# safe-decompress (LZ4_decompress_safe + compressBound) framing regresses.
+add_custom_target (phx_validate_bytes
+  COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_bytes.lua
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating Bytes LZ4 round-trip (safe decompress)"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_bytes)
+
 set_target_properties (lt PROPERTIES
   OUTPUT_NAME_DEBUG "lt${ARCH}d"
   OUTPUT_NAME_RELEASE "lt${ARCH}r"

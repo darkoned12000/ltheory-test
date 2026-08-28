@@ -27,12 +27,27 @@ def run_shader_tests():
         return 0
     return subprocess.run([VALIDATOR_PY, exe, current_glsl_version()]).returncode
 
+def run_bytes_tests():
+    print('[configure.py] Validating Bytes LZ4 round-trip (safe decompress)')
+    exe = os.path.join('tools', 'validate_bytes.lua')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_bytes.lua found - skipping')
+        return 0
+    # Prefer the vendored LuaJIT (now OpenResty rolling) for reproducibility
+    luajit = os.path.join('libphx', 'ext', 'bin', 'linux64', 'luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    return subprocess.run([luajit, exe]).returncode
+
 def run_tests():
     result = 0
     exe = os.path.join('build', 'test', 'lte_tests')
     env = dict(os.environ)
     if sys.platform != 'win32':
-        paths = [os.path.join(os.getcwd(), 'bin'), os.path.join(os.getcwd(), 'extbin', 'linux64')]
+        # libphx has $ORIGIN RPATH (bin/libphx64r.so) so no LD_LIBRARY_PATH needed
+        # at runtime; bin/ is kept for the legacy test harness. extbin/linux64 was
+        # a stale FMOD/Bullet carrier (deleted 2026-08-28) — no longer emitted.
+        paths = [os.path.join(os.getcwd(), 'bin')]
         existing = env.get('LD_LIBRARY_PATH', '')
         env['LD_LIBRARY_PATH'] = os.pathsep.join(paths + existing.split(os.pathsep) if existing else paths)
     print('[configure.py] Running LTE core unit tests')
@@ -41,6 +56,7 @@ def run_tests():
     else:
         print('[configure.py] No test executable found - skipping')
     result |= run_shader_tests()
+    result |= run_bytes_tests()
     return result
 
 def validate_shaders():
