@@ -44,6 +44,43 @@ add_custom_target (phx_validate_bytes
 
 add_dependencies (lt phx_validate_bytes)
 
+# --- Build-time SDL validation gates ---------------------------------------
+# Offline pkg/header/init + hidden-window probe for the SDL2->SDL3 upgrade.
+# validate_sdl.py checks pkg-config 2.32.70/3.4.14 + SDL_Init(SDL_INIT_VIDEO)
+# with dummy video + GL 4.6 attrs; validate_sdl_window.py probes hidden
+# window+ctx (skips headless CI). Fail the build if SDL wiring regresses.
+add_custom_target (phx_validate_sdl
+  COMMAND "${PHX_VALIDATOR_PY}" tools/validate_sdl.py
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating SDL pkg/header/init (dummy video)"
+  VERBATIM)
+
+add_custom_target (phx_validate_sdl_window
+  COMMAND "${PHX_VALIDATOR_PY}" tools/validate_sdl_window.py
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating SDL hidden window + GL context"
+  VERBATIM)
+
+add_custom_target (phx_validate_sdl_input
+  COMMAND "${PHX_VALIDATOR_PY}" tools/validate_sdl_input.py
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating SDL GameController/Gamepad wiring"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_sdl phx_validate_sdl_window phx_validate_sdl_input)
+
+# --- Build-time HUD reticle parity gate ------------------------------------
+# Ensures HUD:drawReticle and HUD:controlTurrets agree per device so the
+# blue ring == pulse laser impact for both mouse and Xbox pad. Guards the fix
+# in script/Game/Controls/HUD.lua:234 (mouseToRay vs ndcToRay).
+add_custom_target (phx_validate_hud
+  COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_hud_reticle.lua
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating HUD reticle/turret parity (mouse vs gamepad)"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_hud)
+
 set_target_properties (lt PROPERTIES
   OUTPUT_NAME_DEBUG "lt${ARCH}d"
   OUTPUT_NAME_RELEASE "lt${ARCH}r"

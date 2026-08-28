@@ -188,6 +188,25 @@ void Input_Init () {
 
   Device device = { DeviceType_Mouse, 0 };
   Input_SetActiveDevice(device);
+
+  // Enumerate already-connected gamepads at startup (SDL sends ADDED for
+  // hotplug only after Init; a pad plugged before launch would otherwise
+  // never open). Mirrors the CONTROLLERDEVICEADDED handler below.
+  int numJoys = SDL_NumJoysticks();
+  for (int i = 0; i < numJoys; ++i) {
+    if (SDL_IsGameController(i) == SDL_TRUE) {
+      SDL_GameController* ctrl = SDL_GameControllerOpen(i);
+      if (!ctrl) {
+        Warn("Input_Init: SDL_GameControllerOpen(%d) failed: %s", i, SDL_GetError());
+        continue;
+      }
+      SDL_Joystick* joy = SDL_GameControllerGetJoystick(ctrl);
+      uint32 id = (uint32) SDL_JoystickInstanceID(joy);
+      Device dev = { DeviceType_Gamepad, id };
+      DeviceState* st = Input_EnsureDeviceState(dev);
+      st->isConnected = true;
+    }
+  }
 }
 
 void Input_Free () {
