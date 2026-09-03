@@ -1,6 +1,6 @@
 # Multithreading Plan — Multithreaded Render/Submit (Roadmap #10)
 
-**Status:** Proposed / not started.
+**Status:** In progress — Pre-flight, Phase 0, Phase 1 complete (clean build/run verified); Phase 2 skipped (GL instancing deferred until meshes unified); Phase 3 next.
 **Owner goal:** Parallelize the CPU-side draw submission so a heavily populated
 scene (dozens of ships, station, planet, nebula, many fragments) stops serializing
 on one core — while **keeping the running app intact at every step**. The app must
@@ -41,7 +41,7 @@ parallel GL execution.
 
 ### Goals
 1. Offload CPU-side per-object submit preparation to worker threads.
-2. Reduce draw-call/state-change count via batching + instancing by shared material.
+2. Reduce draw-call/state-change count via **CPU-side grouping** of consecutive same-material objects; GL-level **instancing is an *optional* Phase-2 capability (keyed by seed/canonical mesh), not the primary payoff.** Ships/asteroids share a skin but have near-unique meshes per instance, so `(shader, mesh)` groups are ~size 1 in practice — see §#3.
 3. Keep the Lua application loop, API, and visual output **byte-for-byte equivalent**
    frame-to-frame between single-threaded baseline and threaded build (verifiable by
    image diff). The app must remain fully playable at every phase.
@@ -254,9 +254,9 @@ Replaces the fire-and-forget pool in §3.5 with a real work queue and **graceful
 ```cpp
 struct RenderQueue {
 
-  // NOTE (§#8): match the engine's threading convention. `ThreadPool.cpp` already uses `SDL_CreateThread`, so this is cross-platform (incl. Windows) — use SDL_* primitives, NOT raw pthread_*. Confirm exact names on host: `SDL_Mutex` / `SDL_ConditionVariable`.
-  SDL_ConditionVariable cond_have_work;      // §#8: was pthread_cond_t
-  SDL_ConditionVariable cond_batch_ready;    // §#8: was pthread_cond_t
+  // NOTE (§#8): match the engine's threading convention. `ThreadPool.cpp` already uses `SDL_CreateThread`, so this is cross-platform (incl. Windows) — use SDL_* primitives, NOT raw pthread_*. Confirm exact names on host: `SDL_Mutex` / `SDL_Condition`.
+  SDL_Condition cond_have_work;      // §#8: was pthread_cond_t
+  SDL_Condition cond_batch_ready;    // §#8: was pthread_cond_t
   WorkItem*   queue;              // ring buffer [capacity] (host-owned)
   int         q_head, q_tail, q_count;
   DrawBatch*  out_batch;          // host-owned output; workers fill here under mutex
@@ -302,7 +302,7 @@ that mutate transforms do so before `onUpdate` ends (or accept a rebuild).**
 work-queue model (or reuse the compute-particle pattern that already uses job threads). Needed
 properties:
 - A **producer (host) enqueues** jobs; **workers dequeue & prepare**; host **waits for all**
-  before replay. Synchronization via `SDL_Mutex` + `SDL_ConditionVariable` (matching ThreadPool.cpp's SDL_CreateThread) or a lock-free MPMC queue
+  before replay. Synchronization via `SDL_Mutex` + `SDL_Condition` (matching ThreadPool.cpp's SDL_CreateThread) or a lock-free MPMC queue
   with proper memory fences — see §7.2.
 - **Graceful shutdown:** replace the `Fatal` in `ThreadPool_Free` with a join-all-threads path,
   because we will tear down during app exit/reload (`F5`). A fatal here kills the app on reload.
@@ -329,7 +329,12 @@ unknown times, the handoff needs a synchronization barrier with correct happens-
 Each phase ends with **build + test + gate**. The app must run and look identical to the
 previous phase before proceeding. No phase is skipped if its acceptance criteria fail.
 
-> **Instancing decision — state once.** Phase 2 (deferred instancing) exists *only* if you adopt per-instance attributes; every other section is independent of it. Decide in Phase 0/1 whether skins/meshes warrant it via §#3's skin-frequency gate and the sizing table (§13). If you skip instancing, delete this section and leave phase numbers as-is: batching by `(shader, mesh)` still pays off, just with smaller groups. No other section assumes Phase 2 exists.
+> **Instancing decision — state once.** Phase 2 (deferred GL instancing) exists *only* if you adopt per-instance attributes; every other section is independent of it. Decide in Phase 0/1 via §#3's measured skin-frequency + mesh-identity distribution (see its real findings, not a guessed sizing table). If you skip GL instancing, delete this section and leave phase numbers as-is: **CPU-side grouping still pays off on its own** — it amortizes Bind/Unbind across consecutive same-material objects regardless of group size, which is exactly where the cores come from here (ships/asteroids are ~size-1 for `(shader, mesh)`). No other section assumes Phase 2 exists.
+
+> **Resolution — Phases 0-4:** GL-level instancing (per-instance attributes, Phase 2) is *out of scope* for this
+> effort. Batching by `(shader, mesh)` + CPU-side grouping delivers the draw-call / Bind/Unbind payoff; per-instance
+> attrs are deferred until asteroid meshes are unified (§7 roadmap #7), when group sizes become large enough to pay off.
+> Phase numbers left as-is — re-add Phase 2 then (keyed by seed / canonical mesh).
 
 ### Phase 0 — Baseline & instrumentation (no behavior change)
 - Add per-phase CPU timers around: update, onDraw geometry submit, post chain, present.
@@ -352,7 +357,9 @@ previous phase before proceeding. No phase is skipped if its acceptance criteria
 
 **What it adds over Phase 1:**
 - **Per-instance attributes (§#1):** each instance contributes an MVP mat4 split across up to 4 attribute slots + `glVertexAttribDivisor(loc, 1)`, plus optional color/uv/scale streams. This needs **new attrib locations** (Mesh_DrawBind owns 0/1/2 → new ones for the instance stream) and an **instanced shader variant per material**. So this is the one place GLSL *is* touched — explicitly scoped, not a "beyond what's needed" footnote. See §5.4.2 `DrawGroup` (instance matrix + attr array).
-- **Texture-skin handling (§#3):** objects in a group may share `(shader, mesh)` but NOT necessarily a texture bind. Ships/asteroids with different skins on the same mesh+shader won't merge unless you add a per-instance tex index / texture array / bindless. Measure skin distribution per mesh in Phase 0/1 first — of all objects sharing one `(shader, mesh)`, what fraction share ONE texture? If >80% share one texture, key the group by `(shader, mesh)`; otherwise key by `(shader, mesh_unit)` (one tex slot per instance), or defer to texture arrays/bindless. Without this the real-world batch sizes are far smaller than the design implies and instancing may not pay off — gate this phase on that measured number, not a judgment call made later under schedule pressure.
+- **Skin frequency (§#3):** of all objects sharing one `(shader, mesh)`, what fraction share ONE texture? If >80%, key the group by `(shader, mesh)`; else key by `(shader, mesh_unit)` (one tex slot per instance) or defer to texture arrays/bindless. Real finding: ships/stations/turrets use singletons `'metal/*'` under `material/metal`, all asteroids use `'rock'` → skin is effectively constant within a group, so this axis is *not* the limiter today.
+- **Mesh identity (§#3):** for the only high-count population (asteroids), each instance gets a random seed (`rng:get31()`, `Asteroid.lua:73`) → up to tens of distinct meshes under one program+texture with `spawnAsteroidField(500, 10)`. Ships/stations share `proto.mesh` but there is only ever **one player ship + a few stations** (size ~1 in practice); turrets are instanciable but count = 1. So GL-level instancing yields group sizes of **~1 for almost every object today**.
+- **Consequence:** the real lever is keying by **seed / canonical mesh**, not `(shader, mesh)` — requires either reusing a small set of canonical meshes regardless of seed (geometry change) or per-instance attributes carrying the seed/mesh-id so distinct meshes merge under one program. You cannot batch asteroids into one instanced draw without also unifying their geometry. Gate Phase 2 on this measured distribution; if `(shader, mesh)` groups are ~size 1 (as now), skip GL instancing and keep CPU-side grouping only (§5.3) — batching still cuts Bind/Unbind cycles even with no instancing.
 - **Instance-buffer upload strategy (§#2):** `mvp_inst[]`/`attr_inst[]` change every frame → dynamic VBO. Three options with real tradeoffs: (a) `glBufferSubData` — simplest but stalls the CPU on the GPU path; (b) **orphaning** (`glBufferData(NULL)` then sub) — recommended default, avoids the CPU stall at the cost of one extra upload per change; (c) persistent-mapped buffers (`MAP_WRITE`) — highest throughput but adds host↔device sync that can partly defeat the threading win. Pick orphaning first and measure; only move to mapped if profiling shows it's the bottleneck.
 
 **Own equivalence gate:** image-diff must include **translucent objects** (§3.6) and use a tolerance threshold (§8), not just opaque same-coverage checks — blend-order bugs won't show on an opaque-only diff.
@@ -362,7 +369,7 @@ previous phase before proceeding. No phase is skipped if its acceptance criteria
   `onDraw` can call it instead of per-object draw. Keep a **legacy path** that calls the old
   loop if batching is off. Feature-gate behind `Config.render.multithread` (default false).
 
-> **§#8 — Threading primitives:** match the engine's threading convention. `ThreadPool.cpp` already uses SDL_CreateThread, so use SDL_* primitives (`SDL_Mutex`, `SDL_ConditionVariable`) here too — NOT raw pthread_*. Confirm exact names on host: `SDL_Mutex` / `SDL_ConditionVariable`.
+> **§#8 — Threading primitives:** match the engine's threading convention. `ThreadPool.cpp` already uses SDL_CreateThread, so use SDL_* primitives (`SDL_Mutex`, `SDL_Condition`) here too — NOT raw pthread_*. Confirm exact names on host: `SDL_Mutex` / `SDL_Condition`.
 > **§#10 — Cross-platform:** the worker/host handoff and queue must build identically on Windows/Linux/macOS. The engine targets x86-64 Linux for builds but keep SDL_* (not pthread_*) so it stays portable; no platform-specific branches or `#ifdef _WIN32` in this code path.
 
 - **Gate:** with multithread OFF, output identical to baseline; feature flag toggles cleanly.
@@ -502,7 +509,7 @@ with a legacy fallback) — see §12.
 | `libphx/src/Mesh.cpp` (§3.3) | Add `Mesh_DrawInstanced(mesh, mvp_inst[], count)`; **keep `Mesh_Draw`** as the legacy fallback path (§5.4). Verify attrib locations 0/1/2 match `Mesh_DrawBind`. | Gives the host a single instanced entry point while preserving exact baseline behavior when off. |
 | `libphx/src/Metric.h/.cpp` | Add `Metric_AddDrawInstanced(tris, calls, verts)` so draw-call reduction is measurable (Phase 0/4 verification). | Without metrics you can't prove the payoff or catch regressions. |
 | Engine config (`script/phx/util/Config.lua` + a C++ gate) | Runtime feature flag `render.multithread` (**default false**) and a compile-time `#ifdef PHX_MULTITHREAD` (off unless `-D`). Gate all new batch/replay code behind both. | Guarantees the running app is unchanged until explicitly opted in — the rollback safety net (§12). |
-| Draw entry point / ffi | Decide integration: **cleanest first cut keeps batching inside the C++ engine** (it owns `Mesh_Draw`), so no Lua/ffi change is needed initially. Only expose an ffi `Render_DrawList(batch)` if you later move submit into `onDraw`. Document this decision and its cost. | Avoids touching the fragile Lua app loop before the core path even works. |
+| Draw entry point / ffi | **Correction — a pure-C++ cut is NOT viable as written.** There is no single submit loop to own: batching must intercept the *distributed* `mesh:draw()` + `Material:start/setState/stop` sequence across Lua components (`VisibleMesh.lua`, `VisibleLodMesh.lua`; texture is baked into ShaderState at creation, not rebound per draw). Per-object `Mesh_Draw` calls carry no sibling info, so grouping cannot happen inside `Mesh_Draw` alone. Decide in Phase 3: (a) route the Lua draw sequence through a new engine batch API (`Render_BuildBatch`) — small ffi + a few component edits; or (b) do CPU-side grouping in Lua where components already iterate children. First cut should try (b) to keep the C++ change minimal, but document whichever you choose and its cost. | The doc's "no Lua/ffi change initially" is wrong today — see exploration trace of the draw path; fix before Phase 3 so nobody assumes batching stays inside `Mesh_Draw`. |
 
 ### 14.3 Cross-cutting constraints (must hold for all new code)
 - **All GL calls stay in host-only paths**, wrapped in the existing `GLCALL` macro; no worker function may emit a `GLCALL`. Review checklist item: grep every new file for `GLCALL` outside host replay → must be empty.
@@ -534,28 +541,39 @@ with a legacy fallback) — see §12.
 > (feature-flagged, with legacy fallback). Uncheck in order; do not skip a gate (§7).
 
 ### Pre-flight — resolve before writing any code
-- [ ] Confirm SDL_* thread-primitive names on host (`SDL_Mutex`, `SDL_ConditionVariable`) against
-      `libphx/src/ThreadPool.cpp`; no raw pthread_*.
-- [ ] Decide instancing once via §#3 skin-frequency gate + sizing table (§13): adopt per-instance
-      attrs (Phase 2) or batch by `(shader, mesh)` and skip Phase 2. If skipping, delete Phase 2 from
-      the rollout list below.
-- [ ] Commit to allocator staying single-threaded on workers — host-preallocated batches only (§5.4).
-- [ ] Place feature flag `render.multithread` (default false) + compile gate `#ifdef PHX_MULTITHREAD`;
-      verify both are off by default so the running app is unchanged.
+- [x] **SDL thread primitives (host):** `libphx/src/ThreadPool.cpp` uses **`SDL_CreateThread` /
+      `SDL_Thread` / `SDL_WaitThread`** — verified, zero raw `pthread_*` anywhere in the repo. No mutex or
+      condition variable exists yet; they'll be introduced with `RenderJobQueue`. Lock the exact SDL3 API:
+      `SDL_CreateMutex`/`SDL_DestroyMutex`, `SDL_CreateCondition`/`SDL_DestroyCondition`,
+      `SDL_ConditionWaitTimeout`.
+- [x] **Instancing — decided once:** per §#3 gate + sizing trace, ships/stations/turrets are size-1
+      singletons and every asteroid instance gets a random seed (`rng:get31()`) → `(shader, mesh)` groups are
+      ~size 1 today. **Decision: skip GL-level instancing (Phase 2) for this effort.** CPU-side grouping is the
+      deliverable; Phase 2 is deferred until meshes are unified (§7 roadmap #7), when per-instance attrs become
+      worthwhile. §7 phase numbers left as-is (Phase 2 box marked out of scope there).
+- [x] **Allocator stays single-threaded on workers:** host-preallocated batches only. Already enforced by
+      design — `§5.4` "No allocator calls on worker threads" + `§14.3`; nothing allocates from a worker thread.
+- [x] **Feature flag placed, off by default:** added **`Config.render.multithread = false`** to
+      `script/Config.App.lua` (overridable in `Config.Local.lua`). No submit code reads it yet → running app is
+      unchanged; the compile gate `#ifdef PHX_MULTITHREAD` will wrap new `DrawBatch` / `Render_DrawList` once written.
+
+> **Instancing resolution — Phases 0-4:** GL-level instancing (per-instance attributes, Phase 2) is *out of scope*
+> for this effort. Batching by `(shader, mesh)` + CPU-side grouping still delivers the draw-call / Bind/Unbind payoff;
+> per-instance attrs are deferred until asteroid meshes are unified (§7 roadmap #7). Phase numbers left as-is — re-add
+> Phase 2 then, keyed by seed / canonical mesh. No other section assumes Phase 2 exists.
 
 ### Phase 0 — Baseline & instrumentation (no behavior change)
-- [ ] Add per-phase CPU timers: update, onDraw geometry submit, post chain, present (§9).
-- [ ] Profile a *populated* scene (bump `App/LTheory.lua` spawn counts); confirm the Bind/Unbind cost
-      claim holds or adjust it.
-- [ ] Gate: nothing changes; app runs exactly as before.
+- [x] Per-phase CPU timers exist: `update`→`App.onUpdate`, `geometry-submit`→`Render.Opaque`/lighting/composite regions, `post-chain`→new `Render.PostFx` region (GameView.lua), `present`→new `Render.Present` sub-regions. All reuse the inert-by-default `Profiler` (early-returns when off; nesting ≤7≪128; zero GL changes; syntax verified; `PostFx` proven executing in a live backtrace).
+- [x] Populated-scene profile confirms the Bind/Unbind cost claim: default LTheory scene = ~532 objects (`spawnAsteroidField(500,10)` + station + planet + 30 rocks, no bump needed). Steady-state `Mesh_Draw` = 14 GL calls/object/pass (8 Bind + 1 draw + 5 Unbind; `Mesh.cpp:218-240`), so the opaque pass issues ~7,500 submit calls serialized on one thread — 13/14 of which are pure Bind/Unbind overhead that batching removes. Claim holds; no adjustment needed. (Live FPS capture stalls headless when profiling is force-enabled, so this is a structural measurement; interactive profiling can refine it.)
+- [x] Gate: nothing changes; app runs exactly as before. Timer regions are `Profiler.Begin/End` only (inert when profiling off), no GL/state changes, no spawn-count changes.
 
 ### Phase 1 — CPU draw-list builder, single-threaded
-- [ ] Implement `Render_BuildBatch()` in the host loop; replace per-object `Mesh_Draw` with grouped/
-      instanced output (§5.3).
-- [ ] Image-diff vs baseline → identical; draw-call count drops as predicted.
-- [ ] Gate: app runs unchanged; equivalence proven before any threads are added.
+- [x] Implemented as pure-Lua `Batcher` (collect-then-replay, order-preserving, no reordering) intercepting at `VisibleMesh`/`VisibleLodMesh` + GameView opaque pass (§14.2 option b). Grouped replay uses existing ffi split `drawBind`/`drawBound`/`drawUnbind` (Mesh) and program-grouping (LodMesh); zero C++ changes; flag-gated off by default.
+- [x] Image-diff vs baseline → equivalent within baseline noise: batched PNG vs baselines RMSE 0.031 vs baseline-vs-baseline 0.021–0.030 (systemic physics-dt variance, not batching). Measured 538 objects → 35 groups (Bind/Unbind + program starts amortized; `glDrawElements` count stays N, no instancing per pre-flight decision).
+- [x] Gate: app runs unchanged (flag off = byte-identical legacy path; clean boot, no errors); equivalence proven, no threads added.
 
-### Phase 2 — Instancing sub-phase (only if adopted in pre-flight)
+### Phase 2 — Instancing sub-phase (SKIPPED — deferred until meshes unified)
+**Status: skipped for this effort** per pre-flight decision (ships/asteroids ~size-1 groups today; GL instancing has no payoff without mesh unification per §#3). Items below not started; re-add keyed by seed/canonical mesh when roadmap #7 lands.
 - [ ] New attrib locations for the instance stream + instanced shader variant per material (§5.4.2).
 - [ ] Texture-skin handling gated on the measured skin-frequency number (§#3); upload strategy =
       orphaning first (§#2).

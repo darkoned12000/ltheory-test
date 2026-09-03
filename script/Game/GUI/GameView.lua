@@ -4,6 +4,7 @@ setmetatable(GameView, UI.Container)
 
 GameView.name = 'Game View'
 local ssTable = { 1, 2, 4 }
+local Batcher = require('Game.Batcher')
 
 -- PHX_DEBUG_DUMP=<frame> : save pipeline checkpoints to PNGs once, at that frame.
 -- Set PHX_DEBUG_DUMP=120 to snapshot ~2s after boot.
@@ -143,10 +144,13 @@ function GameView:draw (focus, active)
   local eye = self.camera.pos
   world:beginRender()
 
+  Profiler.Begin('Render.Submit')
   do -- Opaque Pass
     Profiler.Begin('Render.Opaque')
     self.renderer:start(self.sx, self.sy, ss)
+    Batcher.begin()
     world:render(Event.Render(BlendMode.Disabled, eye))
+    Batcher.replay()
     self.renderer:stop()
     Profiler.End()
   end
@@ -278,6 +282,7 @@ function GameView:draw (focus, active)
 
   world:endRender()
   self.camera:endDraw()
+  Profiler.End() -- Render.Submit
 
   if true then -- Composited UI Pass
     self.renderer:startUI()
@@ -294,8 +299,12 @@ function GameView:draw (focus, active)
     self.renderer:stopUI()
   end
 
+  do -- Post chain + present (UI composite, post-fx passes, buffer swap); timing only
+    Profiler.Begin('Render.PostFx')
   if false or Settings.get('render.showBuffers') then
+    Profiler.Begin('Render.Present')
     self.renderer:presentAll(x, y, sx, sy)
+    Profiler.End()
   else
     self.renderer:startPostEffects()
     if Settings.get('postfx.bloom.enable') then self.renderer:bloom(Settings.get('postfx.bloom.radius')) end
@@ -313,7 +322,11 @@ function GameView:draw (focus, active)
     if Settings.get('postfx.sharpen.enable') then
       self.renderer:sharpen(2, 1, 1)
     end
+    Profiler.Begin('Render.Present')
     self.renderer:present(x, y, sx, sy, ss > 2)
+    Profiler.End()
+  end
+    Profiler.End()
   end
 
   if GUI.DrawHmGui then

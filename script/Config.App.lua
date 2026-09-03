@@ -143,6 +143,12 @@ Config.gpu = {
   superSample      = 'High', -- Off / Low / Medium / High (context re-init gated)
 }
 
+-- CPU-side draw batching/submit. OFF by default so the running app is unchanged;
+-- override in Config.Local.lua to opt into multithreaded render submit once DrawBatch exists.
+Config.render = {
+  multithread      = false,
+}
+
 Config.ui = {
   showTrackers     = true,
   defaultControl   = 'Ship',
