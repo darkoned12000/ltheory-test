@@ -43,6 +43,11 @@ add_custom_target (phx_validate_bytes
   VERBATIM)
 
 add_dependencies (lt phx_validate_bytes)
+# The Bytes validator dlopens bin/libphx64.so (a symlink to the built lib,
+# recreated by phx's POST_BUILD hook). Build phx first so the lib + symlink
+# exist before this validator runs -- a clean build wipes bin/ and otherwise
+# the validator races ahead of the link and fails to load.
+add_dependencies (phx_validate_bytes phx)
 
 # --- Build-time SDL validation gates ---------------------------------------
 # Offline pkg/header/init + hidden-window probe for the SDL2->SDL3 upgrade.

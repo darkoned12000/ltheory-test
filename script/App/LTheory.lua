@@ -13,6 +13,7 @@ function LTheory:generate ()
     -- self.seed = 5023726954312599969ULL
   end
   printf('Seed: %s', self.seed)
+  printf('Resolution: %dx%d', self.resX, self.resY)
 
   if self.system then self.system:delete() end
   self.system = Entities.System(self.seed)

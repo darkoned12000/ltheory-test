@@ -5,7 +5,7 @@ local Application = class(function (self) end)
 -- Virtual ---------------------------------------------------------------------
 
 function Application:getDefaultSize ()
-  return 1600, 900
+  return Config.window.width, Config.window.height
 end
 
 function Application:getTitle () return
@@ -13,6 +13,9 @@ function Application:getTitle () return
 end
 
 function Application:getWindowMode ()
+  if Config.window.fullscreen then
+    return Bit.Or32(WindowMode.Fullscreen, WindowMode.Resizable)
+  end
   return Bit.Or32(WindowMode.Shown, WindowMode.Resizable)
 end
 
@@ -92,6 +95,10 @@ function Application:run ()
        -- TODO : Remove this once bindings are fixed
       if Input.GetKeyboardCtrl() and Input.GetPressed(Button.Keyboard.W) then self:quit() end
       if Input.GetPressed(Bindings.Exit) then self:quit() end
+      -- Clean quit key for WM environments whose XWayland window has no
+      -- title-bar close button (e.g. Hyprland tiling). Default Escape.
+      if Config.window.quitKey
+        and Input.GetPressed(Config.window.quitKey) then self:quit() end
 
       if Input.GetPressed(Bindings.ProfilerToggle) then
         toggleProfiler = true

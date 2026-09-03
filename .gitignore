@@ -1,6 +1,9 @@
 # Build directory (CMake build artifacts)
 /build/
 
+# Python venv for the offline GLSL validator (moderngl)
+/.venv-tools/
+
 # Regenerated binaries (produced by `python configure.py build`)
 /bin/lt64r
 /bin/lt64d

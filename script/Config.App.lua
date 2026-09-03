@@ -119,6 +119,18 @@ Config.render = {
   vsync      = true,
 }
 
+-- Window setup at launch (consumed by Application:run). ``width``/``height`` set
+-- the initial window size (Hyprland's tiler can override once it maps the window),
+-- ``fullscreen`` covers the whole output if true, and ``quitKey`` is a physical
+-- key (see Button.Keyboard.*) that quits the app cleanly on Hyprland, where the
+-- XWayland window has no title-bar close button. Override in Config.Local.lua.
+Config.window = {
+  width      = 1024,  -- default = 1600
+  height     = 768,   -- default = 900
+  fullscreen = false,
+  quitKey    = Button.Keyboard.Escape,
+}
+
 -- GPU portability: same binary scales from integrated GPU to RTX. These are the
 -- source-of-truth defaults; Renderer/Application seed runtime Settings from them at
 -- startup (see Renderer.lua), so a weak machine can drop bloom / particle load for

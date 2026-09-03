@@ -6,7 +6,17 @@ import os, re, sys, shutil, subprocess
 # configure.py uses sys.executable for the CMake build/run steps (fine there) but
 # pins python3.13 explicitly for the validator so it fails fast at *any* entry
 # point rather than mid-game with "No module named 'moderngl'".
-VALIDATOR_PY = os.environ.get('PHX_VALIDATOR_PY', 'python3.13')
+# The offline shader validator needs moderngl with a headless EGL context. On
+# this host it lives in a project-local venv (.venv-tools). Prefer that; fall
+# back to $PHX_VALIDATOR_PY, then python3, then the old python3.13 pin.
+def _validator_py():
+    here = os.path.dirname(os.path.abspath(__file__))
+    venv = os.path.join(here, '.venv-tools', 'bin', 'python')
+    if os.path.exists(venv):
+        return venv
+    return os.environ.get('PHX_VALIDATOR_PY', 'python3')
+
+VALIDATOR_PY = _validator_py()
 
 def current_glsl_version():
     # Parse the version the engine actually compiles with (single source of truth).
