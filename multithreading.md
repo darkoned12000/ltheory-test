@@ -527,3 +527,63 @@ with a legacy fallback) — see §12.
 | LuaScheduler (not main loop) | `libphx/src/LuaScheduler.cpp` |
 | Spawn counts to stress-test with | `script/App/LTheory.lua` (`spawnShip`, `spawnAsteroidField`, …) |
 | Feature flag home | `script/Config.App.lua` / `Config.render.*` |
+
+## 16. Milestones & TODO checklist (implementation)
+
+> Turn the phased design into a buildable list. Each phase keeps the app runnable
+> (feature-flagged, with legacy fallback). Uncheck in order; do not skip a gate (§7).
+
+### Pre-flight — resolve before writing any code
+- [ ] Confirm SDL_* thread-primitive names on host (`SDL_Mutex`, `SDL_ConditionVariable`) against
+      `libphx/src/ThreadPool.cpp`; no raw pthread_*.
+- [ ] Decide instancing once via §#3 skin-frequency gate + sizing table (§13): adopt per-instance
+      attrs (Phase 2) or batch by `(shader, mesh)` and skip Phase 2. If skipping, delete Phase 2 from
+      the rollout list below.
+- [ ] Commit to allocator staying single-threaded on workers — host-preallocated batches only (§5.4).
+- [ ] Place feature flag `render.multithread` (default false) + compile gate `#ifdef PHX_MULTITHREAD`;
+      verify both are off by default so the running app is unchanged.
+
+### Phase 0 — Baseline & instrumentation (no behavior change)
+- [ ] Add per-phase CPU timers: update, onDraw geometry submit, post chain, present (§9).
+- [ ] Profile a *populated* scene (bump `App/LTheory.lua` spawn counts); confirm the Bind/Unbind cost
+      claim holds or adjust it.
+- [ ] Gate: nothing changes; app runs exactly as before.
+
+### Phase 1 — CPU draw-list builder, single-threaded
+- [ ] Implement `Render_BuildBatch()` in the host loop; replace per-object `Mesh_Draw` with grouped/
+      instanced output (§5.3).
+- [ ] Image-diff vs baseline → identical; draw-call count drops as predicted.
+- [ ] Gate: app runs unchanged; equivalence proven before any threads are added.
+
+### Phase 2 — Instancing sub-phase (only if adopted in pre-flight)
+- [ ] New attrib locations for the instance stream + instanced shader variant per material (§5.4.2).
+- [ ] Texture-skin handling gated on the measured skin-frequency number (§#3); upload strategy =
+      orphaning first (§#2).
+- [ ] Image-diff includes translucent objects + tolerance threshold; no regression at low counts.
+
+### Phase 3 — Host replay entry point + ffi exposure (single-threaded)
+- [ ] Add `Render_DrawList` C++ function; keep the legacy per-object loop reachable (§5.4, §12).
+- [ ] Feature-gate behind `render.multithread`; toggle is the first smoke test with OFF→identical output.
+
+### Phase 4 — One worker builds batch during update; host replays in draw phase
+- [ ] Extend pool → producer/consumer queue (`RenderJobQueue`); replace `ThreadPool_Free` `Fatal` with
+      graceful join-all (§14.1).
+- [ ] Build on workers after the snapshot fence (§5.4.6); replay inside the existing draw phase; order preserved (§4.3).
+- [ ] Stress 30–60 s at target object counts; no crashes, stable FPS.
+
+### Phase 5 — Multi-worker merge
+- [ ] Workers split the object set; host merges by `(shader_id, mesh_id)` and issues instanced draws
+      (§7 Phase 5).
+- [ ] Image-diff equivalence holds (incl. translucent); draw-call count drops vs Phase 4; timing
+      improves at high counts only.
+
+### Phase 6 — Reuse pool for other CPU jobs (optional)
+- [ ] Only if measured benefit in Phases 3–4; expose the queue to SDF `Gen` / compute-particle prep
+      (§7 Phase 6). Do not expand scope without data.
+
+### Definition of done
+- App runs and looks byte-for-byte identical with the flag off at every phase.
+- Image-diff equivalence passes per-phase incl. translucent objects + tolerance; low-count parity holds.
+- No allocator calls on worker threads; grep new files for `GLCALL` outside host replay → empty.
+- Graceful shutdown/reload (`F5`) — no `Fatal` anywhere in the path (§12).
+
