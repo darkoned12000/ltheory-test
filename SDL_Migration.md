@@ -27,7 +27,7 @@ Goal: migrate the engine from **SDL2 2.32.70** to the latest **SDL3** (system ha
 | `GamepadButton.cpp`, `GamepadAxis.cpp` | Mechanical `SDL_CONTROLLER_*`→`SDL_GAMEPAD_*` constant renames. |
 
 **Superficial / near-zero change:**
-`Mouse.cpp` (`SDL_ShowCursor`/`SDL_ENABLE`/`SDL_DISABLE` split into `SDL_ShowCursor`/`SDL_HideCursor`), `Keyboard.cpp` (unchanged), `MouseButton.cpp`/`WindowPos.cpp`/`HatDir.cpp`/`WindowMode.cpp` (constant tables; only `SDL_WINDOW_FULLSCREEN_DESKTOP`→`SDL_WINDOW_FULLSCREEN` in `WindowMode.cpp:6`), `OS.cpp` (unchanged), `Timer.cpp`/`TimeStamp.cpp` (performance counters unchanged), `Thread.cpp`/`ThreadPool.cpp` (unchanged).
+`Mouse.cpp` (`SDL_ShowCursor`/`SDL_ENABLE`/`SDL_DISABLE` split into `SDL_ShowCursor`/`SDL_HideCursor`), `Keyboard.cpp` (unchanged), `MouseButton.cpp`/`WindowPos.cpp`/`HatDir.cpp`/`WindowMode.cpp` (constant tables; only `SDL_WINDOW_FULLSCREEN_DESKTOP`→`SDL_WINDOW_FULLSCREEN` in `WindowMode.cpp:6`), `OS.cpp` (low-risk, but received an extra clipboard-caching change during implementation — see §7 completion record line 136), `Timer.cpp`/`TimeStamp.cpp` (unchanged; use `SDL_GetPerformanceCounter`, stable in SDL3), `Thread.cpp`/`ThreadPool.cpp` (unchanged).
 
 ### 2.2 Headers / build (the other side of the swap)
 
