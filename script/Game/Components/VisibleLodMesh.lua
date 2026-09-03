@@ -13,9 +13,7 @@ end
 function Entity:renderVisibleLodMesh (state)
   if state.mode == BlendMode.Disabled then
     local lod = state.eye:distanceSquared(self:getPos()) / (self:getScale() ^ 2.0)
-    if Batcher.isOpen() then
-      Batcher.record(self.material, self.mesh, self, lod, false)
-    else
+    if not (Batcher.isOpen() and Batcher.record(self.material, self.mesh, self, lod, false)) then
       self.material:start()
       self.material:setState(self)
       self.mesh:draw(lod)

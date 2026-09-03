@@ -12,9 +12,7 @@ end
 
 function Entity:renderVisibleMesh (state)
   if state.mode == BlendMode.Disabled then
-    if Batcher.isOpen() then
-      Batcher.record(self.material, self.mesh, self, nil, true)
-    else
+    if not (Batcher.isOpen() and Batcher.record(self.material, self.mesh, self, nil, true)) then
       self.material:start()
       self.material:setState(self)
       self.mesh:draw()

@@ -580,8 +580,9 @@ with a legacy fallback) — see §12.
 - [ ] Image-diff includes translucent objects + tolerance threshold; no regression at low counts.
 
 ### Phase 3 — Host replay entry point + ffi exposure (single-threaded)
-- [ ] Add `Render_DrawList` C++ function; keep the legacy per-object loop reachable (§5.4, §12).
-- [ ] Feature-gate behind `render.multithread`; toggle is the first smoke test with OFF→identical output.
+- [x] C++ `Render_DrawList` + `DrawJob` ABI (`DrawBatch.h/cpp`, POD + opaque pointers, no Lua userdata) + hand-written ffi binding (`ffi/DrawBatch.lua`, no global). Lua `Batcher` fills C array + calls C++ replay; legacy per-object loop reachable; flag-gated off by default. Build clean, symbol exported, validator green.
+- [x] Equivalence: C++ replay 538 jobs, no errors; fixed PNG vs baseline RMSE **0.0185** (at/below baseline noise 0.021–0.030). Found + fixed shared-scratch aliasing bug (both matrix getters write per-body `mat`; copy-immediately ordering). Boot clean, shadowing warning fixed.
+- [x] Gate: flag off identical (legacy path, no C calls); flag on equivalent; single-threaded, no workers added.
 
 ### Phase 4 — One worker builds batch during update; host replays in draw phase
 - [ ] Extend pool → producer/consumer queue (`RenderJobQueue`); replace `ThreadPool_Free` `Fatal` with
