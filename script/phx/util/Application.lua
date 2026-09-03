@@ -36,8 +36,6 @@ function Application:run ()
   self.resX, self.resY = self:getDefaultSize()
   self.window = Window.Create(
     self:getTitle(),
-    WindowPos.Default,
-    WindowPos.Default,
     self.resX,
     self.resY,
     self:getWindowMode())

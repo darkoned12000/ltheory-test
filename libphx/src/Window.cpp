@@ -14,10 +14,10 @@ struct Window {
   WindowMode mode;
 };
 
-Window* Window_Create (cstr title, int x, int y, int sx, int sy, WindowMode mode) {
+Window* Window_Create (cstr title, int sx, int sy, WindowMode mode) {
   Window* self = MemNew(Window);
-  mode |= SDL_WINDOW_OPENGL;
-  self->handle = SDL_CreateWindow(title, x, y, sx, sy, mode);
+  SDL_WindowFlags flags = (SDL_WindowFlags)mode | SDL_WINDOW_OPENGL;
+  self->handle = SDL_CreateWindow(title, sx, sy, flags);
   self->context = SDL_GL_CreateContext(self->handle);
   self->mode = mode;
   if (!self->context)
@@ -30,7 +30,7 @@ Window* Window_Create (cstr title, int x, int y, int sx, int sy, WindowMode mode
 }
 
 void Window_Free (Window* self) {
-  SDL_GL_DeleteContext(self->context);
+  SDL_GL_DestroyContext(self->context);
   SDL_DestroyWindow(self->handle);
   MemFree(self);
 }
@@ -60,11 +60,7 @@ cstr Window_GetTitle (Window* self) {
 }
 
 void Window_SetFullscreen (Window* self, bool fs) {
-  SDL_SetWindowFullscreen(self->handle, fs ? WindowMode_Fullscreen : 0);
-}
-
-void Window_SetPosition (Window* self, WindowPos x, WindowPos y) {
-  SDL_SetWindowPosition(self->handle, x, y);
+  SDL_SetWindowFullscreen(self->handle, fs);
 }
 
 void Window_SetSize (Window* self, int sx, int sy) {
@@ -81,9 +77,9 @@ void Window_SetVsync (Window*, bool vsync) {
 
 void Window_ToggleFullscreen (Window* self) {
   if (self->mode & WindowMode_Fullscreen)
-    SDL_SetWindowFullscreen(self->handle, 0);
+    SDL_SetWindowFullscreen(self->handle, false);
   else
-    SDL_SetWindowFullscreen(self->handle, WindowMode_Fullscreen);
+    SDL_SetWindowFullscreen(self->handle, true);
   self->mode ^= WindowMode_Fullscreen;
 }
 

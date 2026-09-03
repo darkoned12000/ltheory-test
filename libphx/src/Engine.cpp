@@ -13,6 +13,8 @@
 #include "ShaderVar.h"
 #include "TimeStamp.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <stdio.h>
 
 /* On Windows, request usage of the dedicated GPU if the machine switches
@@ -28,10 +30,9 @@
 const uint32 subsystems =
   SDL_INIT_EVENTS |
   SDL_INIT_VIDEO |
-  SDL_INIT_TIMER |
   SDL_INIT_HAPTIC |
   SDL_INIT_JOYSTICK |
-  SDL_INIT_GAMECONTROLLER;
+  SDL_INIT_GAMEPAD;
 
 static cstr versionString = __DATE__ " " __TIME__;
 static TimeStamp initTime = 0;
@@ -58,14 +59,14 @@ void Engine_Init (int glVersionMajor, int glVersionMinor) {
       // }
     }
 
-    if (SDL_Init(0) != 0)
+    if (!SDL_Init(0))
       Fatal("Engine_Init: Failed to initialize SDL");
     if (!Directory_Create("log"))
       Fatal("Engine_Init: Failed to create log directory.");
     atexit(SDL_Quit);
   }
 
-  if (SDL_InitSubSystem(subsystems) != 0)
+  if (!SDL_InitSubSystem(subsystems))
     Fatal("Engine_Init: Failed to initialize SDL's subsystems");
 
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, glVersionMajor);

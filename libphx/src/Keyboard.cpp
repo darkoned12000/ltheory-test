@@ -3,14 +3,14 @@
 #include "SDL.h"
 
 static uint64 lastAction;
-static uchar* stateLast;
-static uchar* stateCurr;
+static bool* stateLast;
+static bool* stateCurr;
 
 void Keyboard_Init () {
   int size;
-  uchar const* state = SDL_GetKeyboardState(&size);
-  stateLast = MemNewArray(uchar, size);
-  stateCurr = MemNewArray(uchar, size);
+  bool const* state = SDL_GetKeyboardState(&size);
+  stateLast = MemNewArray(bool, size);
+  stateCurr = MemNewArray(bool, size);
   MemCpy(stateLast, state, size);
   MemCpy(stateCurr, state, size);
   lastAction = SDL_GetPerformanceCounter();
@@ -22,12 +22,12 @@ void Keyboard_Free () {
 }
 
 void Keyboard_UpdatePre () {
-  int size; uchar const* state = SDL_GetKeyboardState(&size);
+  int size; bool const* state = SDL_GetKeyboardState(&size);
   MemCpy(stateLast, state, size);
 }
 
 void Keyboard_UpdatePost () {
-  int size; uchar const* state = SDL_GetKeyboardState(&size);
+  int size; bool const* state = SDL_GetKeyboardState(&size);
   MemCpy(stateCurr, state, size);
 
   for (int i = 0; i < size; ++i) {

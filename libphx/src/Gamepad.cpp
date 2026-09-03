@@ -9,7 +9,7 @@
 
 struct Gamepad {
   LinkedListCell(gamepadList, Gamepad);
-  SDL_GameController* handle;
+  SDL_Gamepad* handle;
   TimeStamp lastActive;
   double axisState[GamepadAxis_SIZE];
   double axisLast[GamepadAxis_SIZE];
@@ -39,12 +39,31 @@ static void Gamepad_UpdateState (Gamepad* self) {
   }
 }
 
+/* SDL3 takes joystick *instance IDs* where SDL2 took device indices.
+ * The engine-internal contract is index-based (callers loop 0..GetCount-1),
+ * so translate here to keep every caller unchanged. */
+static SDL_JoystickID Gamepad_JoystickIDForIndex (int index) {
+  int count = 0;
+  SDL_JoystickID* ids = SDL_GetJoysticks(&count);
+  if (!ids || index < 0 || index >= count) {
+    if (ids) SDL_free(ids);
+    return 0;
+  }
+  SDL_JoystickID id = ids[index];
+  SDL_free(ids);
+  return id;
+}
+
 bool Gamepad_CanOpen (int index) {
-  return SDL_IsGameController(index) == SDL_TRUE;
+  SDL_JoystickID id = Gamepad_JoystickIDForIndex(index);
+  return id != 0 && SDL_IsGamepad(id);
 }
 
 Gamepad* Gamepad_Open (int index) {
-  SDL_GameController* handle = SDL_GameControllerOpen(index);
+  SDL_JoystickID id = Gamepad_JoystickIDForIndex(index);
+  if (id == 0)
+    return 0;
+  SDL_Gamepad* handle = SDL_OpenGamepad(id);
   if (!handle)
     return 0;
   Gamepad* self = MemNewZero(Gamepad);
@@ -57,17 +76,17 @@ Gamepad* Gamepad_Open (int index) {
 
 void Gamepad_Close (Gamepad* self) {
   LinkedList_Remove(gamepadList, self);
-  SDL_GameControllerClose(self->handle);
+  SDL_CloseGamepad(self->handle);
   MemFree(self);
 }
 
 int Gamepad_AddMappings (cstr file) {
-  return SDL_GameControllerAddMappingsFromFile(file);
+  return SDL_AddGamepadMappingsFromFile(file);
 }
 
 double Gamepad_GetAxis (Gamepad* self, GamepadAxis axis) {
-  double value = (double)SDL_GameControllerGetAxis(
-    self->handle, (SDL_GameControllerAxis)axis) / 32767.0;
+  double value = (double)SDL_GetGamepadAxis(
+    self->handle, (SDL_GamepadAxis)axis) / 32767.0;
   double deadzone = self->deadzone[axis];
   if (value >  deadzone) return (value - deadzone) / (1.0 - deadzone);
   if (value < -deadzone) return (value + deadzone) / (1.0 - deadzone);
@@ -79,7 +98,7 @@ double Gamepad_GetAxisDelta (Gamepad* self, GamepadAxis axis) {
 }
 
 bool Gamepad_GetButton (Gamepad* self, GamepadButton button) {
-  return SDL_GameControllerGetButton(self->handle, (SDL_GameControllerButton)button) == 1;
+  return SDL_GetGamepadButton(self->handle, (SDL_GamepadButton)button) == 1;
 }
 
 double Gamepad_GetButtonPressed (Gamepad* self, GamepadButton button) {
@@ -95,18 +114,18 @@ double Gamepad_GetIdleTime (Gamepad* self) {
 }
 
 int Gamepad_GetID (Gamepad* self) {
-  SDL_Joystick* joystick = SDL_GameControllerGetJoystick(self->handle);
+  SDL_Joystick* joystick = SDL_GetGamepadJoystick(self->handle);
   if (!joystick)
     return -1;
-  return SDL_JoystickInstanceID(joystick);
+  return SDL_GetJoystickID(joystick);
 }
 
 cstr Gamepad_GetName (Gamepad* self) {
-  return SDL_GameControllerName(self->handle);
+  return SDL_GetGamepadName(self->handle);
 }
 
 bool Gamepad_IsConnected (Gamepad* self) {
-  return SDL_GameControllerGetAttached(self->handle) == SDL_TRUE;
+  return SDL_GamepadConnected(self->handle);
 }
 
 void Gamepad_SetDeadzone (Gamepad* self, GamepadAxis axis, double deadzone) {

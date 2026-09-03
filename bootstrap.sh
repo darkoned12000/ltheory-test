@@ -18,7 +18,7 @@ sudo apt-get install -y \
   python3 \
   libglu1-mesa-dev \
   libglew-dev \
-  libsdl2-dev \
+  libsdl3-dev \
   libfreetype6-dev \
   liblz4-dev \
   libluajit-5.1-dev \

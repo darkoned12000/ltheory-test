@@ -5,7 +5,7 @@ local Window
 
 do -- C Definitions
   ffi.cdef [[
-    Window* Window_Create           (cstr title, WindowPos x, WindowPos y, int sx, int sy, WindowMode mode);
+    Window* Window_Create           (cstr title, int sx, int sy, WindowMode mode);
     void    Window_Free             (Window*);
     void    Window_BeginDraw        (Window*);
     void    Window_EndDraw          (Window*);
@@ -13,7 +13,6 @@ do -- C Definitions
     void    Window_GetSize          (Window*, Vec2i* out);
     cstr    Window_GetTitle         (Window*);
     void    Window_SetFullscreen    (Window*, bool);
-    void    Window_SetPosition      (Window*, WindowPos, WindowPos);
     void    Window_SetSize          (Window*, int, int);
     void    Window_SetTitle         (Window*, cstr);
     void    Window_SetVsync         (Window*, bool);
@@ -33,7 +32,6 @@ do -- Global Symbol Table
     GetSize          = libphx.Window_GetSize,
     GetTitle         = libphx.Window_GetTitle,
     SetFullscreen    = libphx.Window_SetFullscreen,
-    SetPosition      = libphx.Window_SetPosition,
     SetSize          = libphx.Window_SetSize,
     SetTitle         = libphx.Window_SetTitle,
     SetVsync         = libphx.Window_SetVsync,
@@ -58,7 +56,6 @@ do -- Metatype for class instances
       getSize          = libphx.Window_GetSize,
       getTitle         = libphx.Window_GetTitle,
       setFullscreen    = libphx.Window_SetFullscreen,
-      setPosition      = libphx.Window_SetPosition,
       setSize          = libphx.Window_SetSize,
       setTitle         = libphx.Window_SetTitle,
       setVsync         = libphx.Window_SetVsync,

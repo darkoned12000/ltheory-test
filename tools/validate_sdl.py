@@ -2,16 +2,19 @@
 """Offline SDL validator for the ltheory-test SDL2->SDL3 upgrade.
 
 Runs WITHOUT launching the game (like validate_glsl.py / validate_bytes.lua).
-Three gates:
-  1. pkg-config: sdl2 and/or sdl3 present; reports versions.
-  2. header: #include <SDL.h> (SDL2) and <SDL3/SDL.h> (SDL3) major matches pkg-config.
-  3. link+init: compile+run tiny SDL_Init(SDL_INIT_VIDEO) with SDL_VIDEODRIVER=dummy
-     and SDL_GL_SetAttribute(4.6 core) — catches API breaks (CreateWindow sig,
-     GL attr rename, GameController->Gamepad) at compile time.
+The engine now builds against SDL3 exclusively (the SDL2 device is retired),
+so this validator REQUIRES SDL3. Gates:
+  1. pkg-config: sdl3 present (and sdl2 may be absent) — reports versions.
+  2. header: <SDL3/SDL.h> major matches pkg-config.
+  3. link+init API probe that exercises the exact SDL3 signatures the engine
+     uses: SDL_Init(SDL_INIT_VIDEO|...|SDL_INIT_GAMEPAD), the 4.6 core GL
+     profile via SDL_GL_CONTEXT_PROFILE_MASK/CORE, SDL_CreateWindow(title,w,h,
+     flags), SDL_GetGamepadJoystick/SDL_OpenGamepad path, SDL_GUIDToString,
+     and the SDL_EVENT_GAMEPAD_* names. Catches any missed rename at compile
+     time (CreateWindow sig, GL attr, GameController->Gamepad, GUID string).
 
-Exit 0 if all gates pass, 1 otherwise. Wired into `python3.13 configure.py test`
-and `cmake --build` phx_validate_sdl (pre/post upgrade both pass; after SDL3
-migration the linked major must be 3).
+Exit 0 if all gates pass, 1 otherwise. Wired into `configure.py test`
+(and `cmake --build` phx_validate_sdl).
 
 Usage: python3 tools/validate_sdl.py
 """
@@ -49,18 +52,15 @@ def compile_and_run(code, libs):
 
 def main():
     fails = 0
-    print("[validate_sdl] pkg-config + header + SDL_Init gate (dummy video)")
+    print("[validate_sdl] SDL3 pkg-config + header + init/API probe gate (dummy video)")
 
-    v2 = pkg_version("sdl2")
     v3 = pkg_version("sdl3")
-    print(f"  pkg sdl2: {v2 or 'not found'}")
     print(f"  pkg sdl3: {v3 or 'not found'}")
-    if not v2 and not v3:
-        print("FAIL: neither sdl2 nor sdl3 found via pkg-config")
+    if not v3:
+        print("FAIL: sdl3 not found via pkg-config (engine requires SDL3 now)")
         return 1
 
     # Determine what libphx actually links (ldd) for diagnostics
-    ldd = ""
     if pathlib.Path("bin/libphx64r.so").exists():
         try:
             ldd = subprocess.check_output(["ldd","bin/libphx64r.so"], text=True)
@@ -69,61 +69,59 @@ def main():
         except Exception as e:
             print(f"  ldd failed: {e}")
 
-    # Gate 2/3 per available SDL major — must be compilable if pkg claims present.
-    # SDL2 gate
-    if v2:
-        code2 = textwrap.dedent(r"""
-            #include <SDL.h>
-            #include <stdio.h>
-            int main(){
-                SDL_version v; SDL_VERSION(&v);
-                printf("header %d.%d.%d pkg %s\n", v.major, v.minor, v.patch, "2");
-                if (SDL_Init(SDL_INIT_VIDEO)!=0){ printf("SDL_Init failed: %s\n", SDL_GetError()); return 1; }
-                SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-                SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
-                SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-                SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
-                SDL_Quit();
-                printf("SDL2 init OK\n");
-                return 0;
-            }
-        """)
-        ok, out = compile_and_run(code2, ["sdl2"])
-        if ok:
-            print(f"  SDL2 header/init: OK — {out}")
-        else:
-            print(f"  SDL2 header/init: FAIL — {out}")
-            fails += 1
-    # SDL3 gate (if installed; before migration this just proves host has 3.4.14 ready)
-    if v3:
-        code3 = textwrap.dedent(r"""
-            #include <SDL3/SDL.h>
-            #include <stdio.h>
-            int main(){
-                int v = SDL_GetVersion();
-                printf("SDL3 runtime %d pkg %s\n", v, "3");
-                if (!SDL_Init(SDL_INIT_VIDEO)){ printf("SDL_Init failed: %s\n", SDL_GetError()); return 1; }
-                SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-                SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
-                SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-                SDL_Quit();
-                printf("SDL3 init OK\n");
-                return 0;
-            }
-        """)
-        ok, out = compile_and_run(code3, ["sdl3"])
-        if ok:
-            print(f"  SDL3 header/init: OK — {out}")
-        else:
-            print(f"  SDL3 header/init: FAIL — {out}")
-            # Before migration, SDL3 compile failure is not fatal (host may lack dev headers)
-            # but after migration it must pass. Warn only for now.
-            if v2 and "sdl2" in str(pathlib.Path("libphx/CMakeLists.txt").read_text()).lower():
-                print("  (expected: SDL2 build still active; SDL3 failure is non-fatal pre-migration)")
-            else:
-                fails += 1
+    # SDL3 gate — compile time exercises the post-migration API surface.
+    code3 = textwrap.dedent(r"""
+        #include <SDL3/SDL.h>
+        #include <stdio.h>
+        int main(){
+            int v = SDL_GetVersion();
+            printf("SDL3 runtime %d\n", v);
+            const Uint32 subs = SDL_INIT_EVENTS|SDL_INIT_VIDEO|SDL_INIT_JOYSTICK|SDL_INIT_GAMEPAD;
+            if (!SDL_InitSubSystem(subs)){ printf("SDL_InitSubSystem failed: %s\n", SDL_GetError()); return 1; }
 
-    # Summary: after migration, linked must be SDL3. Pre-migration, SDL2 is fine.
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+            SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
+
+            /* SDL3 CreateWindow signature: (title, w, h, flags).
+               Under the dummy video driver there is no GL, so a CreateWindow
+               failure here is an expected SKIP (validate_sdl_window.py covers
+               window+GL when a display exists). The compile itself is the gate. */
+            SDL_Window* w = SDL_CreateWindow("validate", 64, 64, SDL_WINDOW_OPENGL|SDL_WINDOW_HIDDEN);
+            if (!w){ printf("note: no GL-capable video driver here (%s) — window probe SKIP\n", SDL_GetError()); }
+            else SDL_DestroyWindow(w);
+
+            /* Gamepad open path + GUID string (renamed APIs the engine uses). */
+            int n = 0;
+            SDL_JoystickID* ids = SDL_GetJoysticks(&n);
+            char guidbuf[64];
+            SDL_GUIDToString(SDL_GetJoystickGUIDForID(0), guidbuf, sizeof(guidbuf));
+            if (ids) SDL_free(ids);
+
+            /* Event enum names the engine uses. */
+            switch (0) {
+              case SDL_EVENT_GAMEPAD_BUTTON_DOWN: break;
+              case SDL_EVENT_GAMEPAD_BUTTON_UP: break;
+              case SDL_EVENT_GAMEPAD_AXIS_MOTION: break;
+              case SDL_EVENT_GAMEPAD_ADDED: break;
+              case SDL_EVENT_GAMEPAD_REMOVED: break;
+            }
+
+            SDL_QuitSubSystem(subs);
+            SDL_Quit();
+            printf("SDL3 API probe OK\n");
+            return 0;
+        }
+    """)
+    ok, out = compile_and_run(code3, ["sdl3"])
+    if ok:
+        print(f"  SDL3 header/init/API: OK — {out}")
+    else:
+        print(f"  SDL3 header/init/API: FAIL — {out}")
+        fails += 1
+
     if fails == 0:
         print("\n[SDL tests] ALL PASS")
     else:

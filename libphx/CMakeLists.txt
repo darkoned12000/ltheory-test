@@ -38,7 +38,7 @@ if (LINUX)
     dl
     m
     pthread
-    SDL2
+    SDL3
     freetype
     luajit-5.1
     lz4

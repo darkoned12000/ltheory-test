@@ -181,9 +181,9 @@ PRIVATE Button                    Button_FromSDLScancode          (SDL_Scancode)
 PRIVATE SDL_Scancode              Button_ToSDLScancode            (Button);
 PRIVATE Button                    Button_FromSDLMouseButton       (uint8);
 PRIVATE uint8                     Button_ToSDLMouseButton         (Button);
-PRIVATE Button                    Button_FromSDLControllerAxis    (SDL_GameControllerAxis);
-PRIVATE SDL_GameControllerAxis    Button_ToSDLControllerAxis      (Button);
-PRIVATE Button                    Button_FromSDLControllerButton  (SDL_GameControllerButton);
-PRIVATE SDL_GameControllerButton  Button_ToSDLControllerButton    (Button);
+PRIVATE Button                    Button_FromSDLControllerAxis    (SDL_GamepadAxis);
+PRIVATE SDL_GamepadAxis           Button_ToSDLControllerAxis      (Button);
+PRIVATE Button                    Button_FromSDLControllerButton  (SDL_GamepadButton);
+PRIVATE SDL_GamepadButton         Button_ToSDLControllerButton    (Button);
 
 #endif

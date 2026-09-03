@@ -24,9 +24,9 @@ static const int kMaxOpen = 64;
 static int kOpen = 0;
 static Joystick* freeList[kMaxOpen] = { 0 };
 
-static char* ConvertGUID (SDL_JoystickGUID id) {
+static char* ConvertGUID (SDL_GUID id) {
   static char buf[64];
-  SDL_JoystickGetGUIDString(id, buf, sizeof(buf));
+  SDL_GUIDToString(id, buf, sizeof(buf));
   return buf;
 }
 
@@ -54,7 +54,13 @@ static void Joystick_UpdateSingle (Joystick* self) {
 }
 
 int Joystick_GetCount () {
-  return SDL_NumJoysticks();
+  int count = 0;
+  SDL_JoystickID* ids = SDL_GetJoysticks(&count);
+  if (ids) {
+    SDL_free(ids);
+    return count;
+  }
+  return 0;
 }
 
 Joystick* Joystick_Open (int index) {
@@ -70,12 +76,12 @@ Joystick* Joystick_Open (int index) {
     }
   }
 
-  self->handle = SDL_JoystickOpen(index);
-  self->guid = StrDup(ConvertGUID(SDL_JoystickGetGUID(self->handle)));
-  self->axes = SDL_JoystickNumAxes(self->handle);
-  self->balls = SDL_JoystickNumBalls(self->handle);
-  self->buttons = SDL_JoystickNumButtons(self->handle);
-  self->hats = SDL_JoystickNumHats(self->handle);
+  self->handle = SDL_OpenJoystick(index);
+  self->guid = StrDup(ConvertGUID(SDL_GetJoystickGUID(self->handle)));
+  self->axes = SDL_GetNumJoystickAxes(self->handle);
+  self->balls = SDL_GetNumJoystickBalls(self->handle);
+  self->buttons = SDL_GetNumJoystickButtons(self->handle);
+  self->hats = SDL_GetNumJoystickHats(self->handle);
   self->buttonStates = MemNewArray(bool, self->buttons);
   self->axisAlive = MemNewArray(bool, self->axes);
   MemZero(self->axisAlive, sizeof(bool) * self->axes);
@@ -94,7 +100,7 @@ void Joystick_Close (Joystick* self) {
     }
   }
 
-  SDL_JoystickClose(self->handle);
+  SDL_CloseJoystick(self->handle);
   MemFree(self->guid);
   MemFree(self->buttonStates);
   MemFree(self->axisStates);
@@ -105,16 +111,8 @@ cstr Joystick_GetGUID (Joystick* self) {
   return self->guid;
 }
 
-cstr Joystick_GetGUIDByIndex (int index) {
-  return (cstr)ConvertGUID(SDL_JoystickGetDeviceGUID(index));
-}
-
 cstr Joystick_GetName (Joystick* self) {
-  return SDL_JoystickName(self->handle);
-}
-
-cstr Joystick_GetNameByIndex (int index) {
-  return SDL_JoystickNameForIndex(index);
+  return SDL_GetJoystickName(self->handle);
 }
 
 int Joystick_GetAxisCount (Joystick* self) {
@@ -138,7 +136,7 @@ double Joystick_GetIdleTime (Joystick* self) {
 }
 
 double Joystick_GetAxis (Joystick* self, int index) {
-  return SDL_JoystickGetAxis(self->handle, index) / 32768.0;
+  return SDL_GetJoystickAxis(self->handle, index) / 32768.0;
 }
 
 bool Joystick_GetAxisAlive (Joystick* self, int index) {
@@ -146,24 +144,24 @@ bool Joystick_GetAxisAlive (Joystick* self, int index) {
 }
 
 double Joystick_GetAxisDelta (Joystick* self, int index) {
-  return SDL_JoystickGetAxis(self->handle, index) / 32768.0 - self->axisStates[index];
+  return SDL_GetJoystickAxis(self->handle, index) / 32768.0 - self->axisStates[index];
 }
 
 HatDir Joystick_GetHat (Joystick* self, int index) {
-  return (HatDir)SDL_JoystickGetHat(self->handle, index);
+  return (HatDir)SDL_GetJoystickHat(self->handle, index);
 }
 
 bool Joystick_ButtonDown (Joystick* self, int index) {
-  return SDL_JoystickGetButton(self->handle, index) > 0;
+  return SDL_GetJoystickButton(self->handle, index) > 0;
 }
 
 bool Joystick_ButtonPressed (Joystick* self, int index) {
-  return SDL_JoystickGetButton(self->handle, index) > 0 &&
+  return SDL_GetJoystickButton(self->handle, index) > 0 &&
          !self->buttonStates[index];
 }
 
 bool Joystick_ButtonReleased (Joystick* self, int index) {
-  return SDL_JoystickGetButton(self->handle, index) == 0 &&
+  return SDL_GetJoystickButton(self->handle, index) == 0 &&
          self->buttonStates[index];
 }
 

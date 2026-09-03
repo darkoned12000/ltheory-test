@@ -115,7 +115,35 @@ From `AGENTS.md` "Load-bearing architecture" — these are the exact things the 
 - SDL3 ships an official **`SDL_MIGRATION.md`** migration guide in its source tree (covers every rename/removal in §2). Start there for the exact symbol mappings.
 - Existing validators already encode the breakpoints (`tools/validate_sdl*.py`) — treat them as a spec.
 
-## 7. Wrap-up
+## 7. Wrap-up — DONE 2026-09-03
 
-- Update `AGENTS.md` "Technology Stack" SDL2 paragraph → SDL3 (version, header path, init-flags/API note) and mark the *Roadmap* "SDL2 → SDL3" item **done**.
+- `AGENTS.md` "Technology Stack" SDL2 paragraph → SDL3 and *Roadmap* "SDL2 → SDL3" marked **done**.
 - Commit the swap as one self-contained change (source + headers + CMake + validators + docs), mirroring how the FMOD→miniaudio swap was landed.
+
+### Completion record (2026-09-03)
+
+**Migrated files** (`libphx/src/`, `libphx/include/`, `libphx/script/ffi/`, `script/`):
+- `Engine.cpp` — `SDL_INIT_TIMER` dropped, `SDL_INIT_GAMECONTROLLER`→`SDL_INIT_GAMEPAD`, `SDL_Init`/`SDL_InitSubSystem` int→bool checks, `#include <cstdlib>` (SDL2 no longer provides it transitively). GL profile request unchanged (`SDL_GL_CONTEXT_PROFILE_MASK`+`CORE` still valid in SDL3 — the load-bearing core invariant holds).
+- `Input.cpp` — all `SDL_EVENT_*` renames, `sdl.key.keysym.scancode`→`sdl.key.scancode`, `sdl.cbutton/caxis/cdevice`→`gbutton/gaxis/gdevice`, `SDL_GameController*`→`SDL_Gamepad*` open/close/query, `SDL_ShowCursor`/`SDL_HideCursor`, `SDL_CaptureMouse(bool)`, timestamp ns→ms, startup enumeration via `SDL_GetJoysticks()`, `DeviceState` bounds `SDL_NUM_SCANCODES`→`SDL_SCANCODE_COUNT`.
+- `Window.cpp`/`Window.h`/`ffi/Window.lua`/`Application.lua` — `Window_Create` drops x/y (`SDL_CreateWindow(title,w,h,flags)`), `SDL_GL_DestroyContext`, `SDL_SetWindowFullscreen(bool)`.
+- `Mouse.cpp` — `SDL_GetMouseState`/`GetGlobalMouseState` float out-params, `SDL_WarpMouseInWindow` float, `SDL_BUTTON_MASK`, `SDL_GetMouseState(NULL,NULL)`.
+- `Keyboard.cpp` — `SDL_GetKeyboardState` returns `bool const*` now.
+- `WindowMode.cpp` — `SDL_WINDOW_FULLSCREEN_DESKTOP`→`SDL_WINDOW_FULLSCREEN`, `WindowMode_Shown = 0` (`SDL_WINDOW_SHOWN` removed; SDL3 windows show by default).
+- `Gamepad.cpp` — full `SDL_GameController*`→`SDL_Gamepad*` port (`SDL_OpenGamepad`, `SDL_CloseGamepad`, `SDL_GetGamepadJoystick`, `SDL_GetJoystickID`, `SDL_GetGamepadName`, `SDL_GamepadConnected`, `SDL_AddGamepadMappingsFromFile`, `SDL_GetGamepadButton/Axis`).
+- `Joystick.cpp` — `SDL_GetJoysticks(&count)` enumeration (no `SDL_GetNumJoysticks` in SDL3), `SDL_OpenJoystick`/`SDL_CloseJoystick`, `SDL_GetJoystickGUID`+`SDL_GUIDToString`, `SDL_GetNumJoystick*`, `SDL_GetJoystickName*`, `SDL_GetJoystickAxis/Button/Hat`.
+- `Button.cpp`/`Button.h` — `SDL_GameControllerAxis/Button` types → `SDL_GamepadAxis/Button`; `TRIGGERLEFT/TRIGGERRIGHT`→`LEFT_TRIGGER/RIGHT_TRIGGER`; face buttons → `SOUTH/EAST/WEST/NORTH` (values 0–3 unchanged); `LEFTSTICK`→`LEFT_STICK` etc.
+- `GamepadButton.cpp`/`GamepadAxis.cpp` — same constant renames (values preserved).
+- `OS.cpp` — `SDL_GetCPUCount`→`SDL_GetNumLogicalCPUCores`, `SDL_SetClipboardText` bool check.
+- `OpenGL.cpp` — `#include <SDL2/SDL.h>`→`<SDL3/SDL.h>` (profile query unchanged).
+- `libphx/include/SDL.h` shim — `"sdl/SDL.h"`→`<SDL3/SDL.h>` (system headers).
+- `libphx/CMakeLists.txt` — link `SDL2`→`SDL3`.
+- `libphx/ext/include/sdl/` (92 bundled SDL2 headers) — **deleted**; engine builds against system SDL3 3.4.14.
+- `tools/validate_sdl{,_window,_input}.py` — SDL3-only gates: init/API probe (`SDL_CreateWindow` sig, gamepad open path, `SDL_GUIDToString`, `SDL_EVENT_GAMEPAD_*`), hidden-window GL 4.6 probe, input-symbol + `gamecontrollerdb_205.txt` load gate (35 mappings).
+
+**Verification (2026-09-03):** `python3 configure.py test` all green (GLSL 118 OK, bytes, SDL×3, HUD); `cmake --build` clean; `ldd bin/libphx64r.so` → `libSDL3.so.0`; `./run.sh LTheory` boots native Wayland with `[GL] ... GL 4.6 (Core Profile) ... profile CORE | glew-4.6 yes`, `Resolution: 1024x768`, no errors.
+
+**Follow-up hardening (same day, pre-commit):**
+- `OS_GetClipboard` — was returning `SDL_GetClipboardText()` (SDL-malloc'd) directly, leaking per call; now cached in a static `std::string` + `SDL_free`, keeping borrow semantics.
+- `Input.cpp` timestamps — documented the `Uint64`→`uint32` ms truncation (~49-day wrap; verified all diffs are wrap-tolerant unsigned subtraction).
+- `Joystick_GetGUIDByIndex`/`Joystick_GetNameByIndex` — deleted (zero callers; module already `DEPRECATED`/`__FFI_IGNORE__`, no FFI binding exists).
+- `Window_SetPosition` + `WindowPos` — retired (zero callers; `SDL_SetWindowPosition` is a compositor no-op on Wayland anyway). Removed C def/decl, FFI cdef + both bindings, `Common.h`/`libphx.lua` typedefs, and deleted `WindowPos.cpp/.h/lua`. `Window_GetPosition` kept (still meaningful).

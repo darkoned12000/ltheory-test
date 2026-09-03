@@ -11,9 +11,7 @@ PHX_API  Joystick*  Joystick_Open            (int index);
 PHX_API  void       Joystick_Close           (Joystick*);
 
 PHX_API  cstr       Joystick_GetGUID         (Joystick*);
-PHX_API  cstr       Joystick_GetGUIDByIndex  (int index);
 PHX_API  cstr       Joystick_GetName         (Joystick*);
-PHX_API  cstr       Joystick_GetNameByIndex  (int index);
 PHX_API  int        Joystick_GetAxisCount    (Joystick*);
 PHX_API  int        Joystick_GetBallCount    (Joystick*);
 PHX_API  int        Joystick_GetButtonCount  (Joystick*);

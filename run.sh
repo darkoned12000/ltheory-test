@@ -4,7 +4,7 @@
 # Usage: ./run.sh [AppName]
 #   AppName defaults to 'LTheory' (e.g. ./run.sh LTheory)
 #
-# On Wayland we drive SDL2 through the native Wayland backend so the window is a
+# On Wayland we drive SDL3 through the native Wayland backend so the window is a
 # first-class compositor client (rather than a tiler-less throwaway X server).
 # A native-Wayland window gets proper decorations, a close button, and lets
 # Hyprland tile/clamp it to the requested size. DISPLAY is cleared so a stale

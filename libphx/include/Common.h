@@ -182,7 +182,6 @@
   ENUM_T typedef int32  TexWrapMode;
   ENUM_T typedef uint64 TimeStamp;
   ENUM_T typedef uint32 WindowMode;
-  ENUM_T typedef int    WindowPos;
 
 /* --- Deprecated ----------------------------------------------------------- */
 

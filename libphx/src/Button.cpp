@@ -623,72 +623,72 @@ uint8 Button_ToSDLMouseButton (Button button) {
   }
 }
 
-Button Button_FromSDLControllerAxis (SDL_GameControllerAxis controllerAxis) {
+Button Button_FromSDLControllerAxis (SDL_GamepadAxis controllerAxis) {
   switch (controllerAxis) {
     default: Fatal("Button_FromSDLControllerAxis: Unhandled case: %i", controllerAxis);
 
-    case SDL_CONTROLLER_AXIS_LEFTX:        return Button_Gamepad_LStickX;
-    case SDL_CONTROLLER_AXIS_LEFTY:        return Button_Gamepad_LStickY;
-    case SDL_CONTROLLER_AXIS_RIGHTX:       return Button_Gamepad_RStickX;
-    case SDL_CONTROLLER_AXIS_RIGHTY:       return Button_Gamepad_RStickY;
-    case SDL_CONTROLLER_AXIS_TRIGGERLEFT:  return Button_Gamepad_LTrigger;
-    case SDL_CONTROLLER_AXIS_TRIGGERRIGHT: return Button_Gamepad_RTrigger;
+    case SDL_GAMEPAD_AXIS_LEFTX:        return Button_Gamepad_LStickX;
+    case SDL_GAMEPAD_AXIS_LEFTY:        return Button_Gamepad_LStickY;
+    case SDL_GAMEPAD_AXIS_RIGHTX:       return Button_Gamepad_RStickX;
+    case SDL_GAMEPAD_AXIS_RIGHTY:       return Button_Gamepad_RStickY;
+    case SDL_GAMEPAD_AXIS_LEFT_TRIGGER:  return Button_Gamepad_LTrigger;
+    case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER: return Button_Gamepad_RTrigger;
   }
 }
 
-SDL_GameControllerAxis Button_ToSDLControllerAxis (Button button) {
+SDL_GamepadAxis Button_ToSDLControllerAxis (Button button) {
   switch (button) {
     default: Fatal("Button_ToSDLControllerAxis: Unhandled case: %i", button);
 
-    case Button_Gamepad_LStickX:  return SDL_CONTROLLER_AXIS_LEFTX;
-    case Button_Gamepad_LStickY:  return SDL_CONTROLLER_AXIS_LEFTY;
-    case Button_Gamepad_RStickX:  return SDL_CONTROLLER_AXIS_RIGHTX;
-    case Button_Gamepad_RStickY:  return SDL_CONTROLLER_AXIS_RIGHTY;
-    case Button_Gamepad_LTrigger: return SDL_CONTROLLER_AXIS_TRIGGERLEFT;
-    case Button_Gamepad_RTrigger: return SDL_CONTROLLER_AXIS_TRIGGERRIGHT;
+    case Button_Gamepad_LStickX:  return SDL_GAMEPAD_AXIS_LEFTX;
+    case Button_Gamepad_LStickY:  return SDL_GAMEPAD_AXIS_LEFTY;
+    case Button_Gamepad_RStickX:  return SDL_GAMEPAD_AXIS_RIGHTX;
+    case Button_Gamepad_RStickY:  return SDL_GAMEPAD_AXIS_RIGHTY;
+    case Button_Gamepad_LTrigger: return SDL_GAMEPAD_AXIS_LEFT_TRIGGER;
+    case Button_Gamepad_RTrigger: return SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
   }
 }
 
-Button Button_FromSDLControllerButton (SDL_GameControllerButton controllerButton) {
+Button Button_FromSDLControllerButton (SDL_GamepadButton controllerButton) {
   switch (controllerButton) {
     default: Fatal("Button_FromSDLControllerButton: Unhandled case: %i", controllerButton);
 
-    case SDL_CONTROLLER_BUTTON_A:             return Button_Gamepad_A;
-    case SDL_CONTROLLER_BUTTON_B:             return Button_Gamepad_B;
-    case SDL_CONTROLLER_BUTTON_X:             return Button_Gamepad_X;
-    case SDL_CONTROLLER_BUTTON_Y:             return Button_Gamepad_Y;
-    case SDL_CONTROLLER_BUTTON_BACK:          return Button_Gamepad_Back;
-    case SDL_CONTROLLER_BUTTON_GUIDE:         return Button_Gamepad_Guide;
-    case SDL_CONTROLLER_BUTTON_START:         return Button_Gamepad_Start;
-    case SDL_CONTROLLER_BUTTON_LEFTSTICK:     return Button_Gamepad_LStick;
-    case SDL_CONTROLLER_BUTTON_RIGHTSTICK:    return Button_Gamepad_RStick;
-    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  return Button_Gamepad_LBumper;
-    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return Button_Gamepad_RBumper;
-    case SDL_CONTROLLER_BUTTON_DPAD_UP:       return Button_Gamepad_Up;
-    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:     return Button_Gamepad_Down;
-    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:     return Button_Gamepad_Left;
-    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:    return Button_Gamepad_Right;
+    case SDL_GAMEPAD_BUTTON_SOUTH:        return Button_Gamepad_A;
+    case SDL_GAMEPAD_BUTTON_EAST:         return Button_Gamepad_B;
+    case SDL_GAMEPAD_BUTTON_WEST:         return Button_Gamepad_X;
+    case SDL_GAMEPAD_BUTTON_NORTH:        return Button_Gamepad_Y;
+    case SDL_GAMEPAD_BUTTON_BACK:         return Button_Gamepad_Back;
+    case SDL_GAMEPAD_BUTTON_GUIDE:        return Button_Gamepad_Guide;
+    case SDL_GAMEPAD_BUTTON_START:        return Button_Gamepad_Start;
+    case SDL_GAMEPAD_BUTTON_LEFT_STICK:   return Button_Gamepad_LStick;
+    case SDL_GAMEPAD_BUTTON_RIGHT_STICK:  return Button_Gamepad_RStick;
+    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return Button_Gamepad_LBumper;
+    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return Button_Gamepad_RBumper;
+    case SDL_GAMEPAD_BUTTON_DPAD_UP:      return Button_Gamepad_Up;
+    case SDL_GAMEPAD_BUTTON_DPAD_DOWN:    return Button_Gamepad_Down;
+    case SDL_GAMEPAD_BUTTON_DPAD_LEFT:    return Button_Gamepad_Left;
+    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:   return Button_Gamepad_Right;
   }
 }
 
-SDL_GameControllerButton Button_ToSDLControllerButton (Button button) {
+SDL_GamepadButton Button_ToSDLControllerButton (Button button) {
   switch (button) {
     default: Fatal("Button_ToSDLControllerButton: Unhandled case: %i", button);
 
-    case Button_Gamepad_A:       return SDL_CONTROLLER_BUTTON_A;
-    case Button_Gamepad_B:       return SDL_CONTROLLER_BUTTON_B;
-    case Button_Gamepad_X:       return SDL_CONTROLLER_BUTTON_X;
-    case Button_Gamepad_Y:       return SDL_CONTROLLER_BUTTON_Y;
-    case Button_Gamepad_Back:    return SDL_CONTROLLER_BUTTON_BACK;
-    case Button_Gamepad_Guide:   return SDL_CONTROLLER_BUTTON_GUIDE;
-    case Button_Gamepad_Start:   return SDL_CONTROLLER_BUTTON_START;
-    case Button_Gamepad_LStick:  return SDL_CONTROLLER_BUTTON_LEFTSTICK;
-    case Button_Gamepad_RStick:  return SDL_CONTROLLER_BUTTON_RIGHTSTICK;
-    case Button_Gamepad_LBumper: return SDL_CONTROLLER_BUTTON_LEFTSHOULDER;
-    case Button_Gamepad_RBumper: return SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
-    case Button_Gamepad_Up:      return SDL_CONTROLLER_BUTTON_DPAD_UP;
-    case Button_Gamepad_Down:    return SDL_CONTROLLER_BUTTON_DPAD_DOWN;
-    case Button_Gamepad_Left:    return SDL_CONTROLLER_BUTTON_DPAD_LEFT;
-    case Button_Gamepad_Right:   return SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+    case Button_Gamepad_A:       return SDL_GAMEPAD_BUTTON_SOUTH;
+    case Button_Gamepad_B:       return SDL_GAMEPAD_BUTTON_EAST;
+    case Button_Gamepad_X:       return SDL_GAMEPAD_BUTTON_WEST;
+    case Button_Gamepad_Y:       return SDL_GAMEPAD_BUTTON_NORTH;
+    case Button_Gamepad_Back:    return SDL_GAMEPAD_BUTTON_BACK;
+    case Button_Gamepad_Guide:   return SDL_GAMEPAD_BUTTON_GUIDE;
+    case Button_Gamepad_Start:   return SDL_GAMEPAD_BUTTON_START;
+    case Button_Gamepad_LStick:  return SDL_GAMEPAD_BUTTON_LEFT_STICK;
+    case Button_Gamepad_RStick:  return SDL_GAMEPAD_BUTTON_RIGHT_STICK;
+    case Button_Gamepad_LBumper: return SDL_GAMEPAD_BUTTON_LEFT_SHOULDER;
+    case Button_Gamepad_RBumper: return SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER;
+    case Button_Gamepad_Up:      return SDL_GAMEPAD_BUTTON_DPAD_UP;
+    case Button_Gamepad_Down:    return SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+    case Button_Gamepad_Left:    return SDL_GAMEPAD_BUTTON_DPAD_LEFT;
+    case Button_Gamepad_Right:   return SDL_GAMEPAD_BUTTON_DPAD_RIGHT;
   }
 }

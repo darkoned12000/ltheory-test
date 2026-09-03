@@ -2,7 +2,7 @@
 #include "CullFace.h"
 #include "OpenGL.h"
 #include "RenderState.h"
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 #include <cstdio>
 
 void OpenGL_Init () {
