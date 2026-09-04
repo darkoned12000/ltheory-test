@@ -1,6 +1,6 @@
 # Multithreading Plan — Multithreaded Render/Submit (Roadmap #10)
 
-**Status:** In progress — Pre-flight, Phase 0, Phase 1 complete (clean build/run verified); Phase 2 skipped (GL instancing deferred until meshes unified); Phase 3 next.
+**Status:** In progress — Pre-flight, Phases 0, 1, 3, 4, 5 complete (clean build/run verified, equivalence proven per phase); Phases 2 + 6 deferred with rationale (see below); Phase 7 optional; Definition-of-done review pending.
 **Owner goal:** Parallelize the CPU-side draw submission so a heavily populated
 scene (dozens of ships, station, planet, nebula, many fragments) stops serializing
 on one core — while **keeping the running app intact at every step**. The app must
@@ -387,7 +387,8 @@ previous phase before proceeding. No phase is skipped if its acceptance criteria
 - Phase 4 already parallelizes across N workers with host merge; Phase 5 removes per-frame alloc churn via persistent host-owned buffers (grown between frames per §5.4 capacity rule) + validates scaling. No new threading primitives, no GLSL, no ABI changes. Workers split the object set as in Phase 4; host merges by `(shader_id, mesh_id)` and issues grouped (non-instanced) draws via existing `Render_DrawList`.
 - **Gate:** same image-diff equivalence as Phase 4; alloc overhead drops (persistent pool vs per-frame `ffi.new`); timing improves at high object counts, stays flat/identical at low counts (no regression). `glDrawElements` count stays N (no instancing per pre-flight decision) — the win is reduced alloc + state-change overhead, not fewer draws.
 
-### Phase 6 — Reuse the pool for other CPU jobs (optional)
+### Phase 6 — Reuse the pool for other CPU jobs (DEFERRED — no measured benefit)
+**Status: deferred.** Assessment: GPUParticles simulation already runs on GPU compute shaders (CPU only drains a small emit queue into an SSBO — trivial vs ~7,500 submit GL calls/frame, no bottleneck to offload). SDF `Gen` is Lua-only spawn-time code, cached per seed (not per-frame); C++ workers fundamentally cannot execute Lua, so this would require rewriting Gen in C++ or multi-Lua-states — a separate project, not a queue extension. No measured benefit in Phases 3–4 for either; do not expand scope without data. Revisit only if profiling shows Gen/particle-prep as limiters *and* after resolving the Lua/worker boundary.
 - If worthwhile, expose the same queue to other offloadable work (e.g. SDF `Gen` pipeline,
   compute-particle prep already on job threads). **Out of scope unless measured benefit** in
   Phases 3–4 — do not expand scope without data.
@@ -592,7 +593,8 @@ with a legacy fallback) — see §12.
 - [x] Persistent host-owned pools (`pool_output`/`pool_bodies`/`pool_capacity` in `Batcher.lua`, grown host-only between frames on overflow with legacy fallback that frame per §5.4 capacity rule) replacing per-frame `ffi.new`; no new threading primitives, no GLSL, no ABI changes. Proven: exactly 1 alloc across 15 frames (vs 30 before) — zero steady-state churn.
 - [x] Scaling validation: image-diff equivalent within baseline noise (pooled RMSE 0.0278–0.0365 vs baseline-vs-baseline 0.021–0.0337); 35s pooled stress with no crash/abort/fatal/Lua errors; clean boots + graceful exits throughout. Draws stay N (no instancing) — win is overhead reduction. Flag off identical (no pool touched, legacy path).
 
-### Phase 6 — Reuse pool for other CPU jobs (optional)
+### Phase 6 — Reuse pool for other CPU jobs (DEFERRED — no measured benefit)
+**Status: deferred** (see §7 assessment): GPUParticles already GPU-compute (CPU prep trivial); SDF `Gen` is Lua-only spawn-time code that C++ workers cannot execute. No measured benefit; revisit only if profiling shows these as limiters *and* after resolving the Lua/worker boundary.
 - [ ] Only if measured benefit in Phases 3–4; expose the queue to SDF `Gen` / compute-particle prep
       (§7 Phase 6). Do not expand scope without data.
 

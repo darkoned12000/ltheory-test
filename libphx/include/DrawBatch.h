@@ -24,7 +24,14 @@ typedef struct {
 
 /* Host-thread replay only. Groups consecutive same-(state, mesh, split), no
  * reordering. Single-threaded in Phase 3; no threads, no GL off-host.
- * Legacy Mesh_Draw untouched; Lua falls back to it when batching is off. */
+ * Legacy Mesh_Draw untouched. */
 PHX_API void Render_DrawList(const DrawJob* jobs, int count);
+
+/* Pure grouping query for unit tests (no GL). Returns group count; writes start
+ * index of each group into out_starts[0..groups-1] (caller provides capacity >=
+ * count; groups <= count always; truncates writes but still returns true count
+ * if capacity exceeded). Order-preserving, deterministic. Used by Render_DrawList;
+ * unit-tested headlessly. */
+PHX_API int DrawBatch_GroupRuns(const DrawJob* jobs, int count, int* out_starts, int capacity);
 
 #endif

@@ -75,9 +75,11 @@ function Batcher.replay ()
   current = nil
   if not b or b.count == 0 then return end
   if queue == nil then
-    queue = RenderJobQueue_ffi.Create(0)  -- auto worker count; lives for process lifetime
+    queue = RenderJobQueue_ffi.Create((Config.render and Config.render.workers) or 0)  -- 0 = auto; lives for process lifetime
   end
+  Profiler.Begin('Render.BatchBuild')
   RenderJobQueue_ffi.BuildBatch(queue, b.bodies, b.output, b.count)  -- workers fill matrices; barrier waits
+  Profiler.End()
   DrawBatch_ffi.RenderDrawList(b.output, b.count)  -- host replays in order
 end
 
