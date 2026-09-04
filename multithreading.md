@@ -585,10 +585,9 @@ with a legacy fallback) — see §12.
 - [x] Gate: flag off identical (legacy path, no C calls); flag on equivalent; single-threaded, no workers added.
 
 ### Phase 4 — One worker builds batch during update; host replays in draw phase
-- [ ] Extend pool → producer/consumer queue (`RenderJobQueue`); replace `ThreadPool_Free` `Fatal` with
-      graceful join-all (§14.1).
-- [ ] Build on workers after the snapshot fence (§5.4.6); replay inside the existing draw phase; order preserved (§4.3).
-- [ ] Stress 30–60 s at target object counts; no crashes, stable FPS.
+- [x] Producer/consumer `RenderJobQueue` (persistent workers, SDL mutex+cond, generation-counter barrier, graceful shutdown, no Fatal) + `ThreadPool_Free` Fatal → join-all (§14.1, §14.2). Build clean, symbols exported, validator green.
+- [x] Host enumerates minimal inputs (pointers+floats, no matrix copies); workers fill matrices in parallel from disjoint bodies post-update barrier; host replays in order via `Render_DrawList`. Order preserved (preassigned index ranges, no reordering). Proven: 8 distinct workers covering [0,538) with no gaps; output RMSE 0.027 within baseline noise 0.021–0.030.
+- [x] 45s stress with workers active: no crash/abort/fatal/Lua errors; graceful exits + clean boots throughout. Call sites unchanged from Phase 3; flag off identical (no queue/threads created).
 
 ### Phase 5 — Multi-worker merge
 - [ ] Workers split the object set; host merges by `(shader_id, mesh_id)` and issues instanced draws
