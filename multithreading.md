@@ -383,10 +383,9 @@ previous phase before proceeding. No phase is skipped if its acceptance criteria
 - **Gate:** image-diff identical to baseline; fixed-FPS loop stable at target object counts;
   no crashes over a long run (stress: 30–60 s).
 
-### Phase 5 — Multi-worker merge (§instancing itself was gated up to Phase 2)
-- Multiple workers split the object set, each builds local sub-batches; host merges by
-  `(shader_id, mesh_id)` and issues `glDrawElementsInstanced` per group. This is where cores pay off: parallel prepare across many objects (instancing batching was covered earlier).
-- **Gate:** same image-diff equivalence as Phase 4 (§instancing already verified in the deferred sub-phase); draw-call count drops vs Phase 4; timing improves at high object counts, stays flat/identical at low counts (no regression).
+### Phase 5 — Performance hardening: persistent pooling + scaling validation (no instancing)
+- Phase 4 already parallelizes across N workers with host merge; Phase 5 removes per-frame alloc churn via persistent host-owned buffers (grown between frames per §5.4 capacity rule) + validates scaling. No new threading primitives, no GLSL, no ABI changes. Workers split the object set as in Phase 4; host merges by `(shader_id, mesh_id)` and issues grouped (non-instanced) draws via existing `Render_DrawList`.
+- **Gate:** same image-diff equivalence as Phase 4; alloc overhead drops (persistent pool vs per-frame `ffi.new`); timing improves at high object counts, stays flat/identical at low counts (no regression). `glDrawElements` count stays N (no instancing per pre-flight decision) — the win is reduced alloc + state-change overhead, not fewer draws.
 
 ### Phase 6 — Reuse the pool for other CPU jobs (optional)
 - If worthwhile, expose the same queue to other offloadable work (e.g. SDF `Gen` pipeline,
@@ -482,7 +481,7 @@ previous phase before proceeding. No phase is skipped if its acceptance criteria
 - **Phase 2** (deferred instancing sub-phase): per-instance attributes (§#1) + texture-skin handling (§#3); only if instancing is adopted.
 - **Phase 3:** host replay entry point + ffi exposure — low-risk bookkeeping that makes Phase 4 possible.
 - **Phase 4:** producer/consumer handoff (`RenderJobQueue` enqueue/dequeue + barrier) — medium risk, where most threading bugs live; its own teardown is no-Fatal (§14.1). The *existing* pool's F5-reload `Fatal` removal lands earlier in Phase 3 (§6.2), so reload safety isn't blocked on the new queue.
-- **Phase 5:** multi-worker merge (§instancing itself was gated up to Phase 2) — payoff here; keep image-diff gate strict (incl. translucent §3.6 + tolerance §8).
+- **Phase 5:** performance hardening (persistent pooling + scaling validation, no instancing) — payoff via reduced alloc/state-change overhead; keep image-diff gate strict (incl. translucent §3.6 + tolerance §8).
 - Do **not** proceed past a phase whose acceptance criteria aren't met; the whole plan's premise is
   incremental safety over raw throughput.
 
@@ -589,11 +588,9 @@ with a legacy fallback) — see §12.
 - [x] Host enumerates minimal inputs (pointers+floats, no matrix copies); workers fill matrices in parallel from disjoint bodies post-update barrier; host replays in order via `Render_DrawList`. Order preserved (preassigned index ranges, no reordering). Proven: 8 distinct workers covering [0,538) with no gaps; output RMSE 0.027 within baseline noise 0.021–0.030.
 - [x] 45s stress with workers active: no crash/abort/fatal/Lua errors; graceful exits + clean boots throughout. Call sites unchanged from Phase 3; flag off identical (no queue/threads created).
 
-### Phase 5 — Multi-worker merge
-- [ ] Workers split the object set; host merges by `(shader_id, mesh_id)` and issues instanced draws
-      (§7 Phase 5).
-- [ ] Image-diff equivalence holds (incl. translucent); draw-call count drops vs Phase 4; timing
-      improves at high counts only.
+### Phase 5 — Performance hardening: persistent pooling + scaling validation (no instancing)
+- [ ] Persistent host-owned buffers (output DrawJob array + bodies array, grown between frames per §5.4 capacity rule) replacing per-frame `ffi.new`; no new threading primitives, no GLSL, no ABI changes.
+- [ ] Scaling validation: image-diff equivalence as Phase 4 (incl. translucent); alloc/state-change overhead drops; timing improves at high counts, flat/identical at low counts (no regression). Draws stay N (no instancing) — win is overhead reduction.
 
 ### Phase 6 — Reuse pool for other CPU jobs (optional)
 - [ ] Only if measured benefit in Phases 3–4; expose the queue to SDF `Gen` / compute-particle prep
