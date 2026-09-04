@@ -1,4 +1,5 @@
 local Entity = require('Game.Entity')
+local Batcher = require('Game.Batcher')
 
 function Entity:addVisibleMesh (mesh, material)
   assert(not self.mesh)
@@ -11,9 +12,11 @@ end
 
 function Entity:renderVisibleMesh (state)
   if state.mode == BlendMode.Disabled then
-    self.material:start()
-    self.material:setState(self)
-    self.mesh:draw()
-    self.material:stop()
+    if not (Batcher.isOpen() and Batcher.record(self.material, self.mesh, self, nil, true)) then
+      self.material:start()
+      self.material:setState(self)
+      self.mesh:draw()
+      self.material:stop()
+    end
   end
 end

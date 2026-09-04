@@ -49,6 +49,28 @@ def run_bytes_tests():
         luajit = 'luajit'
     return subprocess.run([luajit, exe]).returncode
 
+def run_drawbatch_tests():
+    print('[configure.py] Validating DrawBatch grouping (consecutive-run, order-preserving)')
+    exe = os.path.join('tools', 'validate_drawbatch.lua')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_drawbatch.lua found - skipping')
+        return 0
+    luajit = os.path.join('libphx', 'ext', 'bin', 'linux64', 'luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    return subprocess.run([luajit, exe]).returncode
+
+def run_renderqueue_tests():
+    print('[configure.py] Validating RenderJobQueue threading (barrier, order, shutdown)')
+    exe = os.path.join('tools', 'validate_renderqueue.lua')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_renderqueue.lua found - skipping')
+        return 0
+    luajit = os.path.join('libphx', 'ext', 'bin', 'linux64', 'luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    return subprocess.run([luajit, exe]).returncode
+
 def run_sdl_tests():
     print('[configure.py] Validating SDL pkg/header/init + input wiring')
     rc = 0
@@ -90,6 +112,8 @@ def run_tests():
         print('[configure.py] No test executable found - skipping')
     result |= run_shader_tests()
     result |= run_bytes_tests()
+    result |= run_drawbatch_tests()
+    result |= run_renderqueue_tests()
     result |= run_sdl_tests()
     result |= run_hud_tests()
     return result

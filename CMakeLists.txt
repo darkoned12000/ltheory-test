@@ -49,6 +49,28 @@ add_dependencies (lt phx_validate_bytes)
 # the validator races ahead of the link and fails to load.
 add_dependencies (phx_validate_bytes phx)
 
+add_custom_target (phx_validate_drawbatch
+  COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_drawbatch.lua
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating DrawBatch grouping (consecutive-run, order-preserving)"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_drawbatch)
+# Same dlopen ordering as bytes: build phx first so bin/libphx64.so exists
+# before this validator runs (grouping test calls DrawBatch_GroupRuns via ffi).
+add_dependencies (phx_validate_drawbatch phx)
+
+add_custom_target (phx_validate_renderqueue
+  COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_renderqueue.lua
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating RenderJobQueue threading (barrier, order, shutdown)"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_renderqueue)
+# Same dlopen ordering: build phx first so bin/libphx64.so exists before this
+# validator runs (queue test calls BuildBatch via ffi with real bodies, no GL).
+add_dependencies (phx_validate_renderqueue phx)
+
 # --- Build-time SDL validation gates ---------------------------------------
 # Offline pkg/header/init + hidden-window probe for the SDL2->SDL3 upgrade.
 # validate_sdl.py checks pkg-config 2.32.70/3.4.14 + SDL_Init(SDL_INIT_VIDEO)

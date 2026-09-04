@@ -37,8 +37,11 @@ ThreadPool* ThreadPool_Create (int threads) {
 
 void ThreadPool_Free (ThreadPool* self) {
   for (int i = 0; i < self->threads; ++i)
-    if (self->thread[i].handle)
-      Fatal("ThreadPool_Free: Attempting to free pool with active threads");
+    if (self->thread[i].handle) {
+      int ret;
+      SDL_WaitThread(self->thread[i].handle, &ret);
+      self->thread[i].handle = 0;
+    }
   MemFree(self->thread);
   MemFree(self);
 }

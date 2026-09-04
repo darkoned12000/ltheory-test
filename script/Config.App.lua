@@ -117,6 +117,10 @@ Config.game = {
 Config.render = {
   fullscreen = false,
   vsync      = true,
+  -- CPU-side draw batching/submit. OFF by default so the running app is unchanged;
+  -- override in Config.Local.lua to opt in.
+  multithread      = false,
+  workers          = 0,  -- worker threads for batch build (0 = auto via core count, clamped 1..8)
 }
 
 -- Window setup at launch (consumed by Application:run). ``width``/``height`` set
