@@ -17,10 +17,19 @@ end)
 
 local function setTextureState (tex)
   tex:genMipmap()
+  local m = Cache.filterMode or { min = TexFilter.LinearMipLinear, aniso = 16 }
   tex:setMagFilter(TexFilter.Linear)
-  tex:setMinFilter(TexFilter.LinearMipLinear)
-  tex:setAnisotropy(16)
+  tex:setMinFilter(m.min)
+  if m.aniso and m.aniso > 1 then tex:setAnisotropy(m.aniso) end
   tex:setWrapMode(TexWrapMode.Repeat)
+end
+
+function Material.applyFilterMode ()
+  for _, mat in ipairs(allMaterials) do
+    if mat.texDiffuse then setTextureState(mat.texDiffuse) end
+    if mat.texNormal  then setTextureState(mat.texNormal) end
+    if mat.texSpec    then setTextureState(mat.texSpec) end
+  end
 end
 
 function Material.Create (name, diffuse, normal, spec)

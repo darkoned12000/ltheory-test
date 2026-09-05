@@ -144,6 +144,14 @@ function GameView:draw (focus, active)
   local eye = self.camera.pos
   world:beginRender()
 
+  do -- Texture-filter quality (Bilinear/Trilinear/Aniso): re-apply only on change
+    local tf = Settings.get('render.textureFilter')
+    if tf ~= self.appliedTextureFilter then
+      self.appliedTextureFilter = tf
+      self.renderer:setTextureFilter(tf)
+    end
+  end
+
   Profiler.Begin('Render.Submit')
   do -- Opaque Pass
     Profiler.Begin('Render.Opaque')
@@ -309,6 +317,7 @@ function GameView:draw (focus, active)
     self.renderer:startPostEffects()
     if Settings.get('postfx.bloom.enable') then self.renderer:bloom(Settings.get('postfx.bloom.radius')) end
     if Settings.get('postfx.tonemap.enable') then self.renderer:tonemap() end
+    if Settings.get('postfx.vignette.enable') then self.renderer:vignette() end
     if Settings.get('postfx.aberration.enable') then
       self.renderer:applyFilter('aberration', function ()
         Shader.SetFloat('strength', Settings.get('postfx.aberration.strength'))
@@ -321,6 +330,9 @@ function GameView:draw (focus, active)
     end
     if Settings.get('postfx.sharpen.enable') then
       self.renderer:sharpen(2, 1, 1)
+    end
+    if Settings.get('postfx.grain.enable') then
+      self.renderer:grain(Settings.get('postfx.grain.strength') or 1)
     end
     Profiler.Begin('Render.Present')
     self.renderer:present(x, y, sx, sy, ss > 2)

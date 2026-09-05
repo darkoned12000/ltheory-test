@@ -135,16 +135,43 @@ Config.window = {
   quitKey    = Button.Keyboard.Escape,
 }
 
--- GPU portability: same binary scales from integrated GPU to RTX. These are the
--- source-of-truth defaults; Renderer/Application seed runtime Settings from them at
--- startup (see Renderer.lua), so a weak machine can drop bloom / particle load for
--- framerate instead of shipping broken on old hardware. Adjust per target HW.
+-- GPU portability & picture: same binary scales from integrated GPU to RTX.
+-- This block is the source of truth for every graphics/post-processing option;
+-- Renderer seeds runtime Settings from it at startup (see Renderer.lua), and
+-- the debug window edits the same Settings live. A future in-game Settings
+-- screen will present exactly this set. Override anything here, or outright, in
+-- Config.Local.lua. A key left as nil (omit the line) keeps the built-in value.
 Config.gpu = {
+  -- Low-end caps (VRAM / GPU load).
   maxParticles     = 131072, -- GPU particle pool capacity (VRAM-bound)
   computeShadows   = false,  -- shadow-map lighting; no backend yet, kept for parity
-  bloom            = true,   -- expensive post-pass; disable to cut load on weak GPUs
-  sharpen          = true,
-  superSample      = 'High', -- Off / Low / Medium / High (context re-init gated)
+
+  -- Post chain. Each switch enables one pass; its optional tunables follow it
+  -- and are only applied when present (nil = keep the default).
+  bloom              = true,   -- Karis exponentially-weighted bloom
+  bloomRadius        = 48,     --   blur spread (4..64)
+  bloomIntensity     = 1,      --   contribution (0..4)
+  bloomThreshold     = 1,      --   soft-knee floor (0..8)
+  sharpen            = true,   -- unsharp high-pass sharpen
+  tonemap            = true,   -- HDR -> display (AgX) + sRGB; false = raw clamp
+  tonemapOperator    = 'AgX',  --   AgX | ACES | Filmic | Khronos
+  exposureEV         = 0,      --   exposure stops (-4..4)
+  vignette           = true,   -- cinematic darkened corners
+  vignetteStrength   = 0.25,   --   (0..1)
+  vignetteHardness   = 20,     --   falloff toward center (2..32)
+  grain              = false,  -- animated film grain, final pass
+  grainStrength      = 1,      --   (0..4)
+  aberration         = false,  -- chromatic aberration (lens fringe)
+  aberrationStrength = 1,      --   (0..1)
+  radialblur         = false,  -- radial motion blur / scanlines
+  radialblurStrength = 1,      --   (0..1)
+  radialblurScanlines = 1,     --   (0..1)
+
+  -- Texture / edge quality.
+  filtering     = 'Aniso', -- Bilinear | Trilinear | Aniso (texture filter quality)
+  superSample   = '2x',    -- Off | 2x | 4x (SSAA: renders the frame over-res)
+
+  -- Future: antiAlias = 'TAA' — temporal AA (planned, not yet wired).
 }
 
 Config.ui = {

@@ -5,16 +5,43 @@ local Cache = require('phx.util.Cache')
 local Renderer = class(function (self)
   self.ds = 4
 
-  -- GPU portability: seed post-processing from Config.gpu if present so a weak
-  -- machine can drop the expensive bloom/sharpen passes at startup. Guarded by
-  -- Settings.exists() so it's inert until Config.App.lua has defined the block.
+  -- GPU portability: seed the whole graphics surface from Config.gpu if present,
+  -- so a weak machine can drop expensive passes (bloom/sharpen/tonemap/...), an
+  -- HDR look can be baked from config instead of the debug-window sliders, and a
+  -- future in-game Settings screen will present exactly this set. Guarded by
+  -- Settings.exists() so it's inert until Config.App.lua has defined the block;
+  -- a key left nil (or absent) keeps the built-in/debug-window default.
   local gpu = (Config and Config.gpu) or {}
-  if Settings.exists('postfx.bloom.enable') then
-    Settings.set('postfx.bloom.enable', gpu.bloom ~= false)
+  local function seed (key, value)
+    if Settings.exists(key) and value ~= nil then Settings.set(key, value) end
   end
-  if Settings.exists('postfx.sharpen.enable') then
-    Settings.set('postfx.sharpen.enable', gpu.sharpen ~= false)
-  end
+
+  seed('postfx.bloom.enable',        gpu.bloom)
+  seed('postfx.bloom.radius',        gpu.bloomRadius)
+  seed('postfx.bloom.intensity',     gpu.bloomIntensity)
+  seed('postfx.bloom.threshold',     gpu.bloomThreshold)
+  seed('postfx.sharpen.enable',      gpu.sharpen)
+  seed('postfx.tonemap.enable',      gpu.tonemap)
+  seed('postfx.exposure.ev',         gpu.exposureEV)
+  seed('postfx.vignette.enable',     gpu.vignette)
+  seed('postfx.vignette.strength',   gpu.vignetteStrength)
+  seed('postfx.vignette.hardness',   gpu.vignetteHardness)
+  seed('postfx.grain.enable',        gpu.grain)
+  seed('postfx.grain.strength',      gpu.grainStrength)
+  seed('postfx.aberration.enable',   gpu.aberration)
+  seed('postfx.aberration.strength', gpu.aberrationStrength)
+  seed('postfx.radialblur.enable',   gpu.radialblur)
+  seed('postfx.radialblur.strength', gpu.radialblurStrength)
+  seed('postfx.radialblur.scanlines', gpu.radialblurScanlines)
+
+  local filterIdx = { Bilinear = 1, Trilinear = 2, Aniso = 3, Anisotropic = 3 }
+  seed('render.textureFilter', filterIdx[gpu.filtering])
+
+  local ssIdx = { ['Off'] = 1, ['2x'] = 2, ['4x'] = 3 }
+  seed('render.superSample', ssIdx[gpu.superSample])
+
+  local ops = { AgX = 1, ACES = 2, Filmic = 3, Khronos = 4 }
+  seed('postfx.tonemap.operator', ops[gpu.tonemapOperator])
 end)
 
 local colorFormat = TexFormat.RGBA16F
@@ -24,14 +51,20 @@ Settings.addBool  ('postfx.aberration.enable',   'Aberration',  false)
 Settings.addFloat ('postfx.aberration.strength', ' - Strength', 1, 0, 1)
 Settings.addBool  ('postfx.bloom.enable',        'Bloom',       true)
 Settings.addFloat ('postfx.bloom.radius',        ' - Radius',   48, 4, 64)
+Settings.addFloat ('postfx.bloom.intensity',     ' - Intensity', 1, 0, 4)
+Settings.addFloat ('postfx.bloom.threshold',     ' - Threshold', 1, 0, 8)
 Settings.addBool  ('postfx.sharpen.enable',      'Sharpen',     true)
 Settings.addBool  ('postfx.radialblur.enable',   'RadialBlur',  false)
 Settings.addFloat ('postfx.radialblur.strength', ' - Strength', 1, 0, 1)
 Settings.addFloat ('postfx.radialblur.scanlines', ' - Scanlines', 1, 0, 1)
 Settings.addBool  ('postfx.tonemap.enable',      'Tonemap',     true)
+Settings.addEnum  ('postfx.tonemap.operator',    ' - Operator', 1, { 'AgX', 'ACES', 'Filmic', 'Khronos' })
+Settings.addFloat ('postfx.exposure.ev',         ' - Exposure EV', 0, -4, 4)
 Settings.addBool  ('postfx.vignette.enable',     'Vignette',    true)
 Settings.addFloat ('postfx.vignette.strength',   ' - Strength', 0.25, 0, 1)
 Settings.addFloat ('postfx.vignette.hardness',   ' - Hardness', 20.0, 2, 32)
+Settings.addBool  ('postfx.grain.enable',        'Film Grain',  false)
+Settings.addFloat ('postfx.grain.strength',      ' - Amount',   1, 0, 4)
 
 Settings.addFloat ('render.fovY',        'FOV',                   70, 50, 100)
 Settings.addFloat ('render.lodScale',    'LOD Scale',             0.3, 0.1, 1.0)
@@ -41,6 +74,7 @@ Settings.addBool  ('render.cullface',    'Backface Culling',      true)
 Settings.addFloat ('render.logZNear',    'Log Z Near',            -1, -2, 3)
 Settings.addFloat ('render.logZFar',     'Log Z Far',             7, 1, 8)
 Settings.addBool  ('render.showBuffers', 'Show Deferred Buffers', false)
+Settings.addEnum  ('render.textureFilter', 'Texture Filter', 3, { 'Bilinear', 'Trilinear', 'Trilinear + Aniso' })
 Settings.addFloat ('render.shadow.radius', 'Shadow Radius (PCF)',   2, 0, 8)
 Settings.addFloat ('render.shadow.bias',   'Shadow Bias',           0.001, -0.01, 0.1)
 Settings.addFloat ('render.shadow.scale',  'Shadow Dist Scale',     0.0005, 0, 0.01)
@@ -88,38 +122,116 @@ end
 
 function Renderer:bloom (radius)
   Draw.Color(1, 1, 1, 1)
-  local width = radius * 0.2
   local A = self.dsBuffer0
   local B = self.dsBuffer1
+  local threshold = Settings.get('postfx.bloom.threshold') or 1.0
+  local intensity = Settings.get('postfx.bloom.intensity') or 1.0
+  local knee = threshold * 0.5
 
-  do -- bloompre: guarded (item 4) so a broken pass skips cleanly without leaving A un-pushed
+  local baseW = self.resX / self.ds
+  local baseH = self.resY / self.ds
+
+  -- Pyramid budget: few enough levels that every level keeps a 2x2 block for
+  -- the Karis downsample, and radius steers how many octaves get kept.
+  local mips = 1
+  while mips < 12 and math.floor(baseW / (2 ^ mips)) >= 2 and math.floor(baseH / (2 ^ mips)) >= 2 do
+    mips = mips + 1
+  end
+  local levels = math.max(2, math.min(mips, 4 + math.floor(radius / 8)))
+
+  do -- Prefilter (guarded, item 4): soft-knee threshold of the HDR scene -> level 0
     local shader = Cache.Shader('ui', 'filter/bloompre')
     if shader then
-      A:push()
+      A:pushLevel(0)
       shader:start()
+        Shader.SetFloat('bloomThreshold', threshold)
+        Shader.SetFloat('bloomKnee', knee)
         Shader.SetTex2D('src', self.buffer0)
-        Draw.Rect(0, 0, self.resX / self.ds, self.resY / self.ds)
+        Draw.Rect(0, 0, baseW, baseH)
       shader:stop()
       A:pop()
     end
   end
 
-  for i = 1, 3 do
-    self:blur(B, A, 1, 0, radius, width)
-    self:blur(A, B, 0, 1, radius, width)
+  do -- Downsample (guarded, item 4): Karis-weighted average, one level per octave
+    local shader = Cache.Shader('ui', 'filter/bloomdown')
+    for i = 1, levels - 1 do
+      if shader then
+        local w = math.floor(baseW / (2 ^ (i - 1)))
+        local h = math.floor(baseH / (2 ^ (i - 1)))
+        A:setMipRange(i - 1, i - 1)
+        A:setMinFilter(TexFilter.Linear)
+        A:pushLevel(i)
+        shader:start()
+          Shader.SetFloat2('srcSize', w, h)
+          Shader.SetTex2D('src', A)
+          Draw.Rect(0, 0, math.floor(baseW / (2 ^ i)), math.floor(baseH / (2 ^ i)))
+        shader:stop()
+        A:pop()
+      end
+    end
+  end
 
+  do -- Seed the accumulation chain with the coarsest level
+    local shader = Cache.Shader('ui', 'filter/identity')
+    if shader then
+      local w = math.floor(baseW / (2 ^ (levels - 1)))
+      local h = math.floor(baseH / (2 ^ (levels - 1)))
+      A:setMipRange(levels - 1, levels - 1)
+      A:setMinFilter(TexFilter.Linear)
+      B:pushLevel(levels - 1)
+      shader:start()
+        Shader.SetTex2D('src', A)
+        Draw.Rect(0, 0, w, h)
+      shader:stop()
+      B:pop()
+    end
+  end
+
+  do -- Progressive upsample (guarded, item 4): blend each level with the accumulated looser bloom
+    local shader = Cache.Shader('ui', 'filter/bloomup')
+    for i = levels - 2, 0, -1 do
+      if shader then
+        local w = math.floor(baseW / (2 ^ i))
+        local h = math.floor(baseH / (2 ^ i))
+        A:setMipRange(i, i)
+        A:setMinFilter(TexFilter.Linear)
+        B:setMipRange(i + 1, i + 1)
+        B:setMinFilter(TexFilter.Linear)
+        B:pushLevel(i)
+        shader:start()
+          Shader.SetFloat('scatter', 0.7)
+          Shader.SetTex2D('src', A)
+          Shader.SetTex2D('srcLow', B)
+          Draw.Rect(0, 0, w, h)
+        shader:stop()
+        B:pop()
+      end
+    end
+  end
+
+  do -- Composite bloom back into the HDR scene (additive, pre-tonemap)
     local shader = Cache.Shader('ui', 'filter/bloomcomposite')
-    if shader then -- item 4: skip broken composite; blur loop above already guarded internally
+    if shader then
+      B:setMipRange(0, 0)
+      B:setMinFilter(TexFilter.Linear)
       self.buffer1:pushLevel(self.level)
       shader:start()
+        Shader.SetFloat('intensity', intensity)
         Shader.SetTex2D('src', self.buffer0)
-        Shader.SetTex2D('srcBlur', A)
+        Shader.SetTex2D('srcBlur', B)
         Draw.Rect(0, 0, self.resX, self.resY)
       shader:stop()
       self.buffer1:pop()
       self:swap()
     end
   end
+
+  -- Leave the pyramid textures unrestricted for the next frame
+  A:setMipRange(0, 0)
+  B:setMipRange(0, 0)
+  A:setMinFilter(TexFilter.Linear)
+  B:setMinFilter(TexFilter.Linear)
 end
 
 function Renderer:blur (dst, src, dx, dy, radius)
@@ -384,8 +496,8 @@ function Renderer:tonemap ()
   if not shader then return end   -- item 4: skip broken pass; buffer push/pop/swap stay balanced below
   self.buffer1:pushLevel(self.level)
   shader:start()
-    Shader.SetInt('hdrOut', 0)
-    Shader.SetFloat2('size', self.resX, self.resY)
+    Shader.SetInt('texOp', Settings.get('postfx.tonemap.operator') or 1)
+    Shader.SetFloat('exposure', 2.0 ^ (Settings.get('postfx.exposure.ev') or 0))
     Shader.SetTex2D('src', self.buffer0)
     Draw.Color(1, 1, 1, 1)
     Draw.Rect(0, 0, self.resX, self.resY)
@@ -409,6 +521,34 @@ function Renderer:vignette ()
   shader:stop()
   self.buffer1:pop()
   self:swap()
+end
+
+function Renderer:grain (strength)
+  local shader = Cache.Shader('ui', 'filter/grain')
+  if not shader then return end   -- item 4: skip broken pass; buffer push/pop/swap stay balanced below
+  self.buffer1:pushLevel(self.level)
+  shader:start()
+    Shader.SetFloat('strength', strength)
+    Shader.SetFloat('time', (tonumber(Time.GetRaw()) or 0) * 0.001)
+    Shader.SetFloat2('size', self.resX, self.resY)
+    Shader.SetTex2D('src', self.buffer0)
+    Draw.Color(1, 1, 1, 1)
+    Draw.Rect(0, 0, self.resX, self.resY)
+  shader:stop()
+  self.buffer1:pop()
+  self:swap()
+end
+
+local filterModes = {
+  [1] = { min = TexFilter.Linear,          mag = TexFilter.Linear, aniso = 0,  mip = false },
+  [2] = { min = TexFilter.LinearMipLinear, mag = TexFilter.Linear, aniso = 0,  mip = true },
+  [3] = { min = TexFilter.LinearMipLinear, mag = TexFilter.Linear, aniso = 16, mip = true },
+}
+
+function Renderer:setTextureFilter (mode)
+  Cache.filterMode = filterModes[mode] or filterModes[3]
+  if Cache.applyFilterMode then Cache.applyFilterMode() end
+  if Material and Material.applyFilterMode then Material.applyFilterMode() end
 end
 
 return Renderer

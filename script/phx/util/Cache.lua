@@ -76,16 +76,39 @@ function Cache.Compute (cs)
   return self
 end
 
+-- Global texture-filter quality (default: trilinear + 16x aniso, matches the old
+-- per-texture defaults). Renderer:setTextureFilter swaps this at runtime; Cache
+-- applies the current mode to textures as they're created, and applyFilterMode()
+-- re-applies it to already-cached filtered textures on a live change.
+Cache.filterMode = {
+  min   = TexFilter.LinearMipLinear,
+  mag   = TexFilter.Linear,
+  aniso = 16,
+  mip   = true,
+}
+Cache.filtered = {}  -- textures created via Cache.Texture(_, true), for live re-apply
+
+local function applyModeTo (tex)
+  local m = Cache.filterMode
+  tex:setMagFilter(m.mag)
+  tex:setMinFilter(m.min)
+  tex:setWrapMode(TexWrapMode.Clamp)
+  if m.mip then tex:genMipmap() end
+  if m.aniso and m.aniso > 1 then tex:setAnisotropy(m.aniso) end
+end
+
+function Cache.applyFilterMode ()
+  for tex in pairs(Cache.filtered) do applyModeTo(tex) end
+end
+
 function Cache.Texture (name, filtered)
   local self = Cache.textures[name]
   if self then return self end
   self = Tex2D.Load(name)
   Cache.textures[name] = self
   if filtered then
-    self:setMagFilter(TexFilter.Linear)
-    self:setMinFilter(TexFilter.LinearMipLinear)
-    self:setWrapMode(TexWrapMode.Clamp)
-    self:genMipmap()
+    Cache.filtered[self] = true
+    applyModeTo(self)
   end
   return self
 end
