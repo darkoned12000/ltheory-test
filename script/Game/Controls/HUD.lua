@@ -179,8 +179,21 @@ function HUD:drawLock (a)
 end
 
 function HUD:drawReticle (a)
+  -- Saved below for the cursor-direction branch.
+  local debugWindow = self.gameView.debugWindow
+  local overPanel = debugWindow and debugWindow:isEnabled()
+                    and debugWindow:containsPoint(
+                      Input.GetMousePosition().x, Input.GetMousePosition().y)
   -- Hide the OS cursor during play; the game reticle is the only aim indicator.
-  Input.SetMouseVisible(false)
+  -- When the debug panel is open we keep the OS cursor visible so its widgets are
+  -- interactive (the panel's onEnable/onDisable also set the cursor, but HUD draws
+  -- every frame so it would otherwise immediately re-hide it).
+  if not (debugWindow and debugWindow:isEnabled()) then
+    Input.SetMouseVisible(false)
+  end
+
+  -- Over the open panel the OS cursor is the pointer; no game reticle needed.
+  if overPanel then return end
 
   local cx, cy = self.sx / 2, self.sy / 2
   local c = Color(0.1, 0.5, 1.0, a)
@@ -280,7 +293,15 @@ function HUD:onInput (state)
 
   local e = self.player:getControlling()
   self:controlThrust(e)
-  self:controlTurrets(e)
+
+  -- Seamless debug panel interaction: while the cursor is over the open panel,
+  -- its widgets are interactive (they hold mouse focus), so don't aim/fire the
+  -- ship's turrets from the same mouse position.
+  local debugWindow = self.gameView.debugWindow
+  local overPanel = debugWindow and debugWindow:isEnabled()
+                    and debugWindow:containsPoint(state.mousePosX, state.mousePosY)
+  if not overPanel then self:controlTurrets(e) end
+
   self:controlTargetLock(e)
   camera:pop()
 

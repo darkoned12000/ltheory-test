@@ -4,6 +4,17 @@ setmetatable(DebugWindow, UI.Window)
 
 DebugWindow.name = 'Debug Window'
 
+function DebugWindow:onEnable ()
+  -- Panel is interactive via the OS cursor: show it so widgets can be hovered
+  -- and clicked while the panel is open.
+  Input.SetMouseVisible(true)
+end
+
+function DebugWindow:onDisable ()
+  -- Restore hidden cursor for normal play (the game reticle is the aim cursor).
+  Input.SetMouseVisible(false)
+end
+
 function DebugWindow:onLayoutSize ()
   UI.Window.onLayoutSize(self)
   self.desiredSX = self.enabledT * self.desiredSX

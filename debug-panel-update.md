@@ -1,6 +1,6 @@
 # Debug Panel Update
 
-Status: **Investigation complete — plan for reactivation + cleanup approved.**
+Status: **Investigation complete — recovery implemented on this branch.**
 
 This doc records how the debug panel works today (the "old way"), what I found
 when trying to bring it back, the concrete fix plan, and design notes for the
@@ -128,6 +128,26 @@ argument*, but the panel is still inert unless the Debug control is active.
    create/toggle at runtime. Leave the panel off by default so normal gameplay
    is uncluttered; F9 brings it up instantly.
 
+### Implemented (this branch)
+
+- **F9** now toggles the debug window globally from `GameView:onUpdate`
+  (next to the M-music toggle). Works from any PlayerControl (Ship/Debug/Dock).
+- **Backtick removed** from `DebugBindings`; the `ToggleDebugWindow` handler and
+  the window lifecycle are gone from `DebugControl`.
+- **Window mounted on GameView** in `LTheory:onInit` (after `self.canvas`
+  exists — `DebugWindow:createUISection` reads `ltheory.canvas`), added via
+  `gameView:add(self.debugWindow:setStretch(0,1), Config.debug.window)`.
+- **Off by default**: `Config.debug.window = false` (Config.App.lua +
+  Config.Local.lua) so the app never launches with the panel showing.
+- **Seamless reticle↔panel interaction**:
+  - `DebugWindow:onEnable/onDisable` set `Input.SetMouseVisible(true/false)`.
+  - `HUD:drawReticle` keeps the OS cursor visible (and skips the game reticle)
+    when the cursor is over the open panel.
+  - `HUD:onInput` suppresses ship-turret aim/fire while the cursor is over the
+    open panel, so left-click drives the panel widgets instead of the guns.
+  - Canvas mouse-focus already scans GameView children top-down, so the panel
+    (added last) captures focus when hovered.
+
 ---
 
 ## 5. Upgrade design (extendable, part of the same pass)
@@ -149,19 +169,20 @@ argument*, but the panel is still inert unless the Debug control is active.
 
 ---
 
-## 6. Files touched (for the operational fix)
+## 6. Files touched (recovery implementation — this branch)
 
-- `script/Game/Controls/DebugBindings.lua` — drop Backtick; (F9 defined at the
-  global/always-on layer).
-- `script/Game/Controls/DebugControl.lua` — remove ToggleDebugWindow input; keep
-  InspectWidget/RegenerateSystem; stop owning the window lifecycle if option (a).
-- `script/Game/Controls/MasterControl.lua` — no change needed if the window
-  moves up to the canvas; revisit only if we keep the panel under DebugControl.
-- `script/Game/GUI/DebugWindow.lua` — the window itself (styling + register fn);
-  keep `Create` + `SetValue` + section-ignore behavior.
-- `script/Game/GUI/GameView.lua` (or the always-on input owner) — F9 handler.
-- `script/Config.App.lua` / `Config.Local.lua` — `Config.debug` + default-control
-  intent; remove the earlier temp `Config.debug.autoShot` / defaultControl hacks.
+- `script/App/LTheory.lua` — creates the debug window after the canvas exists
+  and mounts it on GameView (`self.gameView.debugWindow = ...`).
+- `script/Game/Controls/DebugBindings.lua` — removed the Backtick binding.
+- `script/Game/Controls/DebugControl.lua` — removed the ToggleDebugWindow input
+  and the owned debug-window lifecycle; keeps InspectWidget (F1) +
+  RegenerateSystem (R) + widget inspector.
+- `script/Game/GUI/GameView.lua` — F9 toggle in `onUpdate`; `debugWindow` field.
+- `script/Game/GUI/DebugWindow.lua` — `onEnable`/`onDisable` cursor control.
+- `script/Game/Controls/HUD.lua` — curser-visible + reticle skip over the panel;
+  turret aim/fire suppressed while the cursor is over the open panel.
+- `script/Config.App.lua` / `Config.Local.lua` — `Config.debug.window = false`
+  (off at launch; F9 enables).
 
 ---
 

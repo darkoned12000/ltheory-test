@@ -21,10 +21,6 @@ function DebugControl:onInput (state)
   local camera = self.gameView.camera
   camera:push()
 
-  if Input.GetPressed(Bindings.ToggleDebugWindow) then
-    self.debugWindow:toggleEnabled()
-  end
-
   if Input.GetPressed(Bindings.InspectWidget) then
     if state.focus then
       self:createWidgetInspector(state.focus)
@@ -177,13 +173,11 @@ function DebugControl.Create (gameView, player)
     gameView        = gameView,
     player          = player,
     icon            = UI.Icon(),
-    debugWindow     = GUI.DebugWindow(DebugControl.ltheory),
     widgetInspector = nil,
 
     children        = List(),
   }, DebugControl)
 
-  self:add(self.debugWindow:setStretch(0, 1), Config.debug.window)
   self.icon:setOnDraw(function (ib, focus, active)
     self:onDrawIcon(ib, focus, active)
   end)

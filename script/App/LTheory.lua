@@ -137,6 +137,13 @@ function LTheory:onInit ()
   self.canvas
     :add(self.gameView
       :add(Controls.MasterControl(self.gameView, self.player)))
+
+  -- Debug window: mounted directly on GameView so it is always reachable via F9,
+  -- independent of which PlayerControl (Ship / Debug / Dock) is active. Created
+  -- after self.canvas exists (DebugWindow:createUISection reads ltheory.canvas).
+  self.debugWindow = GUI.DebugWindow(self)
+  self.gameView.debugWindow = self.debugWindow
+  self.gameView:add(self.debugWindow:setStretch(0, 1), Config.debug.window)
 end
 
 function LTheory:onInput ()

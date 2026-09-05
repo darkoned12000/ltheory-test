@@ -2,7 +2,7 @@ Config.app = 'LTheory'
 
 Config.debug = {
   metrics         = true,
-  window          = true, -- Debug window visible by default at launch?
+  window          = false, -- Debug window visible at launch? No: always opened via F9.
   windowSection   = nil,  -- Set to the name of a debug window section to
                           -- collapse all others by default
   timeAccelFactor = 10,

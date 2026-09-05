@@ -386,6 +386,11 @@ function GameView:onUpdate (state)
     if self.musicMuted then self.music:pause() else self.music:play() end
   end
 
+  -- F9 toggles the debug panel (independent of which PlayerControl is active).
+  if Input.GetPressed(Button.Keyboard.F9) then
+    self.debugWindow:toggleEnabled()
+  end
+
   self.camera:pop()
 end
 
