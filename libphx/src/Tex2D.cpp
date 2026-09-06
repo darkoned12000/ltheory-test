@@ -113,7 +113,9 @@ Tex2D* Tex2D_Clone (Tex2D* self) {
 
 void Tex2D_Draw (Tex2D* self, float x, float y, float sx, float sy) {
   Metric_AddDrawImm(1, 2, 4);
+  GLCALL(glActiveTexture(GL_TEXTURE0))
   GLCALL(glBindTexture(GL_TEXTURE_2D, self->handle))
+  Draw_SetTexturedImm(true);
   ImmVert q[4] = {
     { x,       y,       0.0f, 0.0f, 0.0f },
     { x,       y + sy,  0.0f, 0.0f, 1.0f },
@@ -131,7 +133,9 @@ void Tex2D_DrawEx (
   float u1, float v1)
 {
   Metric_AddDrawImm(1, 2, 4);
+  GLCALL(glActiveTexture(GL_TEXTURE0))
   GLCALL(glBindTexture(GL_TEXTURE_2D, self->handle))
+  Draw_SetTexturedImm(true);
   ImmVert q[4] = {
     { x0, y0, 0.0f, u0, v0 },
     { x0, y1, 0.0f, u0, v1 },

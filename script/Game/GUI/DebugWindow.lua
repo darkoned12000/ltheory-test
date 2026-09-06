@@ -17,7 +17,10 @@ end
 
 function DebugWindow:onLayoutSize ()
   UI.Window.onLayoutSize(self)
-  self.desiredSX = self.enabledT * self.desiredSX
+  -- Keep the panel as wide as its content needs. The old enabledT factor
+  -- collapsed the box while fading, so the controls overflowed it and the
+  -- interaction region no longer matched the visible panel.
+  self.desiredSX = max(self.desiredSX, 520)
 end
 
 function DebugWindow:onDraw (focus, active)

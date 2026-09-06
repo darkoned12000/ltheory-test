@@ -387,8 +387,14 @@ function GameView:onUpdate (state)
   end
 
   -- F9 toggles the debug panel (independent of which PlayerControl is active).
+  -- Debounce: GetPressed also fires on the key-release frame, so a single tap
+  -- would toggle twice and instantly cancel. Ignore fires within 200ms of the last.
   if Input.GetPressed(Button.Keyboard.F9) then
-    self.debugWindow:toggleEnabled()
+    local now = os.clock()
+    if not self.__lastDebugToggle or now - self.__lastDebugToggle > 0.2 then
+      self.__lastDebugToggle = now
+      self.debugWindow:toggleEnabled()
+    end
   end
 
   self.camera:pop()

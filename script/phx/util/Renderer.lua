@@ -100,7 +100,7 @@ function Renderer:aberration (strength)
     Shader.SetFloat('strength', strength)
     Shader.SetTex2D('src', self.buffer0)
     Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.resX, self.resY)
+    Draw.Rect(0, 0, self.sx, self.sy)
   shader:stop()
   self.buffer1:pop()
   self:swap()
@@ -114,7 +114,7 @@ function Renderer:applyFilter (frag, onSetVars)
     Shader.SetTex2D('src', self.buffer0)
     if onSetVars then onSetVars() end
     Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.resX, self.resY)
+    Draw.Rect(0, 0, self.sx, self.sy)
   shader:stop()
   self.buffer1:pop()
   self:swap()
@@ -220,7 +220,7 @@ function Renderer:bloom (radius)
         Shader.SetFloat('intensity', intensity)
         Shader.SetTex2D('src', self.buffer0)
         Shader.SetTex2D('srcBlur', B)
-        Draw.Rect(0, 0, self.resX, self.resY)
+        Draw.Rect(0, 0, self.sx, self.sy)
       shader:stop()
       self.buffer1:pop()
       self:swap()
@@ -260,7 +260,7 @@ function Renderer:colorGrade (curve1, curve2)
     Shader.SetTex1D('curve1', curve1)
     Shader.SetTex1D('curve2', curve2)
     Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.resX, self.resY)
+    Draw.Rect(0, 0, self.sx, self.sy)
   shader:stop()
   self.buffer1:pop()
   self:swap()
@@ -294,6 +294,7 @@ function Renderer:present (x, y, sx, sy, useMips)
     self.buffer0:draw(x, y + sy, sx, -sy)
     self.buffer0:setMinFilter(TexFilter.Linear)
   else
+    Shader.SetTex2D('src', self.buffer0)
     self.buffer0:draw(x, y + sy, sx, -sy)
   end
   shader:stop()
@@ -325,9 +326,9 @@ function Renderer:sharpen (radius, sigma, strength)
       shader:start()
         Shader.SetInt('radius', radius)
         Shader.SetFloat('sigma', sigma)
-        Shader.SetFloat2('size', self.resX, self.resY)
+        Shader.SetFloat2('size', self.sx, self.sy)
         Shader.SetTex2D('src', self.buffer0)
-        Draw.Rect(0, 0, self.resX, self.resY)
+        Draw.Rect(0, 0, self.sx, self.sy)
       shader:stop()
       self.buffer2:pop()
     end
@@ -341,7 +342,7 @@ function Renderer:sharpen (radius, sigma, strength)
         Shader.SetFloat('strength', strength)
         Shader.SetTex2D('src', self.buffer0)
         Shader.SetTex2D('srcBlur', self.buffer2)
-        Draw.Rect(0, 0, self.resX, self.resY)
+        Draw.Rect(0, 0, self.sx, self.sy)
       shader:stop()
       self.buffer1:pop()
     end
@@ -406,36 +407,14 @@ function Renderer:startAlpha (mode)
 end
 
 function Renderer:startPostEffects ()
-  if self.ss > 1 then
-    -- Logarithmic downsample before post (we do not supersample post effects)
-    local factor = 1
-    self.level = 0
-    while factor < self.ss do
-      self.level = self.level + 1
-      factor = factor * 2
-      self.buffer1:pushLevel(self.level)
-      -- NOTE : core-profile — explicit passthrough program (no fixed-function fallback)
-      local dsShader = Cache.Shader('ui', 'filter/identity')
-      if not dsShader then
-        -- item 4: broken identity pass -> skip the downsample draw but keep buffer1 balanced
-        self.buffer1:pop()
-      else
-        dsShader:start()
-        self.buffer0:draw(0, 0, self.sx / factor, self.sy / factor)
-        dsShader:stop()
-        self.buffer1:pop()
-      end
-
-      -- Constrain all buffers to the new active mip level
-      self.buffer0:setMipRange(self.level, self.level)
-      self.buffer1:setMipRange(self.level, self.level)
-      self.buffer2:setMipRange(self.level, self.level)
-      self.buffer0:setMinFilter(TexFilter.LinearMipPoint)
-      self.buffer1:setMinFilter(TexFilter.LinearMipPoint)
-      self.buffer2:setMinFilter(TexFilter.LinearMipPoint)
-      self:swap()
-    end
-  end
+  -- Post effects run at the same resolution as the composited scene (level 0).
+  -- The old ss>1 path shifted the chain into mip level 1 via pushLevel/setMipRange;
+  -- that level did not exist on the render buffers (incomplete FBO -> the chain
+  -- silently no-oped and the final present sampled undefined mip data). The
+  -- full-chain post passes therefore draw to the ACTUAL buffer size (self.sx/sy,
+  -- = ss*res at supersample) rather than the logical resX/resY -- drawing a 1x
+  -- rect into a 2x buffer would only fill its bottom-left quarter each frame,
+  -- leaving stale frames behind (visual mirror/feedback recursion at 2x).
 end
 
 function Renderer:startUI ()
@@ -500,7 +479,7 @@ function Renderer:tonemap ()
     Shader.SetFloat('exposure', 2.0 ^ (Settings.get('postfx.exposure.ev') or 0))
     Shader.SetTex2D('src', self.buffer0)
     Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.resX, self.resY)
+    Draw.Rect(0, 0, self.sx, self.sy)
   shader:stop()
   self.buffer1:pop()
   self:swap()
@@ -517,7 +496,7 @@ function Renderer:vignette ()
     Shader.SetFloat('hardness', hardness)
     Shader.SetTex2D('src', self.buffer0)
     Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.resX, self.resY)
+    Draw.Rect(0, 0, self.sx, self.sy)
   shader:stop()
   self.buffer1:pop()
   self:swap()
@@ -530,10 +509,10 @@ function Renderer:grain (strength)
   shader:start()
     Shader.SetFloat('strength', strength)
     Shader.SetFloat('time', (tonumber(Time.GetRaw()) or 0) * 0.001)
-    Shader.SetFloat2('size', self.resX, self.resY)
+    Shader.SetFloat2('size', self.sx, self.sy)
     Shader.SetTex2D('src', self.buffer0)
     Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.resX, self.resY)
+    Draw.Rect(0, 0, self.sx, self.sy)
   shader:stop()
   self.buffer1:pop()
   self:swap()

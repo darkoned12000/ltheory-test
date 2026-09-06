@@ -371,6 +371,10 @@ void Shader_Stop (Shader*) {
   current = 0;
 }
 
+Shader* Shader_GetActive () {
+  return current;
+}
+
 void Shader_Dispatch (uint x, uint y, uint z) {
   if (!current)
     Fatal("Shader_Dispatch: No shader is bound");

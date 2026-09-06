@@ -21,6 +21,9 @@ PHX_API ShaderState*  Shader_ToShaderState  (Shader*);
 
 PHX_API void          Shader_Start          (Shader*);
 PHX_API void          Shader_Stop           (Shader*);
+/* The currently-bound program (Shader_Start/Stop track it), or null if none.
+ * Lets low-level draw paths detect the core-profile "no program bound" state. */
+PHX_API Shader*       Shader_GetActive      ();
 
 /* Dispatches the currently-bound COMPUTE shader. Fatals if no shader is
  * bound or the bound program is a graphics pipeline. */

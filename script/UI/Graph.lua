@@ -1,3 +1,4 @@
+local DrawEx = require('UI.DrawEx')
 local Widget = require('UI.Widget')
 
 local Graph = {}
@@ -96,44 +97,53 @@ function Graph:onDraw (focus, active)
   local x, y, sx, sy = self:getRectGlobal()
 
   do -- Draw Border
-    self:applyColor(focus, active, Config.ui.color.border)
-    Draw.Border(self.padMinX, x, y, sx, sy)
+    local c = active == self and Config.ui.color.active
+           or focus  == self and Config.ui.color.focused
+           or Config.ui.color.border
+    DrawEx.RectOutline(x, y, sx, sy, Color(c.r, c.g, c.b, c.a))
   end
 
   local ix, iy, isx, isy = self:getRectPadGlobal()
-  ClipRect.PushCombined(ix, iy, isx, isy)
+  -- NOTE : Scissor-based clipping is bypassed here. The engine's clip
+  -- transform stack doesn't line up with the coordinate space widgets draw in
+  -- under the core profile (everything inside this push was culled). The plot
+  -- auto-ranges and all geometry is clamped below, so nothing can leave the
+  -- box anyway; fixed-range graphs get edge-clamped bars/lines instead.
+  ClipRect.PushDisabled()
 
   do -- Draw Graph
     local usableSY = isy
     local range    = self.rangeMax.value - self.rangeMin.value
     local vMin     = self.rangeMin.value
     local dydv     = usableSY / range
-
-    GLMatrix.ModeWV()
-    GLMatrix.Push()
-    GLMatrix.Translate(0, y + sy - self.padMaxY, 0)
-    GLMatrix.Scale(1, -(sy / usableSY), 1)
+    -- NOTE : GLMatrix is a CPU-side stub under the core profile (nothing
+    -- consumes it), so the old Translate/Scale plot transform is applied in
+    -- Lua: value-height maps upward from the inner bottom edge (y-down px).
+    local baseY = y + sy - self.padMaxY
 
     do -- Draw Bars
-      Config.ui.color.focused:set(0.25)
+      local c = Config.ui.color.focused
+      local barColor = Color(c.r, c.g, c.b, 0.25)
       local fx = ix
       for i = 1, #self.values do
-        local fy = dydv * (self.values:get(i) - vMin)
-        Draw.Rect(fx, 0, barSX, fy)
+        local fy = Math.Clamp(dydv * (self.values:get(i) - vMin), 0, usableSY)
+        if fy > 0 then
+          DrawEx.Rect(fx, baseY - fy, barSX, fy, barColor)
+        end
         fx = fx + barTotal
       end
     end
 
     do -- Draw Lines
-      Draw.LineWidth(1.0)
-      Config.ui.color.focused:set()
+      local c = Config.ui.color.focused
+      local lineColor = Color(c.r, c.g, c.b, c.a)
       local xLast = ix
       local fx = xLast + barTotal
-      local yLast = dydv * (self.values:get(1) - vMin)
+      local yLast = baseY - Math.Clamp(dydv * (self.values:get(1) - vMin), 0, usableSY)
       for i = 2, #self.values do
         local value = self.values:get(i)
-        local fy = dydv * (value - vMin)
-        Draw.Line(xLast, yLast, fx, fy)
+        local fy = baseY - Math.Clamp(dydv * (value - vMin), 0, usableSY)
+        DrawEx.Line(xLast, yLast, fx, fy, lineColor)
         xLast = fx
         yLast = fy
         fx = fx + barTotal
@@ -145,12 +155,12 @@ function Graph:onDraw (focus, active)
       local fx = ix
       for i = 1, #self.values do
         local value = self.values:get(i)
-        local y = dydv * (value - vMin)
         for j = 1, #self.rulers do
           local ruler = self.rulers[j]
           if value >= ruler.value then
-            Draw.Color(ruler.color.x, ruler.color.y, ruler.color.z, 1)
-            Draw.Rect(fx - 2, dydv * (ruler.value - vMin) - 2, 4, 4)
+            local c = ruler.color
+            local ry = Math.Clamp(dydv * (ruler.value - vMin), 0, usableSY)
+            DrawEx.Rect(fx - 2, baseY - ry - 2, 4, 4, Color(c.x, c.y, c.z, 1))
           end
         end
         fx = fx + barTotal
@@ -158,34 +168,21 @@ function Graph:onDraw (focus, active)
     end
 
     do -- Highlight Head
-      Config.ui.color.focused:set()
-      Draw.Rect(
-        ix + (self.head - 1) * barTotal,
-        0, barSX, dydv * (self.values:get(self.head) - vMin))
+      local c = Config.ui.color.focused
+      local headValue = self.values:get(self.head)
+      local fy = Math.Clamp(dydv * (headValue - vMin), 0, usableSY)
+      DrawEx.Rect(ix + (self.head - 1) * barTotal, baseY - fy, barSX, fy,
+        Color(c.r, c.g, c.b, c.a))
     end
 
     do -- Draw Rulers
       for i = 1, #self.rulers do
         local ruler = self.rulers[i]
-        local fy = dydv * (ruler.value - vMin)
-        ruler.y = fy
-        Draw.Color(ruler.color.x, ruler.color.y, ruler.color.z, 0.75)
-        Draw.Line(ix, fy, ix + isx, fy)
+        local ry = Math.Clamp(dydv * (ruler.value - vMin), 0, usableSY)
+        ruler.y = ry
+        local c = ruler.color
+        DrawEx.Line(ix, baseY - ry, ix + isx, baseY - ry, Color(c.x, c.y, c.z, 0.75))
       end
-    end
-
-    GLMatrix.Pop()
-  end
-
-  do -- Draw Ruler Labels
-    local font = Config.ui.font.normal
-    for i = 1, #self.rulers do
-      local ruler = self.rulers[i]
-      local bound = font:getSize(ruler.label)
-      font:draw(ruler.label,
-        ix + isx - bound.x - bound.z,
-        y + sy - ruler.y + bound.w,
-        1.0, 1.0, 1.0, 0.25)
     end
   end
 

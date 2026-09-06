@@ -1,7 +1,14 @@
 #include "Draw.h"
 #include "DrawInternal.h"
+#include "DataFormat.h"
 #include "Metric.h"
 #include "OpenGL.h"
+#include "PixelFormat.h"
+#include "Shader.h"
+#include "ShaderVar.h"
+#include "ShaderVarType.h"
+#include "Tex2D.h"
+#include "TexFormat.h"
 #include "Vec4.h"
 #include <cstring>
 
@@ -41,10 +48,32 @@ static float alphaStack[MAX_STACK_DEPTH];
 static int alphaIndex = -1;
 static Vec4f color = { 1, 1, 1, 1 };
 
+/* --- Default program for legacy color-state draws --------------------------------
+ * Core profile rasterizes nothing when no program is bound (AGENTS.md trap #2).
+ * The pre-migration engine relied on fixed-function for Font_Draw glyphs, raw
+ * Draw.Rect/Tri/Line color primitives, and Tex2D blits. Draw_Flush now starts a
+ * generic flat program (color * unit-0 texture) for those when nothing is bound:
+ *   - flat draws get the engine's 1x1 white dummy texture -> pure Draw_Color
+ *   - textured blits (Tex2D_Draw/DrawEx) keep their unit-0 binding
+ * The color uniform replicates the old glColor4f(r, g, b, a * alphaStack).
+ * Calls made under an explicitly-started program are untouched. */
+static Shader* s_progFlat = nullptr;
+static Tex2D*  s_texWhite = nullptr;
+static bool    s_lastTextured = false;
+
+void Draw_SetTexturedImm (bool textured) {
+  s_lastTextured = textured;
+}
+
 static void Draw_Init () {
   if (s_init) return;
   s_init = true;
   GLCALL(glGenBuffers(1, &s_vbo));
+  /* 1x1 white texture: sampling it under the flat program yields the raw
+   * Draw_Color, matching the old untextured fixed-function result. */
+  s_texWhite = Tex2D_Create(1, 1, TexFormat_RGBA8);
+  float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  Tex2D_SetData(s_texWhite, white, PixelFormat_RGBA, DataFormat_Float);
 }
 
 void Draw_DrawArraysInstanced (int mode, int first, int count, int primcount) {
@@ -146,12 +175,36 @@ static void Draw_Flush (GLenum mode) {
   if (s_count == 0) return;
   mode = Draw_Expand(mode);
 
-  Draw_Bind();
-  GLCALL(glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(s_count * (int)sizeof(DrawVert)), s_verts, GL_DYNAMIC_DRAW));
-  GLCALL(glDrawArrays(mode, 0, s_count));
+  bool startedDefault = false;
+  if (!Shader_GetActive()) {
+    if (!s_progFlat)
+      s_progFlat = Shader_Load("vertex/ui", "fragment/ui/flat");
+    if (s_progFlat && ShaderVar_Get("mProjUI", ShaderVarType_Matrix)) {
+      Shader_Start(s_progFlat);
+      /* Old semantics: glColor4f(r, g, b, a * alphaStackTop). */
+      float alpha = alphaIndex >= 0 ? alphaStack[alphaIndex] : 1.0f;
+      Shader_SetFloat4("color", color.x, color.y, color.z, color.w * alpha);
+      if (!s_lastTextured) {
+        /* Flat primitive: neutralize whatever is on unit 0. */
+        GLCALL(glActiveTexture(GL_TEXTURE0))
+        GLCALL(glBindTexture(GL_TEXTURE_2D, Tex2D_GetHandle(s_texWhite)))
+      }
+      startedDefault = true;
+    }
+    /* else: no flat program (broken load) or no viewport matrices pushed —
+     * skip silently, exactly as the core-profile no-program behavior did. */
+  }
 
-  Draw_Unbind();
+  if (Shader_GetActive()) {
+    Draw_Bind();
+    GLCALL(glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(s_count * (int)sizeof(DrawVert)), s_verts, GL_DYNAMIC_DRAW));
+    GLCALL(glDrawArrays(mode, 0, s_count));
+    Draw_Unbind();
+  }
+
+  if (startedDefault) Shader_Stop(nullptr);
   s_count = 0;
+  s_lastTextured = false;
 }
 
 /* Begin/End helpers — accumulate then flush. */

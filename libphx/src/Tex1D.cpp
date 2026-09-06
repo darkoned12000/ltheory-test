@@ -57,6 +57,7 @@ void Tex1D_Free (Tex1D* self) {
 
 void Tex1D_Draw (Tex1D* self, float x, float y, float xs, float ys) {
   GLCALL(glBindTexture(GL_TEXTURE_1D, self->handle))
+  Draw_SetTexturedImm(true);
   ImmVert q[4] = {
     { x,       y,       0.0f, 0.0f, 0.0f },
     { x,       y + ys,  0.0f, 0.0f, 1.0f },
