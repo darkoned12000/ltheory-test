@@ -1,4 +1,3 @@
-local Bindings = require('UI.Bindings')
 local Widget   = require('UI.Widget')
 
 local Slider = {}
@@ -10,14 +9,14 @@ Slider.minValue = 0.0
 Slider.maxValue = 1.0
 Slider.getFn    = function() return 0.0 end
 Slider.setFn    = function(value) Log.Warning('Slider - setFn has not been assigned') end
-Slider.thumbSX  = 4
-Slider.thumbSY  = 12
+Slider.thumbSX  = 8
+Slider.thumbSY  = 16
 
 Slider.name      = 'Slider'
 Slider.focusable = true
 Slider.draggable = true
 
-Slider:setHeight(14)
+Slider:setHeight(18)
 Slider.minX = 128
 
 function Slider:onDrag (state)
@@ -27,28 +26,10 @@ function Slider:onDrag (state)
   self:setValueNormalized(setValue)
 end
 
--- TODO : Nuking scroll as a way to move sliders temporarily. It needs work.
-function Slider:onInput (state)
-  local sensitivity = 0.1
-
-  -- HACK : Jank-fucking-tastic.
-  Bindings.Right:get()
-  Bindings.Left:get()
-  Bindings.Up:get()
-  Bindings.Down:get()
-
-  local value = Vec2f(
-    Bindings.Right.last - Bindings.Left.last,
-    Bindings.Up.last - Bindings.Down.last
-  )
-
-  if value.x ~= 0.0 or value.y ~= 0.0 then
-    local setValue
-    setValue = Math.InverseLerp(self.minValue, self.maxValue, self.getFn())
-    setValue = setValue + 0.1 * (value.x + value.y)
-    self:setValueNormalized(setValue)
-  end
-end
+-- WASD slider-stepping removed: Up/Down/Left/Right are bound to W/S/A/D, and
+-- W/S are the ship's thrust keys, so a focused slider used to ride them and
+-- max out while flying. Sliders are adjusted by dragging the thumb now.
+function Slider:onInput (state) end
 
 function Slider:onUpdate (state)
   Widget.onUpdate(self, state)
@@ -87,7 +68,7 @@ function Slider:onDraw (focus, active)
 
   -- Bar
   local barSX = sx - self.thumbSX
-  local barSY = 4
+  local barSY = 5
   local barX  = x + self.thumbSX/2
   local barY  = y + (sy - barSY)/2
   Config.ui.color.border:set()

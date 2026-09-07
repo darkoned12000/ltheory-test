@@ -197,9 +197,12 @@ Config.ui.color = {
   controlActive     = Color(0.14, 0.70, 0.14, 0.4),
 }
 
+-- Baseline UI fonts (pixel sizes at a 900px-tall window). LTheory:onInit
+-- scales these to the actual window height so the debug panel (and any other
+-- UI) reads the same on any monitor/resolution.
 Config.ui.font = {
-  normal     = Cache.Font('Share', 14),
-  normalSize = 14,
-  title      = Cache.Font('Exo2Bold', 10),
-  titleSize  = 10,
+  normal     = Cache.Font('Share', 22),
+  normalSize = 22,
+  title      = Cache.Font('Exo2Bold', 16),
+  titleSize  = 16,
 }

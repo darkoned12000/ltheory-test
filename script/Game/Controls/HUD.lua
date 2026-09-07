@@ -203,13 +203,11 @@ function HUD:drawReticle (a)
   -- point on screen). With a controller (no cursor) it tracks the aim stick
   -- (self.aimX/aimY from the thrust controller).
   if Input.GetActiveDeviceType() == DeviceType.Mouse then
-    -- The HUD is composited through the supersampled backbuffer, so DrawEx
-    -- pixel space is `ss`x the OS-window pixel space that Input.GetMousePosition
-    -- returns. Scale the cursor into DrawEx space (and into the camera widget's
-    -- screen offset) so the ring sits exactly under the OS cursor == weapon aim.
-    local ss = ({ 1, 2, 4 })[Settings.get('render.superSample')] or 1
+    -- GameView's UI pass now scales the whole subtree through the mViewUI
+    -- autovar (ss-scaled), so DrawEx coordinates are 1:1 with the OS-window
+    -- pixels Input.GetMousePosition returns; the cursor needs no extra ss scale.
     local w  = self.gameView.camera:windowToScreen(Input.GetMousePosition())
-    x, y = w.x * ss, w.y * ss
+    x, y = w.x, w.y
   else
     x = cx + 0.5 * self.sx * (self.aimX or 0)
     y = cy - 0.5 * self.sy * (self.aimY or 0)
@@ -287,19 +285,23 @@ end
 function HUD:onInput (state)
   local camera = self.gameView.camera
   camera:push()
-  camera:modRadius(exp(-0.1 * CameraBindings.Zoom:get()))
+
+  -- Seamless debug panel interaction: while the cursor is over the open panel,
+  -- its widgets are interactive (they hold mouse focus), so don't aim/fire the
+  -- ship's turrets or zoom the camera from the same mouse position. Only the
+  -- panel scrolls its own content.
+  local debugWindow = self.gameView.debugWindow
+  local overPanel = debugWindow and debugWindow:isEnabled()
+                    and debugWindow:containsPoint(state.mousePosX, state.mousePosY)
+  if not overPanel then
+    camera:modRadius(exp(-0.1 * CameraBindings.Zoom:get()))
+  end
   -- camera:modYaw(0.005 * CameraBindings.Yaw:get())
   -- camera:modPitch(0.005 * CameraBindings.Pitch:get())
 
   local e = self.player:getControlling()
   self:controlThrust(e)
 
-  -- Seamless debug panel interaction: while the cursor is over the open panel,
-  -- its widgets are interactive (they hold mouse focus), so don't aim/fire the
-  -- ship's turrets from the same mouse position.
-  local debugWindow = self.gameView.debugWindow
-  local overPanel = debugWindow and debugWindow:isEnabled()
-                    and debugWindow:containsPoint(state.mousePosX, state.mousePosY)
   if not overPanel then self:controlTurrets(e) end
 
   self:controlTargetLock(e)

@@ -152,13 +152,19 @@ function GameView:draw (focus, active)
     end
   end
 
+  -- Live render-pass timings for the debug panel (see DebugWindow Profiling).
+  local rtl = self.renderTimes
+  rtl.t0 = TimeStamp.Get()
+
   Profiler.Begin('Render.Submit')
   do -- Opaque Pass
     Profiler.Begin('Render.Opaque')
     self.renderer:start(self.sx, self.sy, ss)
     Batcher.begin()
+    RenderState.PushWireframe(Settings.get('render.wireframe'))
     world:render(Event.Render(BlendMode.Disabled, eye))
     Batcher.replay()
+    RenderState.PopWireframe()
     self.renderer:stop()
     Profiler.End()
   end
@@ -242,13 +248,17 @@ function GameView:draw (focus, active)
 
   if true then -- Alpha (Additive) Pass
     self.renderer:startAlpha(BlendMode.Additive)
-      world:render(Event.Render(BlendMode.Additive, eye))
+      RenderState.PushWireframe(Settings.get('render.wireframe'))
+        world:render(Event.Render(BlendMode.Additive, eye))
+      RenderState.PopWireframe()
     self.renderer:stopAlpha()
   end
 
   if true then -- Alpha Pass
     self.renderer:startAlpha(BlendMode.Alpha)
-      world:render(Event.Render(BlendMode.Alpha, eye))
+      RenderState.PushWireframe(Settings.get('render.wireframe'))
+        world:render(Event.Render(BlendMode.Alpha, eye))
+      RenderState.PopWireframe()
 
       -- TODO : This should be moved into a render pass
       if Config.debug.physics.drawBoundingBoxesLocal or
@@ -290,18 +300,22 @@ function GameView:draw (focus, active)
 
   world:endRender()
   self.camera:endDraw()
+  rtl.submit = TimeStamp.GetElapsedMs(rtl.t0)
   Profiler.End() -- Render.Submit
 
   if true then -- Composited UI Pass
     self.renderer:startUI()
       Viewport.Push(0, 0, ss * self.sx, ss * self.sy, true)
       ClipRect.PushTransform(0, 0, ss, ss)
-        GLMatrix.ModeWV()
-        GLMatrix.Push()
-        GLMatrix.Scale(ss, ss, 1.0)
+        -- ui.glsl transforms via mProjUI * mViewUI (not the GLMatrix modelview,
+        -- which had no effect here), so the layout's logical-pixel rects must be
+        -- ss-scaled through the mViewUI autovar to come out 1:1 after the
+        -- ss-buffer present.
+        local uiScale = Matrix.Scaling(ss, ss, 1)
+        ShaderVar.PushMatrix('mViewUI', uiScale)
           for i = 1, #self.children do self.children[i]:draw(focus, active) end
-        GLMatrix.ModeWV()
-        GLMatrix.Pop()
+        ShaderVar.Pop('mViewUI')
+        uiScale:free()
       ClipRect.PopTransform()
       Viewport.Pop()
     self.renderer:stopUI()
@@ -309,9 +323,12 @@ function GameView:draw (focus, active)
 
   do -- Post chain + present (UI composite, post-fx passes, buffer swap); timing only
     Profiler.Begin('Render.PostFx')
+    rtl.t1 = TimeStamp.Get()
   if false or Settings.get('render.showBuffers') then
     Profiler.Begin('Render.Present')
+    local tPres = TimeStamp.Get()
     self.renderer:presentAll(x, y, sx, sy)
+    rtl.present = TimeStamp.GetElapsedMs(tPres)
     Profiler.End()
   else
     self.renderer:startPostEffects()
@@ -335,10 +352,13 @@ function GameView:draw (focus, active)
       self.renderer:grain(Settings.get('postfx.grain.strength') or 1)
     end
     Profiler.Begin('Render.Present')
+    local tPres = TimeStamp.Get()
     self.renderer:present(x, y, sx, sy, ss > 2)
+    rtl.present = TimeStamp.GetElapsedMs(tPres)
     Profiler.End()
   end
-    Profiler.End()
+    rtl.postfx = TimeStamp.GetElapsedMs(rtl.t1) - rtl.present
+    Profiler.End() -- Render.PostFx
   end
 
   if GUI.DrawHmGui then
@@ -397,6 +417,13 @@ function GameView:onUpdate (state)
     end
   end
 
+  -- VSync toggle (debug 'Render' section / Config.render.vsync): apply live.
+  local vsync = Settings.get('render.vsync')
+  if vsync ~= self.appliedVsync and self.ltheory and self.ltheory.window then
+    self.appliedVsync = vsync
+    self.ltheory.window:setVsync(vsync)
+  end
+
   self.camera:pop()
 end
 
@@ -443,6 +470,8 @@ function GameView.Create (player)
     camera      = nil,
     eyeLast     = nil,
     eyeVel      = nil,
+    appliedVsync = nil,
+    renderTimes = { submit = 0, postfx = 0, present = 0 },
     children    = List(),
   }, GameView)
 

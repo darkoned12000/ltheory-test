@@ -2,6 +2,9 @@ local DebugWindow = {}
 DebugWindow.__index = DebugWindow
 setmetatable(DebugWindow, UI.Window)
 
+local MemPool    = require('ffi.MemPool')   -- binds libphx.MemPool_GetSize
+local Container = require('UI.Container')
+
 DebugWindow.name = 'Debug Window'
 
 function DebugWindow:onEnable ()
@@ -15,12 +18,23 @@ function DebugWindow:onDisable ()
   Input.SetMouseVisible(false)
 end
 
+function DebugWindow:input (state)
+  -- The panel is an overlay on the game: only route keyboard/nav/wheel into it
+  -- while the OS cursor is actually over it. With the cursor in the game view
+  -- the panel must not steal W/S/A/D (flight keys), space (fire/select) or the
+  -- scroll wheel (sliders/nav focus) from the ship.
+  if not self:containsPoint(state.mousePosX, state.mousePosY) then return end
+  Container.input(self, state)
+end
+
 function DebugWindow:onLayoutSize ()
   UI.Window.onLayoutSize(self)
-  -- Keep the panel as wide as its content needs. The old enabledT factor
-  -- collapsed the box while fading, so the controls overflowed it and the
-  -- interaction region no longer matched the visible panel.
-  self.desiredSX = max(self.desiredSX, 520)
+  -- Keep the panel proportional to the window so it reads the same on any
+  -- monitor and leaves room for the larger scaled fonts: ~34% of the width,
+  -- clamped to stay usable on narrow and ultra-wide displays.
+  local w = self.ltheory and self.ltheory.resX or 1920
+  local width = Math.Clamp(Math.Round(0.34 * w), 460, 820)
+  self.desiredSX = max(self.desiredSX, width)
 end
 
 function DebugWindow:onDraw (focus, active)
@@ -32,6 +46,9 @@ end
 local lastAlloc = 0
 local emaAlloc = 0
 local emaFrameTime = 0
+local frameHist = {}   -- recent frame deltas for the FPS 1% low readout
+local fps1LowMs = 1
+local sessionMinDt = nil
 
 local function getAllocationRate (dt)
   local alloc = GC.GetMemory()
@@ -46,6 +63,7 @@ function DebugWindow:createProfilingText ()
   return UI.NavGroup()
     :add(UI.Collapsible('Profiling')
       :add(UI.Grid():setCols(1):setPad(2, 0, 2, 2)
+        :add(UI.Button('Dump Settings', function () DebugWindow.DumpSettings() end))
         :add(UI.Grid():setPadCellX(8)
           :add(UI.Label('Frame Time'))
           :add(UI.Label():setMinWidth(60):setFormat('%.2f ms')
@@ -57,7 +75,15 @@ function DebugWindow:createProfilingText ()
               return 1000.0 * emaFrameTime end))
           :add(UI.Label('FPS'))
           :add(UI.Label():setMinWidth(60):setFormat('%.0f')
-            :setPollFn(function () return 1.0 / emaFrameTime end))
+            :setPollFn(function ()
+              -- Rolling average over the same 120-frame window as the 1% low
+              -- readout below (not the instantaneous EMA), so the 1% low can
+              -- never appear higher than the average FPS. Read-only here; the
+              -- 1% low poll owns appending to frameHist.
+              local sum = 0
+              for i = 1, #frameHist do sum = sum + frameHist[i] end
+              local n = math.max(1, #frameHist)
+              return n / sum end))
           :add(UI.Label('Lua Memory'))
           :add(UI.Label():setMinWidth(70):setFormat('%.2f kb')
             :setPollFn(GC.GetMemory))
@@ -75,22 +101,75 @@ function DebugWindow:createProfilingText ()
             for i = 1, Type.GetCount() do
               local type = Type.GetByID(i)
               if type.pool and type:hasField('body') then
-                total = total + libphx.MemPool_GetSize(type.pool)
+                total = total + MemPool.GetSize(type.pool)
               end
             end
             return total
           end))
-          --:add(UI.Label('Awake Rigidbodies'))
-          --:add(UI.Label():setPollFn(function ()
-          --  local total = 0
-          --  for i = 1, Type.GetCount() do
-          --    local type = Type.GetByID(i)
-          --    if type.pool and type:hasField('body') then
-          --      total = total + libphx.MemPool_GetSize(type.pool)
-          --    end
-          --  end
-          --  return total
-          --end))
+          :add(UI.Label('Total Pooled Objects'))
+          :add(UI.Label():setPollFn(function ()
+            local total = 0
+            for i = 1, Type.GetCount() do
+              local type = Type.GetByID(i)
+              if type.pool then total = total + MemPool.GetSize(type.pool) end
+            end
+            return total
+          end))
+          :add(UI.Label('Entities'))
+          :add(UI.Label():setPollFn(function ()
+            local sys = self.ltheory and self.ltheory.system
+            if not sys then return 0 end
+            local n = 0
+            for _ in sys:iterChildren() do n = n + 1 end
+            return n
+          end))
+          :add(UI.Label('Cached Textures'))
+          :add(UI.Label():setPollFn(function () return Cache.texCount or 0 end))
+          :add(UI.Label('FPS (1% Low, window)'))
+          :add(UI.Label():setMinWidth(60):setFormat('%.0f')
+            :setPollFn(function ()
+              local dt = self.ltheory.dt
+              table.insert(frameHist, dt)
+              if #frameHist > 120 then table.remove(frameHist, 1) end
+              local n = math.max(1, math.floor(0.01 * #frameHist))
+              local s = {}
+              for i = 1, #frameHist do s[i] = frameHist[i] end
+              table.sort(s)
+              local worst = 0
+              for i = #s - n + 1, #s do worst = worst + s[i] end
+              fps1LowMs = 1000 * worst / n
+              return 1.0 / (fps1LowMs * 0.001) end))
+          :add(UI.Label('FPS (Min, session)'))
+          :add(UI.Label():setMinWidth(60):setFormat('%.0f')
+            :setPollFn(function ()
+              local dt = self.ltheory.dt
+              if not sessionMinDt or dt > sessionMinDt then sessionMinDt = dt end
+              return 1.0 / sessionMinDt end))
+          :add(UI.Label('Render Submit'))
+          :add(UI.Label():setMinWidth(60):setFormat('%.2f ms')
+            :setPollFn(function ()
+              local gv = self.ltheory and self.ltheory.gameView
+              local rt = gv and gv.renderTimes
+              return rt and rt.submit or 0 end))
+          :add(UI.Label('Render PostFX'))
+          :add(UI.Label():setMinWidth(60):setFormat('%.2f ms')
+            :setPollFn(function ()
+              local gv = self.ltheory and self.ltheory.gameView
+              local rt = gv and gv.renderTimes
+              return rt and rt.postfx or 0 end))
+          :add(UI.Label('Render Present'))
+          :add(UI.Label():setMinWidth(60):setFormat('%.2f ms')
+            :setPollFn(function ()
+              local gv = self.ltheory and self.ltheory.gameView
+              local rt = gv and gv.renderTimes
+              return rt and rt.present or 0 end))
+          :add(UI.Label('Render Total'))
+          :add(UI.Label():setMinWidth(60):setFormat('%.2f ms')
+            :setPollFn(function ()
+              local gv = self.ltheory and self.ltheory.gameView
+              local rt = gv and gv.renderTimes
+              if not rt then return 0 end
+              return (rt.submit or 0) + (rt.postfx or 0) + (rt.present or 0) end))
         )
       )
     )
@@ -208,16 +287,25 @@ function DebugWindow:createSettingsSections ()
     local section = self:getSection(keys[1])
     if var.type == 'float' then
       section
-        :add(UI.Label(var.name))
-        :add(UI.Slider(var.getter, var.setter, var.min, var.max))
+        :add(UI.Grid():setCols(3)
+          :setPadCellX(8)
+          :add(UI.Label(var.name))
+          :add(UI.Slider(var.getter, var.setter, var.min, var.max))
+          :add(UI.Label()
+            :setMinWidth(52):setAlign(1, 0.5):setFormat('%.3g')
+            :setPollFn(var.getter)))
     elseif var.type == 'bool' then
       section
-        :add(UI.Label(var.name))
-        :add(UI.Checkbox(var.getter, var.setter))
+        :add(UI.Grid():setCols(2)
+          :setPadCellX(8)
+          :add(UI.Label(var.name))
+          :add(UI.Checkbox(var.getter, var.setter)))
     elseif var.type == 'enum' then
       section
-        :add(UI.Label(var.name))
-        :add(UI.OptionSlider(var.getter, var.setter, var.elems, var.value))
+        :add(UI.Grid():setCols(2)
+          :setPadCellX(8)
+          :add(UI.Label(var.name))
+          :add(UI.OptionSlider(var.getter, var.setter, var.elems, var.value)))
     end
   end
 end
@@ -225,7 +313,10 @@ end
 function DebugWindow:getSection (name)
   local section = self.sections[name]
   if section then return section end
-  section = UI.Grid():setPadCellX(8):setPad(2, 0, 2, 2)
+  -- Settings section: one full-width row per setting. Each setting is added as
+  -- a single nested row-grid child (see createSettingsSections), so the outer
+  -- grid must be single-column to stop two settings sharing a row.
+  section = UI.Grid():setCols(1):setPadCellX(8):setPad(2, 0, 2, 2)
   self.contents
     :add(UI.NavGroup()
       :add(UI.Collapsible(name)
@@ -248,12 +339,81 @@ function DebugWindow.SetValue (section, name, value)
   local w = s.childMap[name]
   if not w then
     w = UI.Label():setMinWidth(60)
-    s:add(UI.Label(name))
-    s:add(w)
+    local row = UI.Grid():setCols(2):setPadCellX(8)
+    row:add(UI.Label(name))
+    row:add(w)
+    s:add(row)
     s.childMap[name] = w
   end
 
   w:setText(value)
+end
+
+-- Dump every live debug setting (plus a little runtime state) to the console
+-- and log/settings_dump.txt, so the exact tuning state can be pasted to an
+-- assistant when troubleshooting. Triggered by the "Dump Settings" button in
+-- the Profiling section.
+function DebugWindow.DumpSettings ()
+  local self = instance
+  local lt = self and self.ltheory
+
+  local lines = {}
+  table.insert(lines, '==== Debug Panel Snapshot ====')
+  local stamp = (os and os.date) and os.date('%Y-%m-%d %H:%M:%S') or tostring(Time.GetRaw())
+  table.insert(lines, 'time:    ' .. stamp)
+  if lt then
+    local dt = lt.dt or 0
+    table.insert(lines, string.format('window:  %dx%d', lt.resX or 0, lt.resY or 0))
+
+    do -- Runtime / profiling readouts (mirrors the Profiling section)
+      local rt    = lt.gameView and lt.gameView.renderTimes or {}
+      local sys   = lt.system
+      local objs, rigs = 0, 0
+      for i = 1, Type.GetCount() do
+        local type = Type.GetByID(i)
+        if type.pool then
+          objs = objs + MemPool.GetSize(type.pool)
+          if type:hasField('body') then rigs = rigs + MemPool.GetSize(type.pool) end
+        end
+      end
+      local ents = 0
+      if sys then for _ in sys:iterChildren() do ents = ents + 1 end end
+
+      local sum = 0
+      for i = 1, #frameHist do sum = sum + frameHist[i] end
+      local avgMs  = #frameHist > 0 and (1000 * sum / #frameHist) or (1000 * dt)
+      local fpsAvg = avgMs > 0 and (1000 / avgMs) or 0
+
+      table.insert(lines, string.format('frame:   %.2f ms  (avg %.1f fps, 1%% low %.2f ms)',
+        avgMs, fpsAvg, fps1LowMs))
+      table.insert(lines, string.format('render:  submit %.2f | postfx %.2f | present %.2f ms',
+        rt.submit or 0, rt.postfx or 0, rt.present or 0))
+      table.insert(lines, string.format('pools:   %d objects / %d rigidbodies | entities %d | textures %d',
+        objs, rigs, ents, Cache.texCount or 0))
+      table.insert(lines, string.format('lua:     %.2f kb | gc %.2f kb/s | passes %d | freq %.2f Hz',
+        GC.GetMemory() / 1024, emaAlloc, GC.GetPasses(), GC.GetFrequency()))
+    end
+  end
+  table.insert(lines, '')
+  table.insert(lines, '-- settings --')
+  for _, v in ipairs(Settings.getAll()) do
+    local val = v.getter()
+    if v.type == 'enum' and v.elems then
+      val = v.elems[math.floor(val or 1)] or val
+    elseif type(val) == 'number' then
+      val = string.format('%.4g', val)
+    end
+    table.insert(lines, string.format('%-26s %s', v.key, tostring(val)))
+  end
+
+  local text = table.concat(lines, '\n')
+  print(text)
+  local f = io.open('log/settings_dump.txt', 'w')
+  if f then
+    f:write(text, '\n')
+    f:close()
+    print('Snapshot saved to log/settings_dump.txt')
+  end
 end
 
 function DebugWindow.Create (ltheory)

@@ -75,6 +75,11 @@ function ScrollView:onInput (state)
   local sensitivity = -3000 -- -50
   local value
 
+  -- Only scroll when the cursor is actually over this scroll view, so the wheel
+  -- inside the game view only zooms the camera (see HUD:onInput).
+  local over = self:containsPoint(state.mousePosX, state.mousePosY)
+  if not over then return end
+
   -- TODO : Axis2D
   value = Bindings.ScrollH:get()
   if value ~= 0.0 then
@@ -166,7 +171,7 @@ function ScrollView:onDrawChildren (focus, active)
 end
 
 function ScrollView:onDrawDebugChildren (focus, active)
-  ClipRect.PushCombined(widget:getRectGlobal())
+  ClipRect.PushCombined(self:getRectGlobal())
   for i = 1, #self.children do self.children[i]:drawDebug(focus, active) end
   ClipRect.Pop()
 end

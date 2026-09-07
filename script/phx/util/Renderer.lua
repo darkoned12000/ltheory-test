@@ -42,6 +42,10 @@ local Renderer = class(function (self)
 
   local ops = { AgX = 1, ACES = 2, Filmic = 3, Khronos = 4 }
   seed('postfx.tonemap.operator', ops[gpu.tonemapOperator])
+
+  -- VSync is a window/swap-interval setting (Config.render.vsync), applied live
+  -- by GameView; seed it so the debug control matches the window's startup state.
+  seed('render.vsync', (Config and Config.render) and Config.render.vsync)
 end)
 
 local colorFormat = TexFormat.RGBA16F
@@ -67,17 +71,15 @@ Settings.addBool  ('postfx.grain.enable',        'Film Grain',  false)
 Settings.addFloat ('postfx.grain.strength',      ' - Amount',   1, 0, 4)
 
 Settings.addFloat ('render.fovY',        'FOV',                   70, 50, 100)
-Settings.addFloat ('render.lodScale',    'LOD Scale',             0.3, 0.1, 1.0)
 Settings.addEnum  ('render.superSample', 'SuperSampling',         2, { 'Off', '2x', '4x' })
 Settings.addBool  ('render.wireframe',   'Wireframe',             false)
 Settings.addBool  ('render.cullface',    'Backface Culling',      true)
-Settings.addFloat ('render.logZNear',    'Log Z Near',            -1, -2, 3)
-Settings.addFloat ('render.logZFar',     'Log Z Far',             7, 1, 8)
 Settings.addBool  ('render.showBuffers', 'Show Deferred Buffers', false)
 Settings.addEnum  ('render.textureFilter', 'Texture Filter', 3, { 'Bilinear', 'Trilinear', 'Trilinear + Aniso' })
 Settings.addFloat ('render.shadow.radius', 'Shadow Radius (PCF)',   2, 0, 8)
 Settings.addFloat ('render.shadow.bias',   'Shadow Bias',           0.001, -0.01, 0.1)
 Settings.addFloat ('render.shadow.scale',  'Shadow Dist Scale',     0.0005, 0, 0.01)
+Settings.addBool  ('render.vsync',       'VSync',                 true)
 
 local function createBuffer (sx, sy, format)
   local self = Tex2D.Create(sx, sy, format)

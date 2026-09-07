@@ -1,4 +1,3 @@
-local Bindings = require('UI.Bindings')
 local Widget   = require('UI.Widget')
 
 local OptionSlider = {}
@@ -16,7 +15,7 @@ OptionSlider.dimBox  = 14
 
 OptionSlider.name      = 'OptionSlider'
 OptionSlider.focusable = true
-OptionSlider.draggable = true
+OptionSlider.draggable = false
 
 OptionSlider:setHeight(14)
 OptionSlider:setAlign(0.0, 0.5)
@@ -26,15 +25,9 @@ function OptionSlider:onClick (state)
   self:setNextValue()
 end
 
-function OptionSlider:onInput (state)
-  if Bindings.Right:get() > 0 or Bindings.Down:get() > 0 then
-    self:setNextValue()
-  end
-
-  if Bindings.Left:get() > 0 or Bindings.Up:get() > 0 then
-    self:setPrevValue()
-  end
-end
+-- WASD cycling removed: Up/Down/Left/Right are W/S/A/D, and W/S thrust the
+-- ship, so keyboard navigation could spin these while flying. Click cycles now.
+function OptionSlider:onInput (state) end
 
 function OptionSlider:onUpdate (state)
   Widget.onUpdate(self, state)

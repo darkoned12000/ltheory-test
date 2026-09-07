@@ -1,11 +1,13 @@
 Config.debug.instantJobs = true
 Config.debug.jobSpeed = 10000
 
-Config.debug.window = false
+Config.debug.window = true
 Config.debug.metrics = true
 Config.ui.showTrackers = false
 
 Config.render.vsync = false
+
+Config.window.fullscreen = true
 
 -- Config.gen.nBeltSize = function (rng) return 10000 end
 Config.gen.scalePlanet = 5e3

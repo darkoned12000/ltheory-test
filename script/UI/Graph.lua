@@ -12,8 +12,8 @@ Graph.Mode = {
   SIZE = 3,
 }
 
-local barSX       = 1
-local barSpace    = 0
+local barSX       = 2
+local barSpace    = 1
 local barTotal    = barSX + barSpace
 local hysteresis  = 0.5
 
@@ -150,20 +150,17 @@ function Graph:onDraw (focus, active)
       end
     end
 
-    -- Draw ruler crossings
-    if #self.rulers > 0 then
-      local fx = ix
-      for i = 1, #self.values do
-        local value = self.values:get(i)
-        for j = 1, #self.rulers do
-          local ruler = self.rulers[j]
-          if value >= ruler.value then
-            local c = ruler.color
-            local ry = Math.Clamp(dydv * (ruler.value - vMin), 0, usableSY)
-            DrawEx.Rect(fx - 2, baseY - ry - 2, 4, 4, Color(c.x, c.y, c.z, 1))
-          end
+    -- Ruler crossing markers (head value only — per-bar dots cost hundreds of
+    -- immediate draws per frame at debug-panel sizes)
+    if #self.values > 0 and #self.rulers > 0 then
+      local headValue = self.values:get(self.head)
+      for j = 1, #self.rulers do
+        local ruler = self.rulers[j]
+        if headValue >= ruler.value then
+          local c = ruler.color
+          local ry = Math.Clamp(dydv * (ruler.value - vMin), 0, usableSY)
+          DrawEx.Rect(ix + (self.head - 1) * barTotal - 1, baseY - ry - 1, 2, 2, Color(c.x, c.y, c.z, 1))
         end
-        fx = fx + barTotal
       end
     end
 

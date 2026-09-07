@@ -10,6 +10,7 @@ Cache.shaders      = {}   -- successfully-compiled programs by key
 Cache.goodShaders  = {}   -- last-known-good program per key, used to degrade on failure
 Cache.lastError    = nil  -- most recent failed pass with no fallback; drawn as overlay
 Cache.textures     = {}   -- loaded textures (Cache.Texture)
+Cache.texCount     = 0    -- live-resident texture count (grows with Cache)
 
 function Cache.Clear ()
   for k, v in pairs(Cache.shaders) do if v then v:free() end end
@@ -18,6 +19,7 @@ function Cache.Clear ()
   Cache.goodShaders = {}
   Cache.lastError = nil
   Cache.textures = {}
+  Cache.texCount = 0
 end
 
 function Cache.File (path)
@@ -106,6 +108,7 @@ function Cache.Texture (name, filtered)
   if self then return self end
   self = Tex2D.Load(name)
   Cache.textures[name] = self
+  Cache.texCount = Cache.texCount + 1
   if filtered then
     Cache.filtered[self] = true
     applyModeTo(self)

@@ -129,10 +129,28 @@ end
 
 function LTheory:onInit ()
   self.player = Entities.Player()
+
+  -- Scale UI fonts to the actual window height (the compositor may force a
+  -- different size than Config.window, e.g. fullscreen). The engine draws UI
+  -- in window-pixel space, so a fixed pixel font would be disproportionately
+  -- large/small on other monitors; derive it from the real size instead.
+  -- Baseline sizes live in Config.ui.font (tuned at a 900px-tall window).
+  do
+    local w = self.window:getSize()
+    local fontScale = Math.Clamp(w.y / 900, 0.7, 1.8)
+    local normalSize = max(12, Math.Round(Config.ui.font.normalSize * fontScale))
+    local titleSize  = max(10, Math.Round(Config.ui.font.titleSize  * fontScale))
+    Config.ui.font.normal     = Cache.Font('Share', normalSize)
+    Config.ui.font.normalSize = normalSize
+    Config.ui.font.title      = Cache.Font('Exo2Bold', titleSize)
+    Config.ui.font.titleSize  = titleSize
+  end
+
   self:generate()
 
   DebugControl.ltheory = self
   self.gameView = GUI.GameView(self.player)
+  self.gameView.ltheory = self -- window access (vsync), mirrors DebugWindow
   self.canvas = UI.Canvas()
   self.canvas
     :add(self.gameView

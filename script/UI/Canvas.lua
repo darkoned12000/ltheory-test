@@ -29,6 +29,11 @@ function Canvas:findMouseFocus ()
     s:setScrollFocus(foci.scrollFocus)
     s:setNavFocus   (foci.navFocus)
     s:setFocus      (foci.focus)
+  else
+    -- Cursor over nothing focusable (e.g. the game view): drop UI focus so the
+    -- panel's widgets stop consuming keyboard input (sliders/WASD, collapsibles)
+    -- while you're actually flying the ship.
+    s:setFocus(nil)
   end
 end
 
@@ -65,9 +70,14 @@ function Canvas:input ()
   Profiler.End()
 
   Profiler.Begin('Canvas.Drag')
-  -- Activate, Begin Drag
+  -- Activate, Begin Drag. Only a real mouse press may start a drag. Space is
+  -- both the UI 'select' action AND the ship's mouse-look modifier, so a
+  -- keyboard-select must never grab a widget under the cursor: while the
+  -- player steers with Space+mouse, the cursor position would otherwise yank a
+  -- hovered slider (e.g. to its max).
+  local mouseSelect = Input.GetValue(Button.Mouse.Left) > 0
   if s.focus then
-    if select > 0 then
+    if select > 0 and mouseSelect then
       s.active = s.focus
       if s.active.draggable then s.active:dragBegin(s) end
     end
@@ -81,7 +91,12 @@ function Canvas:input ()
 
     if select < 0 then
       if s.active.draggable  then s.active:dragEnd(s) end
-      if s.active == s.focus then s.active:click(s) end
+      -- Always fire click on the press-target on release. The old check
+      -- (s.active == s.focus) required the pointer to land on the exact same
+      -- widget; any layout shift or scroll between press and release left focus
+      -- nil and silently swallowed the click — the main cause of "cannot
+      -- interact with debug panel controls".
+      s.active:click(s)
       s.active = nil
     end
   end
