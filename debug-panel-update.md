@@ -520,3 +520,106 @@ The key experiment + leading theory:
    with a grim capture. The user says text is hard to read.
 4. Re-verify visually at 2x (grim), then the HDR/graphics visual pass (AGENTS.md
    #1) becomes possible — the debug panel is the manual-tuning surface for it.
+
+---
+
+# SESSION 4 (2026-09-08): immediate-draw batching — flat path shipped, font atlas next
+
+**Status: the flat-color deferred batch (roadmap #15 "proper fix") is committed
+(`a7bb7a1`) and gated by a headless validator; profiling shows it covers only
+~190 of ~4,300 immediate draws/frame — the dominant costs are per-glyph font
+textures and per-widget shader rects. Font atlas chosen as the next step (user
+decision). The full atlas plan is §S4.4 below so work can be resumed cold.**
+
+## S4.1 — What shipped (a7bb7a1, local main)
+
+Color-keyed deferred batching in the engine's flat immediate path
+(`libphx/src/Draw.cpp`):
+
+- **Run model:** primitives accumulate while (draw mode, r/g/b/a-after-alpha-
+  bake, textured-flat state) are unchanged; flush (one `glBufferData`+
+  `glDrawArrays`) only on a run-key change or a commit point. Order is
+  monotonic within a run → layering/blending hold.
+- **Commit points (must flush before):** run-signature change; active program
+  change / texture blit (legacy one-shot path); every `RenderState` push/pop
+  (all 5); `RenderTarget` push/pop; `Shader_Start`; `ShaderVar_Push/Pop`
+  (mProjUI/mViewUI funnel); `Window_EndDraw` (flush before `Viewport_Pop`);
+  line/point-size changes; VBO overflow (split + re-anchor). `DRAW_MAX_VERTS`
+  = 4096.
+- **Direct path preserved:** draws issued while an explicit program is active
+  (post/postfx rects, widget-shader primitives) bypass the batch and go
+  immediate — unchanged semantics, no layering risk.
+- **Pure helper exposed for tests:** `ImmBatch_KeyMatch` (exact-float contract
+  — a false negative merely fails to merge, so it is safe) + `Draw_FlushPending`.
+- **Validator:** `tools/validate_immdraw.lua` (13 headless cases, non-GL),
+  CMake target `phx_validate_immdraw`, wired into `configure.py test`
+  (`run_immdraw_tests()`). FFI note: `ffi.C` only resolves globally-loaded
+  symbols — bindings must go through the libphx handle
+  (`Draw.ImmBatch_KeyMatch = libphx.ImmBatch_KeyMatch` in
+  `libphx/script/ffi/Draw.lua`).
+- Full `./configure.py test` green (122 shaders; Bytes/DrawBatch/immdraw/
+  RenderQueue/SDL/HUD all PASS); `cmake --build build` clean; fresh boot clean
+  (no Lua/DBG noise).
+
+## S4.2 — Why flat batching was NOT the big win (measured 2026-09-08)
+
+`Metric.Immediate` per frame with the panel open (panel ≈ 4,300 real immediate
+draws — the metric counts per actual GL draw):
+
+| Cost | /frame | Driver |
+|------|--------|--------|
+| **Font glyphs** | ~2,660 | `Font.cpp:93` makes a `Tex2D` **per glyph**; `Font_Draw`/`Font_DrawShaded` → `Tex2D_DrawEx` = one bind + one `Imm_Draw` per glyph. `Font.cpp:26` already says `/* TODO : Atlas instead of individual textures */`. |
+| **Widget-shader rects** | ~1,460 | `DrawEx.Rect/Line/Panel/Ring` start `ui/box`/`ui/line`/`ui/panel`/`ui/ring` **per rect** (DrawEx.lua :95/:115/:174). The graphs draw via these (`Graph.lua` uses `DrawEx.Rect/Line`), NOT raw flat prims — so the ROADMAP #15 premise (~4,900 graph *flat* primitives) was wrong. Per-draw uniforms → not mergeable at the Draw layer. |
+| **Flat rects (NOW batched)** | ~190 | `Draw.Rect` etc. under the ambient flat program — the engine covers only this ~4%. |
+
+Contributing facts the DBG log (since removed) established: each glyph draw
+appears while `(none)` is active — 2,660 single-glyph binds; the widget block
+alternates explicit `fragment/ui/box`, `fragment/ui/line`, ... with `(none)`;
+and these draws issue through `Imm_Draw` (bypassing `Draw_Enqueue` entirely, so
+they were never counted in the earlier "activeProg vs batched" split).
+
+## S4.3 — Decision (user-selected)
+
+**Font atlas** — build a shared per-font glyph atlas so an entire string
+renders in ~one bind + one draw. Biggest single win (~60% of the panel cost)
+and closes the `Font.cpp` per-glyph-texture TODO. Widget-shader batching
+(per-vertex-color refactor so the ~1,460 rects batch) is **deferred** — revisit
+after the atlas if the panel is still FPS-bound; it is a separate, riskier
+engine change.
+
+## S4.4 — Font atlas plan (phase 2 of #15)
+
+Goal: ~2,660 glyph draws/frame → ~1 draw per string (atlas bound once).
+
+1. **Structs (`libphx/src/Font.cpp`):**
+   - `Glyph` drops `Tex2D* tex`; gains packed origin `(ax, ay)` pixels + a CPU
+     RGBA copy of its bitmap (for repack without re-rasterizing).
+     (`ffi/Font.lua` treats Font/Glyph as opaque — no FFI break.)
+   - `Font` gains `Tex2D* atlas; int atlasW, atlasH; Vec4f* atlasBits;` + shelf-
+     packer state (current shelf Y/height, cursor X) + an ordered glyph list
+     (insertion order, for repack). `Font_Free` frees bits + atlas Tex2D + per-
+     glyph bitmaps (glyph *node* leak stays per the existing TODO — out of scope).
+2. **Packing (simple shelf):** start 256×256 PoT, double on overflow up to a
+   1024×1024 cap. Place at (`curX`, shelfY) with 1px padding each side (2px
+   gap) to stop linear-filter bleed; new shelf when the glyph does not fit on
+   `curX`; grow (×2 W then H) + repack all glyphs into a fresh buffer + re-
+   create/re-upload the atlas when a shelf exceeds atlasH. A single glyph larger
+   than the cap clips into the space (visual clip, no loop).
+3. **Upload:** keep the existing raster→Vec4f gamma loop; row-memcpy into
+   `atlasBits` at the packed cell; `Tex2D_SetData(atlas, atlasBits, RGBA, Float)`
+   over the full square on each new glyph/repack (panel warms the set in the
+   first frames; afterwards zero uploads). Same float→RGBA8 path as today ⇒
+   pixel-identical glyphs.
+4. **Draw (`Font_Draw` / `Font_DrawShaded`):** bind atlas to unit 0 once
+   (`Shader_SetTex2D("glyph", atlas)` on the shaded path), then build one
+   `ImmVert[4·len]` for the whole string (per-glyph metrics/kerning/advance loop
+   unchanged; sub-rect UVs from `(ax,ay,sx,sy)`/atlas dims) and issue ONE
+   `Imm_Draw` (splits only at 4096 verts = 1024 glyphs, never for a label).
+   Ambient-program model preserved (flat program auto-starts for the un-shaded
+   path) → visual equivalence; no `.glsl` changes → no validator churn.
+5. **Verify:** same-seed A/B equivalence gate (app visuals unchanged); `imms/
+   frame` drops ~2,600/frame with the panel open (~4,300 → ~1,700; the remaining
+   ~1,460 are widget-shader rects, see §S4.3); `./configure.py test`; fresh
+   boot + F9 panel visual check at 2x.
+6. **Files:** `libphx/src/Font.cpp` only (opaque handles; check
+   `libphx/script/ffi/Font.lua` before changing anything it touches).
