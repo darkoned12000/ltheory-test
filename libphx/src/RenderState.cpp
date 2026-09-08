@@ -1,5 +1,6 @@
 #include "BlendMode.h"
 #include "CullFace.h"
+#include "Draw.h"
 #include "OpenGL.h"
 #include "RenderState.h"
 
@@ -89,13 +90,15 @@ void RenderState_PopAll () {
 
 #define X(T, StateFn, State)                                                   \
   void RenderState_Push##StateFn(T value) {                                    \
+    Draw_FlushPending();                                                       \
     if (State##Index + 1 >= MAX_STACK_DEPTH)                                   \
       Fatal("RenderState_Push" #StateFn ": Maximum state stack depth exceeded"); \
     State[++State##Index] = value;                                             \
     RenderState_Set##StateFn(value);                                           \
   }                                                                            \
-                                                                               \
+                                                                                \
   void RenderState_Pop##StateFn() {                                            \
+    Draw_FlushPending();                                                       \
     if (State##Index < 0)                                                      \
       Fatal("RenderState_Pop" #StateFn ": Attempting to pop an empty state stack"); \
     State##Index--;                                                            \

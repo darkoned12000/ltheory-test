@@ -1,3 +1,4 @@
+#include "Draw.h"
 #include "Metric.h"
 #include "OpenGL.h"
 #include "Profiler.h"
@@ -41,6 +42,7 @@ inline static void SetDrawBuffers (int count) {
 }
 
 void RenderTarget_Push (int sx, int sy) {
+  Draw_FlushPending();
   FRAME_BEGIN;
   if (fboIndex + 1 >= MAX_STACK_DEPTH)
     Fatal("RenderTarget_Push: Maximum stack depth exceeded");
@@ -60,6 +62,7 @@ void RenderTarget_Push (int sx, int sy) {
 }
 
 void RenderTarget_Pop () {
+  Draw_FlushPending();
   FRAME_BEGIN;
   if (fboIndex < 0)
     Fatal("RenderTarget_Pop: Attempting to pop an empty stack");

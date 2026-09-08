@@ -1,4 +1,5 @@
 #include "ArrayList.h"
+#include "Draw.h"
 #include "Matrix.h"
 #include "PhxMemory.h"
 #include "OpenGL.h"
@@ -300,6 +301,7 @@ ShaderState* Shader_ToShaderState (Shader* self) {
 
 void Shader_Start (Shader* self) {
   if (!self) return; /* Item 4: broken shader load returned NULL; skip the pass instead of dereferencing program/vars, preventing SIGSEGV in Lua caller */
+  Draw_FlushPending(); /* Batch-deferred flat primitives must land under the state they were queued in. */
   FRAME_BEGIN;
   GLCALL(glUseProgram(self->program))
   current = self;

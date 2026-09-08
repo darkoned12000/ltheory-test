@@ -1,3 +1,4 @@
+#include "Draw.h"
 #include "Matrix.h"
 #include "PhxMemory.h"
 #include "ShaderVar.h"
@@ -42,6 +43,7 @@ inline static VarStack* ShaderVar_GetStack (cstr var, ShaderVarType type) {
 }
 
 inline static void ShaderVar_Push (cstr var, ShaderVarType type, void const* value) {
+  Draw_FlushPending(); /* A deferred flat run is emitted under the mProjUI/mViewUI that produced it — any var change invalidates that. */
   VarStack* self = ShaderVar_GetStack(var, type);
   if (self->size == self->capacity) {
     self->capacity *= 2;
@@ -116,6 +118,7 @@ void ShaderVar_PushTexCube (cstr name, TexCube* x) {
 }
 
 void ShaderVar_Pop (cstr name) {
+  Draw_FlushPending(); /* See ShaderVar_Push — a pop changes what the flat program's #autovars resolve to. */
   VarStack* self = ShaderVar_GetStack(name, 0);
   if (!self)
     Fatal("ShaderVar_Pop: Attempting to pop nonexistent stack <%s>", name);

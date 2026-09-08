@@ -1,4 +1,5 @@
 #include "ComputeSelfTest.h"
+#include "Draw.h"
 #include "PhxMemory.h"
 #include "OpenGL.h"
 #include "SDL.h"
@@ -43,6 +44,7 @@ void Window_BeginDraw (Window* self) {
 }
 
 void Window_EndDraw (Window* self) {
+  Draw_FlushPending(); /* Safety: never swap with deferred geometry still queued (mProjUI still active here). */
   Viewport_Pop();
   SDL_GL_SwapWindow(self->handle);
 }

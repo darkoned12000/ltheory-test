@@ -13,6 +13,16 @@ PHX_API void  Draw_Clear         (float r, float g, float b, float a);
 PHX_API void  Draw_ClearDepth    (float d);
 PHX_API void  Draw_Color         (float r, float g, float b, float a);
 PHX_API void  Draw_Flush         ();
+PHX_API void  Draw_FlushPending  ();
+
+/* Pure run-signature comparison for the deferred immediate-draw batch (see
+ * Draw.cpp). Returns 1 when both primitives belong to the same deferred run:
+ * identical primitive mode and the exact same color + baked-alpha key. Exact
+ * float equality is deliberate — a mismatch only fails to merge (safe), while
+ * an epsilon-tolerant match could merge visually-different colors. Exported so
+ * the merge contract is exercisable headlessly (tools/validate_immdraw.lua). */
+PHX_API int   ImmBatch_KeyMatch  (int modeA, float rA, float gA, float bA, float aA,
+                                  int modeB, float rB, float gB, float bB, float aB);
 PHX_API void  Draw_LineWidth     (float width);
 PHX_API void  Draw_PointSize     (float size);
 PHX_API void  Draw_PushAlpha     (float a);

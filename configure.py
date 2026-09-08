@@ -60,6 +60,17 @@ def run_drawbatch_tests():
         luajit = 'luajit'
     return subprocess.run([luajit, exe]).returncode
 
+def run_immdraw_tests():
+    print('[configure.py] Validating immediate-draw batch run signature (ImmBatch_KeyMatch)')
+    exe = os.path.join('tools', 'validate_immdraw.lua')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_immdraw.lua found - skipping')
+        return 0
+    luajit = os.path.join('libphx', 'ext', 'bin', 'linux64', 'luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    return subprocess.run([luajit, exe]).returncode
+
 def run_renderqueue_tests():
     print('[configure.py] Validating RenderJobQueue threading (barrier, order, shutdown)')
     exe = os.path.join('tools', 'validate_renderqueue.lua')
@@ -113,6 +124,7 @@ def run_tests():
     result |= run_shader_tests()
     result |= run_bytes_tests()
     result |= run_drawbatch_tests()
+    result |= run_immdraw_tests()
     result |= run_renderqueue_tests()
     result |= run_sdl_tests()
     result |= run_hud_tests()

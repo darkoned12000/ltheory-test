@@ -147,33 +147,45 @@ static int Draw_Expand (GLenum mode) {
   return mode; /* LINES / POINTS / TRIANGLES unchanged */
 }
 
-/* --- Imm_* : shared immediate-vertex API (see DrawInternal.h) ------------- */
+/* --- Deferred flat batch -----------------------------------------------------
+ * The color-state path (Draw_Rect/Line/Tri/... with no explicitly-started
+ * program and no texture blit — DIRECTLY the debug-panel/widget path) queues
+ * primitives into s_verts instead of one glDraw per primitive. A queued
+ * run stays pending until its signature changes or a state boundary forces a
+ * commit, so e.g. the panel's ~5,000 same-color rects become a handful of
+ * draws (roadmap #15).
+ *
+ * Run signature: GL mode, run color (alpha stack already baked in), and the
+ * textured flag. Commit points:
+ *   - signature change (mode / color / alpha / textured),
+ *   - an explicitly-started program (Shader_GetActive()) or a texture blit
+ *     (s_lastTextured) — those take the legacy one-shot path,
+ *   - RenderState / RenderTarget / Shader_Start / line+point-size / swap
+ *     boundaries, via Draw_FlushPending() (see RenderState.cpp, Shader.cpp,
+ *     RenderTarget.cpp, Window.cpp),
+ *   - vertex-buffer overflow (commit and continue the run in a new slice).
+ *
+ * Queue order is preserved both within a run and across commits, so blending
+ * order is identical to the old per-primitive flush.
+ * -------------------------------------------------------------------------- */
+static GLenum s_batchMode = 0;        /* Pending run primitive; 0 = idle.    */
+static bool   s_batchTextured = false;
+static float  s_batchR = 1, s_batchG = 1, s_batchB = 1, s_batchA = 1;
 
-static void Draw_Flush (GLenum mode);
-
-void Imm_Bind () {
-  Draw_Bind();
+static inline float Draw_CurrentAlpha () {
+  return color.w * (alphaIndex >= 0 ? alphaStack[alphaIndex] : 1.0f);
 }
 
-void Imm_Unbind () {
-  Draw_Unbind();
-}
-
-void Imm_Draw (ImmVert const* verts, int count, GLenum mode) {
-  if (!verts || count <= 0) return;
-  while (count > 0) {
-    int n = count < DRAW_MAX_VERTS ? count : DRAW_MAX_VERTS;
-    memcpy(s_verts, verts, (size_t)n * sizeof(DrawVert));
-    s_count = n;
-    Draw_Flush(mode);
-    verts += n;
-    count -= n;
-  }
-}
-
-static void Draw_Flush (GLenum mode) {
+/* Upload the pending verts and draw them as the given primitive. Mirrors the
+ * old per-primitive Draw_Flush(GLenum): expands QUADS/POLYGON, starts the flat
+ * program when nothing is active, binds the white dummy texture for flat runs,
+ * and counts the actual IMM draw that happened. */
+static void Draw_Emit (GLenum mode) {
   if (s_count == 0) return;
+
   mode = Draw_Expand(mode);
+  int verts = s_count;
+  int tris  = (mode == GL_TRIANGLES) ? verts / 3 : 0;
 
   bool startedDefault = false;
   if (!Shader_GetActive()) {
@@ -182,9 +194,8 @@ static void Draw_Flush (GLenum mode) {
     if (s_progFlat && ShaderVar_Get("mProjUI", ShaderVarType_Matrix)) {
       Shader_Start(s_progFlat);
       /* Old semantics: glColor4f(r, g, b, a * alphaStackTop). */
-      float alpha = alphaIndex >= 0 ? alphaStack[alphaIndex] : 1.0f;
-      Shader_SetFloat4("color", color.x, color.y, color.z, color.w * alpha);
-      if (!s_lastTextured) {
+      Shader_SetFloat4("color", s_batchR, s_batchG, s_batchB, s_batchA);
+      if (!s_batchTextured) {
         /* Flat primitive: neutralize whatever is on unit 0. */
         GLCALL(glActiveTexture(GL_TEXTURE0))
         GLCALL(glBindTexture(GL_TEXTURE_2D, Tex2D_GetHandle(s_texWhite)))
@@ -205,10 +216,111 @@ static void Draw_Flush (GLenum mode) {
   if (startedDefault) Shader_Stop(nullptr);
   s_count = 0;
   s_lastTextured = false;
+  Metric_AddDrawImm(1, tris, verts);
 }
 
-/* Begin/End helpers — accumulate then flush. */
-static inline void Draw_Begin () { s_count = 0; }
+/* Emit the pending run (if any) and clear the run state. */
+static void Draw_Commit () {
+  if (s_batchMode) {
+    GLenum mode = s_batchMode;
+    s_batchMode = 0;
+    Draw_Emit(mode);
+  }
+}
+
+/* Exported: commit queued immediate geometry now, without glFinish. Hooked at
+ * render-target / program / render-state / swap boundaries so a deferred run
+ * is always emitted under the GL state it was queued in. */
+void Draw_FlushPending () {
+  Draw_Commit();
+}
+
+/* Pure run-signature comparison (see Draw.h). Exact float equality: a run only
+ * continues when mode and the queued color * baked-alpha key are bit-identical;
+ * anything else commits first — always safe, occasionally just less merging. */
+int ImmBatch_KeyMatch (
+  int modeA, float rA, float gA, float bA, float aA,
+  int modeB, float rB, float gB, float bB, float aB)
+{
+  return modeA == modeB
+      && rA == rB && gA == gB && bA == bB && aA == aB;
+}
+
+/* Queue src[0..count) into the deferred flat run, or take the legacy one-shot
+ * path when an explicit program or texture blit is in flight. */
+static void Draw_Enqueue (DrawVert const* src, int count, GLenum mode) {
+  if (count <= 0) return;
+
+  if (Shader_GetActive() || s_lastTextured) {
+    Draw_Commit();
+    s_batchTextured = s_lastTextured;
+    s_batchR = color.x; s_batchG = color.y; s_batchB = color.z;
+    s_batchA = Draw_CurrentAlpha();
+    while (count > 0) {
+      int n = count < DRAW_MAX_VERTS ? count : DRAW_MAX_VERTS;
+      memcpy(s_verts, src, (size_t)n * sizeof(DrawVert));
+      s_count = n;
+      Draw_Emit(mode);
+      src += n;
+      count -= n;
+    }
+    return;
+  }
+
+  float a = Draw_CurrentAlpha();
+  if (s_batchMode != 0
+      && !ImmBatch_KeyMatch(s_batchMode, s_batchR, s_batchG, s_batchB, s_batchA,
+                            mode, color.x, color.y, color.z, a)) {
+    Draw_Commit();
+  }
+  if (s_batchMode == 0) {
+    s_batchMode = mode;
+    s_batchR = color.x; s_batchG = color.y; s_batchB = color.z; s_batchA = a;
+    s_batchTextured = false;
+  }
+
+  int in = 0;
+  while (in < count) {
+    if (s_count >= DRAW_MAX_VERTS) {
+      Draw_Commit();
+      s_batchMode = mode;
+      s_batchR = color.x; s_batchG = color.y; s_batchB = color.z; s_batchA = a;
+      s_batchTextured = false;
+    }
+    int room = DRAW_MAX_VERTS - s_count;
+    int c = count - in;
+    if (c > room) c = room;
+    memcpy(s_verts + s_count, src + in, (size_t)c * sizeof(DrawVert));
+    s_count += c;
+    in += c;
+  }
+}
+
+void Imm_Bind () {
+  Draw_Bind();
+}
+
+void Imm_Unbind () {
+  Draw_Unbind();
+}
+
+/* Raw vertex-stream blits (Tex1D/Tex2D/DebugMesh). Flushes any pending run
+ * first so the blit lands in queue order, then emits the stream directly. */
+void Imm_Draw (ImmVert const* verts, int count, GLenum mode) {
+  if (!verts || count <= 0) return;
+  Draw_Commit();
+  s_batchTextured = s_lastTextured;
+  s_batchR = color.x; s_batchG = color.y; s_batchB = color.z;
+  s_batchA = Draw_CurrentAlpha();
+  while (count > 0) {
+    int n = count < DRAW_MAX_VERTS ? count : DRAW_MAX_VERTS;
+    memcpy(s_verts, verts, (size_t)n * sizeof(DrawVert));
+    s_count = n;
+    Draw_Emit(mode);
+    verts += n;
+    count -= n;
+  }
+}
 
 void Draw_PushAlpha (float a) {
   if (alphaIndex + 1 >= MAX_STACK_DEPTH)
@@ -237,18 +349,14 @@ void Draw_Axes (
   Vec3f left    = Vec3f_Add(*pos, Vec3f_Muls(*x, scale));
   Vec3f up      = Vec3f_Add(*pos, Vec3f_Muls(*y, scale));
   Vec3f forward = Vec3f_Add(*pos, Vec3f_Muls(*z, scale));
-  Draw_Begin();
-  Draw_Push(UNPACK3(*pos), 0, 0);
-  Draw_Push(UNPACK3(left), 0, 0);
-  Draw_Push(UNPACK3(*pos), 0, 0);
-  Draw_Push(UNPACK3(up), 0, 0);
-  Draw_Push(UNPACK3(*pos), 0, 0);
-  Draw_Push(UNPACK3(forward), 0, 0);
-  Draw_Flush(GL_LINES);
-
-  Draw_Begin();
-  Draw_Push(UNPACK3(*pos), 0, 0);
-  Draw_Flush(GL_POINTS);
+  DrawVert lines[6] = {
+    { UNPACK3(*pos), 0, 0 }, { UNPACK3(left), 0, 0 },
+    { UNPACK3(*pos), 0, 0 }, { UNPACK3(up), 0, 0 },
+    { UNPACK3(*pos), 0, 0 }, { UNPACK3(forward), 0, 0 },
+  };
+  DrawVert center[1] = { { UNPACK3(*pos), 0, 0 } };
+  Draw_Enqueue(lines, 6, GL_LINES);
+  Draw_Enqueue(center, 1, GL_POINTS);
 }
 
 void Draw_Border (float s, float x, float y, float w, float h) {
@@ -259,39 +367,39 @@ void Draw_Border (float s, float x, float y, float w, float h) {
 }
 
 void Draw_Box3 (Box3f const* self) {
-  Metric_AddDrawImm(6, 12, 24);
-  Draw_Begin();
-  /* Left. */
-  Draw_Push(self->lower.x, self->lower.y, self->lower.z, 0, 0);
-  Draw_Push(self->lower.x, self->lower.y, self->upper.z, 0, 0);
-  Draw_Push(self->lower.x, self->upper.y, self->upper.z, 0, 0);
-  Draw_Push(self->lower.x, self->upper.y, self->lower.z, 0, 0);
-  /* Right. */
-  Draw_Push(self->upper.x, self->lower.y, self->lower.z, 0, 0);
-  Draw_Push(self->upper.x, self->upper.y, self->lower.z, 0, 0);
-  Draw_Push(self->upper.x, self->upper.y, self->upper.z, 0, 0);
-  Draw_Push(self->upper.x, self->lower.y, self->upper.z, 0, 0);
-  /* Front. */
-  Draw_Push(self->lower.x, self->lower.y, self->upper.z, 0, 0);
-  Draw_Push(self->upper.x, self->lower.y, self->upper.z, 0, 0);
-  Draw_Push(self->upper.x, self->upper.y, self->upper.z, 0, 0);
-  Draw_Push(self->lower.x, self->upper.y, self->upper.z, 0, 0);
-  /* Back. */
-  Draw_Push(self->lower.x, self->lower.y, self->lower.z, 0, 0);
-  Draw_Push(self->lower.x, self->upper.y, self->lower.z, 0, 0);
-  Draw_Push(self->upper.x, self->upper.y, self->lower.z, 0, 0);
-  Draw_Push(self->upper.x, self->lower.y, self->lower.z, 0, 0);
-  /* Top. */
-  Draw_Push(self->lower.x, self->upper.y, self->lower.z, 0, 0);
-  Draw_Push(self->lower.x, self->upper.y, self->upper.z, 0, 0);
-  Draw_Push(self->upper.x, self->upper.y, self->upper.z, 0, 0);
-  Draw_Push(self->upper.x, self->upper.y, self->lower.z, 0, 0);
-  /* Bottom. */
-  Draw_Push(self->lower.x, self->lower.y, self->lower.z, 0, 0);
-  Draw_Push(self->upper.x, self->lower.y, self->lower.z, 0, 0);
-  Draw_Push(self->upper.x, self->lower.y, self->upper.z, 0, 0);
-  Draw_Push(self->lower.x, self->lower.y, self->upper.z, 0, 0);
-  Draw_Flush(GL_QUADS);
+  DrawVert v[24] = {
+    /* Left. */
+    { self->lower.x, self->lower.y, self->lower.z, 0, 0 },
+    { self->lower.x, self->lower.y, self->upper.z, 0, 0 },
+    { self->lower.x, self->upper.y, self->upper.z, 0, 0 },
+    { self->lower.x, self->upper.y, self->lower.z, 0, 0 },
+    /* Right. */
+    { self->upper.x, self->lower.y, self->lower.z, 0, 0 },
+    { self->upper.x, self->upper.y, self->lower.z, 0, 0 },
+    { self->upper.x, self->upper.y, self->upper.z, 0, 0 },
+    { self->upper.x, self->lower.y, self->upper.z, 0, 0 },
+    /* Front. */
+    { self->lower.x, self->lower.y, self->upper.z, 0, 0 },
+    { self->upper.x, self->lower.y, self->upper.z, 0, 0 },
+    { self->upper.x, self->upper.y, self->upper.z, 0, 0 },
+    { self->lower.x, self->upper.y, self->upper.z, 0, 0 },
+    /* Back. */
+    { self->lower.x, self->lower.y, self->lower.z, 0, 0 },
+    { self->lower.x, self->upper.y, self->lower.z, 0, 0 },
+    { self->upper.x, self->upper.y, self->lower.z, 0, 0 },
+    { self->upper.x, self->lower.y, self->lower.z, 0, 0 },
+    /* Top. */
+    { self->lower.x, self->upper.y, self->lower.z, 0, 0 },
+    { self->lower.x, self->upper.y, self->upper.z, 0, 0 },
+    { self->upper.x, self->upper.y, self->upper.z, 0, 0 },
+    { self->upper.x, self->upper.y, self->lower.z, 0, 0 },
+    /* Bottom. */
+    { self->lower.x, self->lower.y, self->lower.z, 0, 0 },
+    { self->upper.x, self->lower.y, self->lower.z, 0, 0 },
+    { self->upper.x, self->lower.y, self->upper.z, 0, 0 },
+    { self->lower.x, self->lower.y, self->upper.z, 0, 0 },
+  };
+  Draw_Enqueue(v, 24, GL_QUADS);
 }
 
 void Draw_Clear (float r, float g, float b, float a) {
@@ -310,25 +418,23 @@ void Draw_Color (float r, float g, float b, float a) {
 }
 
 void Draw_Flush () {
+  Draw_Commit();
   Metric_Inc(Metric_Flush);
   GLCALL(glFinish())
 }
 
 void Draw_Line (float x1, float y1, float x2, float y2) {
-  Draw_Begin();
-  Draw_Push(x1, y1, 0, 0, 0);
-  Draw_Push(x2, y2, 0, 0, 0);
-  Draw_Flush(GL_LINES);
+  DrawVert v[2] = { { x1, y1, 0, 0, 0 }, { x2, y2, 0, 0, 0 } };
+  Draw_Enqueue(v, 2, GL_LINES);
 }
 
 void Draw_Line3 (Vec3f const* p1, Vec3f const* p2) {
-  Draw_Begin();
-  Draw_Push(UNPACK3(*p1), 0, 0);
-  Draw_Push(UNPACK3(*p2), 0, 0);
-  Draw_Flush(GL_LINES);
+  DrawVert v[2] = { { UNPACK3(*p1), 0, 0 }, { UNPACK3(*p2), 0, 0 } };
+  Draw_Enqueue(v, 2, GL_LINES);
 }
 
 void Draw_LineWidth (float width) {
+  Draw_Commit();
   GLCALL(glLineWidth(width))
 }
 
@@ -342,77 +448,70 @@ void Draw_Plane (Vec3f const* p, Vec3f const* n, float scale) {
   Vec3f p2 = Vec3f_Add(*p, Vec3f_Add(Vec3f_Muls(e1,  scale), Vec3f_Muls(e2,  scale)));
   Vec3f p3 = Vec3f_Add(*p, Vec3f_Add(Vec3f_Muls(e1, -scale), Vec3f_Muls(e2,  scale)));
 
-  Metric_AddDrawImm(1, 2, 4);
-  Draw_Begin();
-  Draw_Push(UNPACK3(p0), 0, 0);
-  Draw_Push(UNPACK3(p1), 0, 0);
-  Draw_Push(UNPACK3(p2), 0, 0);
-  Draw_Push(UNPACK3(p3), 0, 0);
-  Draw_Flush(GL_QUADS);
+  DrawVert v[4] = {
+    { UNPACK3(p0), 0, 0 }, { UNPACK3(p1), 0, 0 },
+    { UNPACK3(p2), 0, 0 }, { UNPACK3(p3), 0, 0 },
+  };
+  Draw_Enqueue(v, 4, GL_QUADS);
 }
 
 void Draw_Point (float x, float y) {
-  Draw_Begin();
-  Draw_Push(x, y, 0, 0, 0);
-  Draw_Flush(GL_POINTS);
+  DrawVert v[1] = { { x, y, 0, 0, 0 } };
+  Draw_Enqueue(v, 1, GL_POINTS);
 }
 
 void Draw_Point3 (float x, float y, float z) {
-  Draw_Begin();
-  Draw_Push(x, y, z, 0, 0);
-  Draw_Flush(GL_POINTS);
+  DrawVert v[1] = { { x, y, z, 0, 0 } };
+  Draw_Enqueue(v, 1, GL_POINTS);
 }
 
 void Draw_PointSize (float size) {
+  Draw_Commit();
   GLCALL(glPointSize(size))
 }
 
 void Draw_Poly (Vec2f const* points, int count) {
-  Metric_AddDrawImm(1, count - 2, count);
-  Draw_Begin();
+  if (count <= 1) return;
+  if (count > DRAW_MAX_VERTS) count = DRAW_MAX_VERTS;
+  DrawVert v[DRAW_MAX_VERTS];
   for (int i = 0; i < count; ++i)
-    Draw_Push(UNPACK2(points[i]), 0, 0);
-  Draw_Flush(GL_POLYGON);
+    v[i] = DrawVert{ UNPACK2(points[i]), 0, 0 };
+  Draw_Enqueue(v, count, GL_POLYGON);
 }
 
 void Draw_Poly3 (Vec3f const* points, int count) {
-  Metric_AddDrawImm(1, count - 2, count);
-  Draw_Begin();
+  if (count <= 1) return;
+  if (count > DRAW_MAX_VERTS) count = DRAW_MAX_VERTS;
+  DrawVert v[DRAW_MAX_VERTS];
   for (int i = 0; i < count; ++i)
-    Draw_Push(UNPACK3(points[i]), 0, 0);
-  Draw_Flush(GL_POLYGON);
+    v[i] = DrawVert{ UNPACK3(points[i]), 0, 0 };
+  Draw_Enqueue(v, count, GL_POLYGON);
 }
 
 void Draw_Quad (Vec2f const* p1, Vec2f const* p2, Vec2f const* p3, Vec2f const* p4) {
-  Metric_AddDrawImm(1, 2, 4);
-  Draw_Begin();
-  Draw_Push(UNPACK2(*p1), 0, 0);
-  Draw_Push(UNPACK2(*p2), 0, 1);
-  Draw_Push(UNPACK2(*p3), 1, 1);
-  Draw_Push(UNPACK2(*p4), 1, 0);
-  Draw_Flush(GL_QUADS);
+  DrawVert v[4] = {
+    { UNPACK2(*p1), 0, 0 }, { UNPACK2(*p2), 0, 1 },
+    { UNPACK2(*p3), 1, 1 }, { UNPACK2(*p4), 1, 0 },
+  };
+  Draw_Enqueue(v, 4, GL_QUADS);
 }
 
 void Draw_Quad3 (Vec3f const* p1, Vec3f const* p2, Vec3f const* p3, Vec3f const* p4) {
-  Metric_AddDrawImm(1, 2, 4);
-  Draw_Begin();
-  Draw_Push(UNPACK3(*p1), 0, 0);
-  Draw_Push(UNPACK3(*p2), 0, 1);
-  Draw_Push(UNPACK3(*p3), 1, 1);
-  Draw_Push(UNPACK3(*p4), 1, 0);
-  Draw_Flush(GL_QUADS);
+  DrawVert v[4] = {
+    { UNPACK3(*p1), 0, 0 }, { UNPACK3(*p2), 0, 1 },
+    { UNPACK3(*p3), 1, 1 }, { UNPACK3(*p4), 1, 0 },
+  };
+  Draw_Enqueue(v, 4, GL_QUADS);
 }
 
 void Draw_Rect (float x1, float y1, float xs, float ys) {
   float x2 = x1 + xs;
   float y2 = y1 + ys;
-  Metric_AddDrawImm(1, 2, 4);
-  Draw_Begin();
-  Draw_Push(x1, y1, 0, 0, 0);
-  Draw_Push(x1, y2, 0, 0, 1);
-  Draw_Push(x2, y2, 0, 1, 1);
-  Draw_Push(x2, y1, 0, 1, 0);
-  Draw_Flush(GL_QUADS);
+  DrawVert v[4] = {
+    { x1, y1, 0, 0, 0 }, { x1, y2, 0, 0, 1 },
+    { x2, y2, 0, 1, 1 }, { x2, y1, 0, 1, 0 },
+  };
+  Draw_Enqueue(v, 4, GL_QUADS);
 }
 
 /* NOTE : GL_LINE_SMOOTH / GL_POINT_SMOOTH are compatibility-only and were
@@ -436,90 +535,85 @@ inline static Vec3f Spherical (float r, float yaw, float pitch) {
     r * Sin(pitch) * Sin(yaw));
 }
 
-/* Draw_Sphere — rebuilt with the VBO path. Each row emits its own primitive
- * (TRIANGLES for caps, QUADS for the middle band), matching the old
- * immediate-mode expansion exactly. */
+/* Draw_Sphere — rebuilt with the VBO path. Each cap emits TRIANGLES and the
+ * middle band QUADS, matching the old immediate-mode expansion exactly. */
 void Draw_Sphere (Vec3f const* p, float r) {
   const size_t res = 7;
   const float fRes = float(res);
 
   /* First Row */ {
-    Metric_AddDrawImm(res, res, res * 3);
+    DrawVert v[res * 3];
+    int n = 0;
     float lastTheta = float(res - 1) / fRes * Tau;
     float phi = 1.0f / fRes * Pi;
     Vec3f tc = Vec3f_Add(*p, Spherical(r, 0, 0));
-    Draw_Begin();
     for (size_t iTheta = 0; iTheta < res; iTheta++) {
       float theta = float(iTheta) / fRes * Tau;
       Vec3f br = Vec3f_Add(*p, Spherical(r, lastTheta, phi));
       Vec3f bl = Vec3f_Add(*p, Spherical(r, theta, phi));
-      Draw_Push(UNPACK3(br), 0, 0);
-      Draw_Push(UNPACK3(tc), 0, 0);
-      Draw_Push(UNPACK3(bl), 0, 0);
+      v[n++] = DrawVert{ UNPACK3(br), 0, 0 };
+      v[n++] = DrawVert{ UNPACK3(tc), 0, 0 };
+      v[n++] = DrawVert{ UNPACK3(bl), 0, 0 };
       lastTheta = theta;
     }
-    Draw_Flush(GL_TRIANGLES);
+    Draw_Enqueue(v, n, GL_TRIANGLES);
   }
 
   /* Middle Rows */ {
-    Metric_AddDrawImm(res - 2, 2 * (res - 2), 4 * (res - 2));
+    DrawVert v[res * res * 8];
+    int n = 0;
     float lastPhi = 1.0f / fRes * Pi;
     float lastTheta = float(res - 1) / fRes * Tau;
 
     for (size_t iPhi = 2; iPhi < res; iPhi++) {
       float phi = float(iPhi) / fRes * Pi;
-      Draw_Begin();
       for (size_t iTheta = 0; iTheta < res; iTheta++) {
         float theta = float(iTheta) / fRes * Tau;
         Vec3f br = Vec3f_Add(*p, Spherical(r, lastTheta, phi));
         Vec3f tr = Vec3f_Add(*p, Spherical(r, lastTheta, lastPhi));
         Vec3f tl = Vec3f_Add(*p, Spherical(r, theta, lastPhi));
         Vec3f bl = Vec3f_Add(*p, Spherical(r, theta, phi));
-        Draw_Push(UNPACK3(br), 0, 0);
-        Draw_Push(UNPACK3(tr), 0, 0);
-        Draw_Push(UNPACK3(tl), 0, 0);
-        Draw_Push(UNPACK3(bl), 0, 0);
+        v[n++] = DrawVert{ UNPACK3(br), 0, 0 };
+        v[n++] = DrawVert{ UNPACK3(tr), 0, 0 };
+        v[n++] = DrawVert{ UNPACK3(tl), 0, 0 };
+        v[n++] = DrawVert{ UNPACK3(bl), 0, 0 };
         lastTheta = theta;
       }
-      Draw_Flush(GL_QUADS);
       lastPhi = phi;
     }
+    Draw_Enqueue(v, n, GL_QUADS);
   }
 
   /* Bottom Row */ {
-    Metric_AddDrawImm(res, res, res * 3);
+    DrawVert v[res * 3];
+    int n = 0;
     float lastTheta = float(res - 1) / fRes * Tau;
     float phi = float(res - 1) / fRes * Pi;
     Vec3f bc = Vec3f_Add(*p, Spherical(r, 0, Pi));
 
-    Draw_Begin();
     for (size_t iTheta = 0; iTheta < res; iTheta++) {
       float theta = float(iTheta) / fRes * Tau;
       Vec3f tr = Vec3f_Add(*p, Spherical(r, lastTheta, phi));
       Vec3f tl = Vec3f_Add(*p, Spherical(r, theta, phi));
-      Draw_Push(UNPACK3(tr), 0, 0);
-      Draw_Push(UNPACK3(tl), 0, 0);
-      Draw_Push(UNPACK3(bc), 0, 0);
+      v[n++] = DrawVert{ UNPACK3(tr), 0, 0 };
+      v[n++] = DrawVert{ UNPACK3(tl), 0, 0 };
+      v[n++] = DrawVert{ UNPACK3(bc), 0, 0 };
       lastTheta = theta;
     }
-    Draw_Flush(GL_TRIANGLES);
+    Draw_Enqueue(v, n, GL_TRIANGLES);
   }
 }
 
 void Draw_Tri (Vec2f const* v1, Vec2f const* v2, Vec2f const* v3) {
-  Metric_AddDrawImm(1, 1, 3);
-  Draw_Begin();
-  Draw_Push(UNPACK2(*v1), 0, 0);
-  Draw_Push(UNPACK2(*v2), 0, 1);
-  Draw_Push(UNPACK2(*v3), 1, 1);
-  Draw_Flush(GL_TRIANGLES);
+  DrawVert v[3] = {
+    { UNPACK2(*v1), 0, 0 }, { UNPACK2(*v2), 0, 1 }, { UNPACK2(*v3), 1, 1 },
+  };
+  Draw_Enqueue(v, 3, GL_TRIANGLES);
 }
 
 void Draw_Tri3 (Vec3f const* v1, Vec3f const* v2, Vec3f const* v3) {
-  Metric_AddDrawImm(1, 1, 3);
-  Draw_Begin();
-  Draw_Push(UNPACK3(*v1), 0, 0);
-  Draw_Push(UNPACK3(*v2), 0, 1);
-  Draw_Push(UNPACK3(*v3), 1, 1);
-  Draw_Flush(GL_TRIANGLES);
+  DrawVert v[3] = {
+    { UNPACK3(*v1), 0, 0 }, { UNPACK3(*v2), 0, 1 }, { UNPACK3(*v3), 1, 1 },
+  };
+  Draw_Enqueue(v, 3, GL_TRIANGLES);
 }

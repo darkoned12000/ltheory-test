@@ -60,6 +60,17 @@ add_dependencies (lt phx_validate_drawbatch)
 # before this validator runs (grouping test calls DrawBatch_GroupRuns via ffi).
 add_dependencies (phx_validate_drawbatch phx)
 
+add_custom_target (phx_validate_immdraw
+  COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_immdraw.lua
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating immediate-draw batch run signature (ImmBatch_KeyMatch)"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_immdraw)
+# Same dlopen ordering as bytes: build phx first so bin/libphx64.so exists
+# before this validator runs (KeyMatch is exercised via ffi).
+add_dependencies (phx_validate_immdraw phx)
+
 add_custom_target (phx_validate_renderqueue
   COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_renderqueue.lua
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
