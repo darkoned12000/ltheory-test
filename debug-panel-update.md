@@ -654,3 +654,60 @@ and committed to local main with this session's docs:
 **Remaining for #15 acceptance (sub-hundreds):** the ~1,400 widget-shader rects
 (`DrawEx.Rect/Line/Panel/Ring`) still start a program per rect — the deferred
 per-vertex-color batching, see ROADMAP #15.
+
+## S4.6 — OUTCOME (widget-shader batching implemented + verified, 2026-09-08)
+
+The last component of #15: the ~1,460 widget-shader rects no longer start a
+program per rect. Per-rect SDF uniforms (size / p1p2 / origin / radius /
+padding / innerAlpha) and the color are baked into **per-vertex attributes** of
+a dedicated `WidgetVert` stream in `Draw.cpp`, so every consecutive run of
+same-(shader, blend) rects merges into ONE `glDrawArrays` under a single shared
+program start.
+
+- **C++ (`Draw.cpp`, `Draw.h`):** `Draw_WidgetRect(shader, blend, rect, color,
+  pa0..pa3, pb0..pb3)` returns a run keyed by (widget-shader enum, blend mode);
+  6 verts (GL_TRIANGLES) per padded quad, cached `s_wVerts` buffer + own VBO.
+  `Draw_WidgetEmit` lazily `Shader_Load`s `vertex/ui/widget` + the matching
+  `fragment/ui/{box,line,panel,ring}`, snapshots/restores the GL blend
+  (Additive / Alpha funcs mirror `RenderState.cpp`), keeps the ambient
+  `BlendMode_Alpha` UI base untouched, and reports via
+  `Metric_AddDrawImm`. Flush points: run-key change, VBO overflow, and every
+  shared commit boundary — `Draw_FlushPending` (RenderState/RT/Shader_Start/
+  ShaderVar/Window_EndDraw), flat `Draw_Enqueue` (widgets draw first), and
+  `Imm_Draw` text blits. Order is preserved FIFO across the flat/widget/
+  textured streams (`Draw_WidgetRect` starts with `Draw_Commit`).
+- **Shaders:** new standalone `res/shader/vertex/ui/widget.glsl` (declares
+  `mProjUI/mViewUI` explicitly — must NOT `#include vertex`, which already
+  declares `vertex_color`), attributes 0/2/3/4/5 (pos/uv/color/widget_a/
+  widget_b) + `flat` passthrough; the four `fragment/ui/*` shaders switched
+  from uniforms to `flat in vec4 color/widget_a/widget_b` with the identical
+  math, mapping `box: size=widget_a.xy`, `line: p1/p2 = widget_a.xy/zw,
+  size/origin = widget_b.zw/xy`, `panel: padding=widget_a.x, size=widget_a.yz,
+  innerAlpha=widget_a.w`, `ring: radius=widget_a.x, size=widget_a.yz`.
+- **Validator:** `tools/validate_glsl.py` gains `flat` interpolation-qualifier
+  support (carried through the `in/out` stub generation); 122/122 shaders pass.
+- **DrawEx:** `Rect/Line/Panel/Ring` call `Draw.WidgetRect` with local
+  `WidgetShader_Box/Line/Panel/Ring` + `BlendMode_Additive/Alpha` constants
+  (matching `Draw.h`); the per-rect `Cache.Shader` + `shader:start/stop` +
+  `BlendMode.Push/Pop` are gone. Param packing is numerically identical to the
+  old uniforms (bevel stays 0 — DrawEx never set it). `panelglow/hex/wedge/
+  triangle/circle/icon` keep their one-shot uniform path (small counts).
+
+**Verified:**
+- Build clean; `./configure.py test` full-suite green (incl. new `flat`
+  shaders) — 122/122.
+- Metrics (probe, panel open at launch, steady-state): `imms`/frame → **~340**
+  (from ~1,413), `draws` 46 → 42; no panel: `imms` ≈ 29, `draws` 42; frame time
+  panel-open ≈ panel-closed (~1.7 ms) — the FPS gap between play and play-with-
+  panel is effectively gone. Residual ~310 `imms` are run-boundary emissions
+  (shader/blend switches + per-string font-blit texture draws), not per-rect
+  program starts.
+- **User visual sign-off**: widgets render identically (boxes, lines, panels,
+  rings, reticle); the initial "values flush right edge" report was a packed-fi
+  padding bug — `setPad` order is (minX, maxX, minY, maxY); the panel's five
+  section grids now use `setPad(2, 12, 2, 2)` so the right-aligned value column
+  clears the 3px scrollbar by ~11 px. Debug panel main-window values and the
+  settings-section scrollbar all verified by the user on-screen.
+
+#15 is closed (moved to ROADMAP "Completed"); the sub-hundreds `imms` target is
+deferred to a text-blit batching follow-up.

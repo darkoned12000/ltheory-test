@@ -55,7 +55,12 @@ def main() -> int:
         return "\n".join(out)
 
     def interface(src: str, word: str):
-        return re.findall(rf'^\s*{word}\s+(u?\w+)\s+(\w+)\s*;', src, re.M)
+        # Match [flat ]out/in <type> <name>;  -- group(1)="flat " or "",
+        # group(2)=type, group(3)=name. Stub interpolation qualifiers must
+        # match the real stage's (flat out <-> flat in), so the qualifier is
+        # carried through.
+        return re.findall(
+            rf'^\s*(flat\s+)?{word}\s+(u?\w+)\s+(\w+)\s*;', src, re.M)
 
     ctx = moderngl.create_context(standalone=True, backend='egl')
     print(f"context: {ctx.info['GL_VERSION']}")
@@ -71,7 +76,7 @@ def main() -> int:
                     # names exactly -- GLSL interface matching compares them,
                     # and >=420 drivers reject mismatches instead of warning.
                     stub = version_line + "".join(
-                        f"out {t} {n};\n" for t, n in ins) + "void main(){}\n"
+                        f"out {q}{t} {n};\n" for q, t, n in ins) + "void main(){}\n"
                     ctx.program(vertex_shader=stub, fragment_shader=src)
                 elif kind == "compute":
                     # Compute stages are standalone programs (no interface
@@ -80,7 +85,7 @@ def main() -> int:
                 else:
                     outs = interface(src, "out")
                     stub = version_line + "".join(
-                        f"in {t} {n};\n" for t, n in outs) + "void main(){}\n"
+                        f"in {q}{t} {n};\n" for q, t, n in outs) + "void main(){}\n"
                     ctx.program(vertex_shader=src, fragment_shader=stub)
                 ok += 1
             except Exception as e:

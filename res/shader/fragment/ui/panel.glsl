@@ -3,17 +3,19 @@
 
 
 layout(location = 0) out vec4 fragColor;
-uniform float padding;
-uniform vec2 size;
-uniform vec4 color;
-uniform float innerAlpha;
-uniform float bevel;
+flat in vec4 color;
+flat in vec4 widget_a;
+flat in vec4 widget_b;
 
 float dbox(vec2 p, vec2 s, float b) {
   return length(max(vec2(0.0, 0.0), abs(p) - (s - 2.0 * vec2(b, b)))) - b;
 }
 
 void main() {
+  float padding = widget_a.x;
+  vec2 size = widget_a.yz;
+  float innerAlpha = widget_a.w;
+  float bevel = widget_b.x;
   vec3 c;
   c = color.xyz * (1.25 - 0.5 * uv.y);
   float x = size.x * (2.0 * uv.x - 1.0);

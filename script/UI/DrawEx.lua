@@ -18,6 +18,17 @@ local padTri = 32
 local padWedge = 32
 local alphaStack = List()
 
+-- SDF widget shaders are white-listed into the C++ widget batch (roadmap #15):
+-- per-rect uniforms/color are baked into vertex attributes so every consecutive
+-- same-(shader, blend) rect merges into ONE draw. Must match Draw.h's enums and
+-- BlendMode.h constants.
+local WidgetShader_Box   = 0
+local WidgetShader_Line  = 1
+local WidgetShader_Panel = 2
+local WidgetShader_Ring  = 3
+local BlendMode_Additive = 0
+local BlendMode_Alpha    = 1
+
 function DrawEx.Arrow (p, n, color)
   local t = Vec2f(-n.y, n.x)
   DrawEx.TriV(p + n, p - n + t, p - n - t, color)
@@ -92,19 +103,12 @@ function DrawEx.Line (x1, y1, x2, y2, color)
   local yMax = max(y1, y2) + padLine
   local sx = xMax - xMin
   local sy = yMax - yMin
-  local shader = Cache.Shader('ui', 'ui/line')
-  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
-  BlendMode.PushAdditive()
-  shader:start()
-    Shader.SetFloat2('origin', xMin, yMin)
-    Shader.SetFloat2('size', sx, sy)
-    Shader.SetFloat2('p1', x1, y1)
-    Shader.SetFloat2('p2', x2, y2)
-    Shader.SetFloat4('color', color.r, color.g, color.b, color.a * alpha)
-    Draw.Rect(xMin, yMin, sx, sy)
-  shader:stop()
-  BlendMode.Pop()
+  Draw.WidgetRect(WidgetShader_Line, BlendMode_Additive,
+    xMin, yMin, sx, sy,
+    color.r, color.g, color.b, color.a * alpha,
+    x1, y1, x2, y2,
+    xMin, yMin, sx, sy)
 end
 
 function DrawEx.Panel (x, y, sx, sy, color, innerAlpha)
@@ -112,17 +116,11 @@ function DrawEx.Panel (x, y, sx, sy, color, innerAlpha)
   local innerAlpha = innerAlpha or 1
   local alpha = alphaStack:last() or 1
   local x, y, sx, sy = padOffCenter(padPanel, x, y, sx, sy)
-  local shader = Cache.Shader('ui', 'ui/panel')
-  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
-  BlendMode.PushAlpha()
-  shader:start()
-    Shader.SetFloat('padding', padPanel)
-    Shader.SetFloat('innerAlpha', innerAlpha * alpha)
-    Shader.SetFloat2('size', sx, sy)
-    Shader.SetFloat4('color', color.r, color.g, color.b, color.a * alpha)
-    Draw.Rect(x, y, sx, sy)
-  shader:stop()
-  BlendMode.Pop()
+  Draw.WidgetRect(WidgetShader_Panel, BlendMode_Alpha,
+    x, y, sx, sy,
+    color.r, color.g, color.b, color.a * alpha,
+    padPanel, sx, sy, innerAlpha * alpha,
+    0, 0, 0, 0)
 end
 
 function DrawEx.PanelGlow (x, y, sx, sy, color)
@@ -171,16 +169,12 @@ end
 
 function DrawEx.Rect (x, y, sx, sy, color)
   local x, y, sx, sy = padOffCenter(padBox, x, y, sx, sy)
-  local shader = Cache.Shader('ui', 'ui/box')
-  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
-  BlendMode.PushAdditive()
-  shader:start()
-    Shader.SetFloat2('size', sx, sy)
-    Shader.SetFloat4('color', color.r, color.g, color.b, color.a * alpha)
-    Draw.Rect(x, y, sx, sy)
-  shader:stop()
-  BlendMode.Pop()
+  Draw.WidgetRect(WidgetShader_Box, BlendMode_Additive,
+    x, y, sx, sy,
+    color.r, color.g, color.b, color.a * alpha,
+    sx, sy, 0, 0,
+    0, 0, 0, 0)
 end
 
 function DrawEx.RectOutline (x, y, sx, sy, color)
@@ -195,17 +189,12 @@ end
 
 function DrawEx.Ring (x, y, r, c)
   local x, y, sx, sy = padAndCenter(padRing, x, y, r, r)
-  local shader = Cache.Shader('ui', 'ui/ring')
-  if not shader then return end   -- item 4: skip broken UI pass; blend-mode stack stays balanced
   local alpha = alphaStack:last() or 1
-  BlendMode.PushAdditive()
-  shader:start()
-    Shader.SetFloat('radius', r)
-    Shader.SetFloat2('size', sx, sy)
-    Shader.SetFloat4('color', c.r, c.g, c.b, c.a * alpha)
-    Draw.Rect(x, y, sx, sy)
-  shader:stop()
-  BlendMode.Pop()
+  Draw.WidgetRect(WidgetShader_Ring, BlendMode_Additive,
+    x, y, sx, sy,
+    c.r, c.g, c.b, c.a * alpha,
+    r, sx, sy, 0,
+    0, 0, 0, 0)
 end
 
 function DrawEx.Tri (x1, y1, x2, y2, x3, y3, color)

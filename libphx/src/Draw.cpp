@@ -1,5 +1,6 @@
 #include "Draw.h"
 #include "DrawInternal.h"
+#include "BlendMode.h"
 #include "DataFormat.h"
 #include "Metric.h"
 #include "OpenGL.h"
@@ -228,11 +229,15 @@ static void Draw_Commit () {
   }
 }
 
+/* --- Widget batch (roadmap #15) -- forward decl, defined below. ------------- */
+static void Draw_WidgetFlush ();
+
 /* Exported: commit queued immediate geometry now, without glFinish. Hooked at
  * render-target / program / render-state / swap boundaries so a deferred run
  * is always emitted under the GL state it was queued in. */
 void Draw_FlushPending () {
   Draw_Commit();
+  Draw_WidgetFlush();
 }
 
 /* Pure run-signature comparison (see Draw.h). Exact float equality: a run only
@@ -250,6 +255,8 @@ int ImmBatch_KeyMatch (
  * path when an explicit program or texture blit is in flight. */
 static void Draw_Enqueue (DrawVert const* src, int count, GLenum mode) {
   if (count <= 0) return;
+
+  Draw_WidgetFlush();   /* Widgets queued earlier draw before this flat rect. */
 
   if (Shader_GetActive() || s_lastTextured) {
     Draw_Commit();
@@ -308,6 +315,7 @@ void Imm_Unbind () {
  * first so the blit lands in queue order, then emits the stream directly. */
 void Imm_Draw (ImmVert const* verts, int count, GLenum mode) {
   if (!verts || count <= 0) return;
+  Draw_WidgetFlush();   /* Textured blits (font/text) draw after queued widgets. */
   Draw_Commit();
   s_batchTextured = s_lastTextured;
   s_batchR = color.x; s_batchG = color.y; s_batchB = color.z;
@@ -320,6 +328,168 @@ void Imm_Draw (ImmVert const* verts, int count, GLenum mode) {
     verts += n;
     count -= n;
   }
+}
+
+/* --- Widget batch ------------------------------------------------------------
+ * DrawEx.Rect/Line/Panel/Ring (SDF widget shaders) each used to start a
+ * program, upload per-rect uniforms, draw one padded quad, and stop — ~1,460
+ * program start/stops per frame on the debug panel. Here those uniforms and the
+ * color travel as per-vertex attributes (WidgetVert below), so consecutive
+ * rects sharing a (shader, blend) run merge into ONE glDrawArrays under a
+ * single program start (roadmap #15). Queue order is preserved both within a
+ * run and across commits; blend is applied per-run and the ambient GL blend
+ * restored, so overdraw layering is bit-identical to the old per-rect calls.
+ *
+ * Run key: widget shader enum + blend mode. Commit points:
+ *   - key change, VBO overflow (commit and continue),
+ *   - any non-widget draw or state boundary via Draw_WidgetFlush(): flat
+ *     Draw_Enqueue, Imm_Draw (font/text blits), Draw_FlushPending
+ *     (RenderState/RenderTarget/Shader_Start/ShaderVar/Window boundaries).
+ * -------------------------------------------------------------------------- */
+#define WIDGET_MAX_VERTS (4096)
+typedef struct {
+  float x, y, z;            /* UI-space corner (padded bbox, like Draw_Rect). */
+  float u, v;               /* 0..1 over the quad. */
+  float r, g, b, a;         /* per-rect color (matches the old color uniform). */
+  float pa0, pa1, pa2, pa3; /* SDF parameters, bank A. */
+  float pb0, pb1, pb2, pb3; /* SDF parameters, bank B. */
+} WidgetVert;
+
+static WidgetVert s_wVerts[WIDGET_MAX_VERTS];
+static int        s_wCount = 0;
+static GLuint     s_wVbo   = 0;
+
+static int    s_wShader = -1;                       /* Run key: shader enum. */
+static BlendMode s_wBlend = BlendMode_Additive;     /* Run key: blend. */
+static bool   s_wFlushing = false;
+
+static char const* const s_wFrag[WidgetShader_Ring + 1] = {
+  "fragment/ui/box", "fragment/ui/line", "fragment/ui/panel", "fragment/ui/ring",
+};
+static Shader* s_wProg[WidgetShader_Ring + 1] = { nullptr, nullptr, nullptr, nullptr };
+
+static void Draw_WidgetBind () {
+  if (!s_wVbo) GLCALL(glGenBuffers(1, &s_wVbo));
+  GLCALL(glBindBuffer(GL_ARRAY_BUFFER, s_wVbo))
+  GLCALL(glEnableVertexAttribArray(0))
+  GLCALL(glEnableVertexAttribArray(2))
+  GLCALL(glEnableVertexAttribArray(3))
+  GLCALL(glEnableVertexAttribArray(4))
+  GLCALL(glEnableVertexAttribArray(5))
+  GLCALL(glVertexAttribPointer(0, 3, GL_FLOAT, false, sizeof(WidgetVert), (void const*)OFFSET_OF(WidgetVert, x)))
+  GLCALL(glVertexAttribPointer(2, 2, GL_FLOAT, false, sizeof(WidgetVert), (void const*)OFFSET_OF(WidgetVert, u)))
+  GLCALL(glVertexAttribPointer(3, 4, GL_FLOAT, false, sizeof(WidgetVert), (void const*)OFFSET_OF(WidgetVert, r)))
+  GLCALL(glVertexAttribPointer(4, 4, GL_FLOAT, false, sizeof(WidgetVert), (void const*)OFFSET_OF(WidgetVert, pa0)))
+  GLCALL(glVertexAttribPointer(5, 4, GL_FLOAT, false, sizeof(WidgetVert), (void const*)OFFSET_OF(WidgetVert, pb0)))
+}
+
+static void Draw_WidgetUnbind () {
+  GLCALL(glDisableVertexAttribArray(5))
+  GLCALL(glDisableVertexAttribArray(4))
+  GLCALL(glDisableVertexAttribArray(3))
+  GLCALL(glDisableVertexAttribArray(2))
+  GLCALL(glDisableVertexAttribArray(0))
+  GLCALL(glBindBuffer(GL_ARRAY_BUFFER, 0))
+}
+
+inline static void Draw_WidgetSetBlend (BlendMode mode) {
+  switch (mode) {
+    case BlendMode_Additive:
+      GLCALL(glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE))
+      break;
+    case BlendMode_Alpha:
+      GLCALL(glBlendFuncSeparate(
+        GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+        GL_ONE, GL_ONE_MINUS_SRC_ALPHA))
+      break;
+    default:
+      break;
+  }
+}
+
+inline static void Draw_WidgetRestoreBlend (GLint const blend[4]) {
+  GLCALL(glBlendFuncSeparate(blend[0], blend[1], blend[2], blend[3]))
+}
+
+/* Upload the pending widget run and draw it under its program. */
+static void Draw_WidgetEmit () {
+  int count = s_wCount;
+  int shaderIdx = s_wShader;
+  BlendMode blend = s_wBlend;
+  s_wCount = 0;
+  s_wShader = -1;
+  if (count == 0) return;
+  if (shaderIdx < WidgetShader_Box || shaderIdx > WidgetShader_Ring) return;
+
+  if (!s_wProg[shaderIdx])
+    s_wProg[shaderIdx] = Shader_Load("vertex/ui/widget", s_wFrag[shaderIdx]);
+  if (!s_wProg[shaderIdx]) return;
+  if (!ShaderVar_Get("mProjUI", ShaderVarType_Matrix)) return;  /* No UI viewport. */
+
+  /* Preserve the ambient GL blend (the UI pass' Alpha base). */
+  GLint ambient[4];
+  GLCALL(glGetIntegerv(GL_BLEND_SRC_RGB,   &ambient[0]))
+  GLCALL(glGetIntegerv(GL_BLEND_DST_RGB,   &ambient[1]))
+  GLCALL(glGetIntegerv(GL_BLEND_SRC_ALPHA, &ambient[2]))
+  GLCALL(glGetIntegerv(GL_BLEND_DST_ALPHA, &ambient[3]))
+
+  Shader* prevActive = Shader_GetActive();
+  Shader_Start(s_wProg[shaderIdx]);
+  Draw_WidgetSetBlend(blend);
+
+  Draw_WidgetBind();
+  GLCALL(glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(count * (int)sizeof(WidgetVert)), s_wVerts, GL_DYNAMIC_DRAW))
+  GLCALL(glDrawArrays(GL_TRIANGLES, 0, count))
+  Draw_WidgetUnbind();
+
+  Draw_WidgetRestoreBlend(ambient);
+  Shader_Stop(nullptr);
+  if (prevActive) Shader_Start(prevActive);
+
+  Metric_AddDrawImm(1, count / 3, count);
+}
+
+/* Emit the pending widget run (if any) and clear the run state. Reentrancy-
+ * guarded: emitting starts a program (Shader_Start -> Draw_FlushPending). */
+static void Draw_WidgetFlush () {
+  if (s_wFlushing) return;
+  s_wFlushing = true;
+  Draw_WidgetEmit();
+  s_wFlushing = false;
+}
+
+void Draw_WidgetRect (
+  int shader, int blend,
+  float x, float y, float sx, float sy,
+  float r, float g, float b, float a,
+  float pa0, float pa1, float pa2, float pa3,
+  float pb0, float pb1, float pb2, float pb3)
+{
+  Draw_Commit();   /* Flat prims queued earlier draw before these widgets. */
+  if (s_wShader != shader || s_wBlend != (BlendMode)blend) Draw_WidgetFlush();
+  if (s_wCount == 0) {
+    s_wShader = shader;
+    s_wBlend = (BlendMode)blend;
+  }
+  if (s_wCount + 6 > WIDGET_MAX_VERTS) {
+    Draw_WidgetFlush();
+    s_wShader = shader;
+    s_wBlend = (BlendMode)blend;
+  }
+
+  /* One padded quad -> two triangles, UVs 0..1, same expansion as Draw_Emit. */
+  float x2 = x + sx;
+  float y2 = y + sy;
+#define W_VERT(cx, cy, cu, cv)                                                 \
+  WidgetVert{ (cx), (cy), 0.0f, (cu), (cv), r, g, b, a,                       \
+              pa0, pa1, pa2, pa3, pb0, pb1, pb2, pb3 }
+  WidgetVert v[6] = {
+    W_VERT(x,  y,  0, 0), W_VERT(x,  y2, 0, 1), W_VERT(x2, y2, 1, 1),
+    W_VERT(x,  y,  0, 0), W_VERT(x2, y2, 1, 1), W_VERT(x2, y,  1, 0),
+  };
+#undef W_VERT
+  memcpy(s_wVerts + s_wCount, v, sizeof(v));
+  s_wCount += 6;
 }
 
 void Draw_PushAlpha (float a) {
@@ -419,6 +589,7 @@ void Draw_Color (float r, float g, float b, float a) {
 
 void Draw_Flush () {
   Draw_Commit();
+  Draw_WidgetFlush();
   Metric_Inc(Metric_Flush);
   GLCALL(glFinish())
 }

@@ -3,13 +3,15 @@
 
 
 layout(location = 0) out vec4 fragColor;
-uniform vec2 p1;
-uniform vec2 p2;
-uniform vec2 origin;
-uniform vec2 size;
-uniform vec4 color;
+flat in vec4 color;
+flat in vec4 widget_a;
+flat in vec4 widget_b;
 
 void main() {
+  vec2 p1 = widget_a.xy;
+  vec2 p2 = widget_a.zw;
+  vec2 origin = widget_b.xy;
+  vec2 size = widget_b.zw;
   vec2 uvp = uv;
   vec3 c = color.xyz;
 

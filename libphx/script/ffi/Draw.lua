@@ -17,6 +17,11 @@ do -- C Definitions
     void Draw_PointSize    (float size);
     void Draw_PushAlpha    (float a);
     void Draw_PopAlpha     ();
+    void Draw_WidgetRect   (int shader, int blend,
+                            float x, float y, float sx, float sy,
+                            float r, float g, float b, float a,
+                            float pa0, float pa1, float pa2, float pa3,
+                            float pb0, float pb1, float pb2, float pb3);
     void Draw_SmoothLines  (bool);
     void Draw_SmoothPoints (bool);
     void Draw_Border       (float s, float x, float y, float w, float h);
@@ -51,6 +56,7 @@ do -- Global Symbol Table
     PointSize    = libphx.Draw_PointSize,
     PushAlpha    = libphx.Draw_PushAlpha,
     PopAlpha     = libphx.Draw_PopAlpha,
+    WidgetRect   = libphx.Draw_WidgetRect,
     SmoothLines  = libphx.Draw_SmoothLines,
     SmoothPoints = libphx.Draw_SmoothPoints,
     Border       = libphx.Draw_Border,

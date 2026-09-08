@@ -2,11 +2,12 @@
 
 
 layout(location = 0) out vec4 fragColor;
-uniform float radius;
-uniform vec2 size;
-uniform vec4 color;
+flat in vec4 color;
+flat in vec4 widget_a;
 
 void main() {
+  float radius = widget_a.x;
+  vec2 size = widget_a.yz;
   vec2 uvp = uv - 0.5;
   float r = length(size * uvp);
   float alpha = 0.0;

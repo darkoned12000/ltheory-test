@@ -23,6 +23,35 @@ PHX_API void  Draw_FlushPending  ();
  * the merge contract is exercisable headlessly (tools/validate_immdraw.lua). */
 PHX_API int   ImmBatch_KeyMatch  (int modeA, float rA, float gA, float bA, float aA,
                                   int modeB, float rB, float gB, float bB, float aB);
+
+/* --- Widget batch (roadmap #15) ---------------------------------------------
+ * DrawEx.Rect/Line/Panel/Ring each used to start an SDF widget program, upload
+ * per-rect uniforms (size/p1p2/origin/radius/padding + color), draw one padded
+ * quad, and stop — ~1,460 program start/stops/frame on the debug panel. Those
+ * per-rect uniforms are baked into per-vertex attributes here, so every
+ * consecutive batch of same-(shader, blend) rects merges into ONE glDrawArrays
+ * under a shared program (see res/shader/vertex/ui/widget.glsl).
+ *
+ * WidgetShader_* selects the fragment; blend is a BlendMode (Additive/Alpha).
+ * The SDF parameter banks map one-to-one onto the old per-rect uniforms:
+ *   box   : pa = (size, 0,0)                       pb unused
+ *   line  : pa = (p1, p2)      pb = (origin, size)
+ *   panel : pa = (padding, size, innerAlpha)       pb = (bevel, 0,0,0)
+ *   ring  : pa = (radius, size, 0)                 pb unused
+ * `a` is the final alpha (alpha stack already baked by the caller).
+ * Kept in sync with the WidgetShader and blend constants in DrawEx.lua. */
+enum {
+  WidgetShader_Box   = 0,
+  WidgetShader_Line  = 1,
+  WidgetShader_Panel = 2,
+  WidgetShader_Ring  = 3,
+};
+PHX_API void Draw_WidgetRect (
+  int shader, int blend,
+  float x, float y, float sx, float sy,
+  float r, float g, float b, float a,
+  float pa0, float pa1, float pa2, float pa3,
+  float pb0, float pb1, float pb2, float pb3);
 PHX_API void  Draw_LineWidth     (float width);
 PHX_API void  Draw_PointSize     (float size);
 PHX_API void  Draw_PushAlpha     (float a);

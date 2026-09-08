@@ -2,12 +2,13 @@
 
 
 layout(location = 0) out vec4 fragColor;
-uniform vec2 size;
-uniform vec4 color;
+flat in vec4 color;
+flat in vec4 widget_a;
 
 const float kRadius = 8.0;
 
 void main() {
+  vec2 size = widget_a.xy;
   vec2 realSize = size - vec2(64.0);
   vec2 uvp = (2.0 * uv - vec2(1.0));
 
