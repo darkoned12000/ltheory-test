@@ -623,3 +623,34 @@ Goal: ~2,660 glyph draws/frame → ~1 draw per string (atlas bound once).
    boot + F9 panel visual check at 2x.
 6. **Files:** `libphx/src/Font.cpp` only (opaque handles; check
    `libphx/script/ffi/Font.lua` before changing anything it touches).
+
+## S4.5 — OUTCOME (font atlas implemented + verified, 2026-09-08)
+
+Implemented exactly per §S4.4 in `libphx/src/Font.cpp` (no shader/FFI changes)
+and committed to local main with this session's docs:
+
+- Per-font shelf-packed atlas (init 256, ×2 grow to 1024 cap, 1px guards,
+  double-and-repack reusing each glyph's cached CPU RGBA bits). `Glyph` drops
+  `tex` for `(ax,ay)` + `bits`; `Font_Free` now frees bits + atlas + atlas
+  Tex2D (Glyph nodes still leak per the pre-existing TODO).
+- `Font_Draw` / `Font_DrawShaded` rasterize/cache the whole string
+  (`Font_CountGlyphs`), then emit ONE `Imm_Draw` of all glyph quads against
+  the atlas (`Font_CollectQuads`, `DRAW_MAX_VERTS`-chunked, stack buffer up to
+  64 glyphs). Ambient-flat and `ui/text` shaded paths preserved — same data,
+  same shaders, sub-rect UVs ⇒ pixel-identical glyphs.
+
+**Verified:**
+- Build clean; `./configure.py test` full-suite green (immdraw validator
+  unaffected — no Draw.cpp/shader changes).
+- Metric (throttled probe, panel open at launch): `imms/frame` with the debug
+  panel open dropped **~5,300 (2026-09-07 baseline) → ~4,300 (flat batch,
+  a7bb7a1) → ~1,413** — the ~2,660 per-glyph texture draws collapsed to ~one
+  draw per string; remaining ≈ the ~1,460 widget-shader rects. `draws` ≈ 46
+  with panel open / 42 closed.
+- **User visual sign-off**: panel text renders clear and readable, widgets look
+  normal — no mirror/bleed/scramble. (Probe: can't read captures headless, so
+  equivalences was confirmed by the user on-screen.)
+
+**Remaining for #15 acceptance (sub-hundreds):** the ~1,400 widget-shader rects
+(`DrawEx.Rect/Line/Panel/Ring`) still start a program per rect — the deferred
+per-vertex-color batching, see ROADMAP #15.
