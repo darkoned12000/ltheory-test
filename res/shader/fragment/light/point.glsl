@@ -10,6 +10,11 @@ in vec3 worldDir;
 uniform vec3 lightColor;
 uniform vec3 lightPos;
 
+/* Dielectric specular intensity (0..1); shared with light/dir. Splits the
+ * diffuse Lambert term and adds the GGX cookTorrance spec, so DIFFUSE/ICE
+ * surfaces catch highlights from nearby lights. */
+uniform float materialSpec;
+
 uniform sampler2D texNormalMat;
 uniform sampler2D texDepth;
 uniform sampler2D texShadow;
@@ -79,11 +84,12 @@ void main () {
 
   vec3 light = vec3(0.0);
 
-  if (mat == Material_Diffuse) {
+  if (mat == Material_Diffuse || mat == Material_Ice) {
     float NdL = dot(N, Ld);
     if (NdL > 0.0) {
       float Lmag = 1.0 / max(kMinDistance, dist);
-      light += lightColor * Lmag * saturate(NdL);
+      float NdLc = saturate(NdL);
+      light += lightColor * (NdLc * (1.0 - materialSpec) + cookTorrance(Ld, p, N, rough, materialSpec)) * Lmag;
     }
   }
 

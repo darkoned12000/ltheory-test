@@ -95,6 +95,62 @@ function GameView:renderShadows (world, lights)
 end
 
 
+-- Whole-scene sun shadow map, sampled in light/dir.glsl. One Depth32F render of
+-- the opaque world with the ortho box centered on the camera and +Z along
+-- -starDir (the scene as the sun sees it). The depth is encoded in the same
+-- distance-from-origin style as the point lights, so dir.glsl compares against
+-- the camera-centered radial distance; only the direct (non-ambient) sun term
+-- is killed. Higher resolution than the point lights since it is shared by ALL
+-- pixels rather than one light's neighborhood.
+local function sunShadowSize (sx, sy)
+  local scale = math.min(2048 / sx, 2048 / sy)
+  return math.max(256, math.floor(sx * scale)), math.max(256, math.floor(sy * scale))
+end
+
+function GameView:renderSunShadow (world)
+  if not self.sunShadowTex then
+    local sw, sh = sunShadowSize(self.sx, self.sy)
+    self.sunShadowTex = Tex2D.Create(sw, sh, TexFormat.Depth32F)
+    self.sunShadowTex:setMinFilter(TexFilter.Linear)
+    self.sunShadowTex:genMipmap()
+  end
+
+  -- Box half-size covers the visible field; centered on the camera so the
+  -- near-ship region (where the player flies) is the map's highest-res heart.
+  local range = Settings.get('render.sun.shadowRange') or 8000
+  local sd = Vec3f(world.starDir.x, world.starDir.y, world.starDir.z):normalize()
+  self.sunShadowCenter = self.camera.pos
+  local proj = self:buildShadowFrustum(self.sunShadowCenter, self.sunShadowCenter - sd, range)
+  self.sunShadowProj = proj
+
+  RenderTarget.Push(self.sx, self.sy)
+  RenderTarget.BindTex2D(self.sunShadowTex)   -- Depth32F -> depth attachment only
+
+  ShaderVar.PushMatrix('mView', proj)
+  ShaderVar.PushMatrix('mProj', Matrix.Identity())
+  -- setDepth() stores length(worldPos - eye); anchor eye at the box center so the
+  -- map records distance-from-center, matching dir.glsl's radial comparison.
+  ShaderVar.PushFloat3('eye', self.sunShadowCenter.x, self.sunShadowCenter.y, self.sunShadowCenter.z)
+  BlendMode.PushDisabled()
+  CullFace.Push(CullFace.Back)
+  RenderState.PushDepthTest(true)
+  RenderState.PushDepthWritable(true)
+
+  Draw.ClearDepth(1)            -- far plane
+
+  world:render(Event.Render(BlendMode.Disabled, self.sunShadowCenter))
+
+  RenderState.PopDepthWritable()
+  RenderState.PopDepthTest()
+  CullFace.Pop()
+  BlendMode.Pop()
+  ShaderVar.Pop('mView')
+  ShaderVar.Pop('mProj')
+  ShaderVar.Pop('eye')
+  RenderTarget.Pop()
+end
+
+
 function GameView:draw (focus, active)
   if dumpTargetFrame then
     GameView.__dumpFrame = (GameView.__dumpFrame or 0) + 1
@@ -144,6 +200,28 @@ function GameView:draw (focus, active)
   local eye = self.camera.pos
   world:beginRender()
 
+  -- Sun: warm directional light + ambient fill, driven from render.sun.settings.
+  -- Pushed unconditionally so shaders declaring these autovars always find them;
+  -- with the sun disabled the color is black (zero contribution) and the
+  -- directional pass below is skipped.
+  local sUn = Settings.get('render.sun.enable')
+  local sunCol, sunFill
+  if sUn then
+    local si = Settings.get('render.sun.intensity') or 1
+    local sw = Settings.get('render.sun.warmth') or 1
+    -- Blend white (warmth=0) toward warm starColor orange (1, .6, .2) (warmth=1),
+    -- then scale by intensity. Vec3 overloads are componentwise, so do it by hand.
+    local mx = 1 * (1 - sw) + 1.0 * sw
+    local my = 1 * (1 - sw) + 0.6 * sw
+    local mz = 1 * (1 - sw) + 0.2 * sw
+    sunCol = Vec3f(mx * si, my * si, mz * si)
+    sunFill = Settings.get('render.sun.fill') or 0.12
+  else
+    sunCol, sunFill = Vec3f(0, 0, 0), 0
+  end
+  ShaderVar.PushFloat3('sunColor', sunCol.x, sunCol.y, sunCol.z)
+  ShaderVar.PushFloat ('sunFill',  sunFill)
+
   do -- Texture-filter quality (Bilinear/Trilinear/Aniso): re-apply only on change
     local tf = Settings.get('render.textureFilter')
     if tf ~= self.appliedTextureFilter then
@@ -187,9 +265,40 @@ function GameView:draw (focus, active)
         shader:start()
         Shader.SetTex2D('texDepth', self.renderer.zBufferL)
         Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
+        Shader.SetFloat('envScale', Settings.get('lighting.ambientEnv') or 1)
         Draw.Rect(-1, -1, 2, 2)
         shader:stop()
         self.renderer.buffer2:pop()
+      end
+    end
+
+    do -- Direct sunlight (directional, additive over the ambient)
+      if sUn then
+        local shader = Cache.Shader('worldray', 'light/dir')
+        if shader then
+          if Settings.get('render.sun.shadows') then
+            self:renderSunShadow(world)
+          end
+          self.renderer.buffer2:push()
+          BlendMode.PushAdditive()
+          shader:start()
+          Shader.SetFloat3('lightColor', sunCol.x, sunCol.y, sunCol.z)
+          Shader.SetFloat ('materialSpec', Settings.get('lighting.specular') or 0.35)
+          Shader.SetTex2D('texDepth', self.renderer.zBufferL)
+          Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
+          if self.sunShadowTex then
+            Shader.SetTex2D('texShadow', self.sunShadowTex)
+            Shader.SetMatrix ('sShadowProj', self.sunShadowProj)
+            Shader.SetFloat  ('sShadowBias',   Settings.get('render.shadow.bias') or 0.001)
+            Shader.SetFloat  ('sShadowScale',  Settings.get('render.shadow.scale') or 0.0005)
+            Shader.SetFloat  ('sShadowRadius', Settings.get('render.shadow.radius') or 2.0)
+            Shader.SetFloat3 ('sunShadowCenter', self.sunShadowCenter.x, self.sunShadowCenter.y, self.sunShadowCenter.z)
+          end
+          Draw.Rect(-1, -1, 2, 2)
+          shader:stop()
+          BlendMode.Pop()
+          self.renderer.buffer2:pop()
+        end
       end
     end
 
@@ -211,6 +320,7 @@ function GameView:draw (focus, active)
 
           Shader.SetFloat3('lightColor', v.color.x, v.color.y, v.color.z)
           Shader.SetFloat3('lightPos', lightPos.x, lightPos.y, lightPos.z)
+          Shader.SetFloat ('materialSpec', Settings.get('lighting.specular') or 0.35)
           if stex then
             Shader.SetTex2D('texShadow', stex)
             Shader.SetMatrix ('sShadowProj', sproj)
@@ -299,12 +409,16 @@ function GameView:draw (focus, active)
   end
 
   world:endRender()
+  ShaderVar.Pop('sunColor')
+  ShaderVar.Pop ('sunFill')
   self.camera:endDraw()
   rtl.submit = TimeStamp.GetElapsedMs(rtl.t0)
   Profiler.End() -- Render.Submit
 
-  if true then -- Composited UI Pass
-    self.renderer:startUI()
+  if true then -- Composited UI Pass (drawn into the dedicated UI buffer, layered
+    -- over the post chain at the end so the HUD/debug panel stays crisp and is
+    -- not affected by tonemap/exposure/bloom/vignette/sharpen/grain).
+    self.renderer:startUI(self.renderer.uiBuffer)
       Viewport.Push(0, 0, ss * self.sx, ss * self.sy, true)
       ClipRect.PushTransform(0, 0, ss, ss)
         -- ui.glsl transforms via mProjUI * mViewUI (not the GLMatrix modelview,
@@ -318,13 +432,14 @@ function GameView:draw (focus, active)
         uiScale:free()
       ClipRect.PopTransform()
       Viewport.Pop()
-    self.renderer:stopUI()
+    self.renderer:endUI()
   end
 
   do -- Post chain + present (UI composite, post-fx passes, buffer swap); timing only
     Profiler.Begin('Render.PostFx')
     rtl.t1 = TimeStamp.Get()
   if false or Settings.get('render.showBuffers') then
+    self.renderer:compositeUI()   -- HUD/debug over the (raw) scene, as before
     Profiler.Begin('Render.Present')
     local tPres = TimeStamp.Get()
     self.renderer:presentAll(x, y, sx, sy)
@@ -333,6 +448,9 @@ function GameView:draw (focus, active)
   else
     self.renderer:startPostEffects()
     if Settings.get('postfx.bloom.enable') then self.renderer:bloom(Settings.get('postfx.bloom.radius')) end
+    -- HDR exposure meter: reads the pre-tonemap scene into a 1x1 texel for the
+    -- debug-panel readout and auto-exposure. Must run before tonemap's swap.
+    self.renderer:meter()
     if Settings.get('postfx.tonemap.enable') then self.renderer:tonemap() end
     if Settings.get('postfx.vignette.enable') then self.renderer:vignette() end
     if Settings.get('postfx.aberration.enable') then
@@ -346,11 +464,16 @@ function GameView:draw (focus, active)
       end)
     end
     if Settings.get('postfx.sharpen.enable') then
-      self.renderer:sharpen(2, 1, 1)
+      self.renderer:sharpen(
+        Settings.get('postfx.sharpen.radius') or 2,
+        (Settings.get('postfx.sharpen.radius') or 2) * 0.5,
+        Settings.get('postfx.sharpen.strength') or 1)
     end
     if Settings.get('postfx.grain.enable') then
       self.renderer:grain(Settings.get('postfx.grain.strength') or 1)
     end
+    -- HUD/debug panel over the finished (post-tonemap) picture.
+    self.renderer:compositeUI(true)
     Profiler.Begin('Render.Present')
     local tPres = TimeStamp.Get()
     self.renderer:present(x, y, sx, sy, ss > 2)

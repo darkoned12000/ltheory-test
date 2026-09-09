@@ -21,8 +21,15 @@ local Renderer = class(function (self)
   seed('postfx.bloom.intensity',     gpu.bloomIntensity)
   seed('postfx.bloom.threshold',     gpu.bloomThreshold)
   seed('postfx.sharpen.enable',      gpu.sharpen)
+  seed('postfx.sharpen.strength',    gpu.sharpenStrength)
+  seed('postfx.sharpen.radius',      gpu.sharpenRadius)
   seed('postfx.tonemap.enable',      gpu.tonemap)
   seed('postfx.exposure.ev',         gpu.exposureEV)
+  seed('postfx.autoexposure.enable', gpu.autoExposure)
+  seed('postfx.autoexposure.key',    gpu.autoExposureKey)
+  seed('postfx.autoexposure.minEV',  gpu.autoExposureMinEV)
+  seed('postfx.autoexposure.maxEV',  gpu.autoExposureMaxEV)
+  seed('postfx.autoexposure.speed',  gpu.autoExposureSpeed)
   seed('postfx.vignette.enable',     gpu.vignette)
   seed('postfx.vignette.strength',   gpu.vignetteStrength)
   seed('postfx.vignette.hardness',   gpu.vignetteHardness)
@@ -33,6 +40,16 @@ local Renderer = class(function (self)
   seed('postfx.radialblur.enable',   gpu.radialblur)
   seed('postfx.radialblur.strength', gpu.radialblurStrength)
   seed('postfx.radialblur.scanlines', gpu.radialblurScanlines)
+
+  seed('render.sun.enable',    gpu.sunLight)
+  seed('render.sun.intensity', gpu.sunIntensity)
+  seed('render.sun.fill',      gpu.sunAmbientFill)
+  seed('render.sun.warmth',    gpu.sunWarmth)
+  seed('render.sun.shadows',   gpu.sunShadows)
+  seed('render.sun.shadowRange', gpu.sunShadowRange)
+
+  seed('lighting.specular',  gpu.dielectricSpec)
+  seed('lighting.ambientEnv', gpu.ambientEnv)
 
   local filterIdx = { Bilinear = 1, Trilinear = 2, Aniso = 3, Anisotropic = 3 }
   seed('render.textureFilter', filterIdx[gpu.filtering])
@@ -46,6 +63,12 @@ local Renderer = class(function (self)
   -- VSync is a window/swap-interval setting (Config.render.vsync), applied live
   -- by GameView; seed it so the debug control matches the window's startup state.
   seed('render.vsync', (Config and Config.render) and Config.render.vsync)
+
+  -- Exposure meter / auto-exposure state (see Renderer:meter / autoExposureEV).
+  self.exposure   = { avg = 0, max = 0, over = 0, lit = 0 }
+  self.meterLast  = 0
+  self.frameSeed  = 0
+  self.autoEV     = 0
 end)
 
 local colorFormat = TexFormat.RGBA16F
@@ -57,13 +80,20 @@ Settings.addBool  ('postfx.bloom.enable',        'Bloom',       true)
 Settings.addFloat ('postfx.bloom.radius',        ' - Radius',   48, 4, 64)
 Settings.addFloat ('postfx.bloom.intensity',     ' - Intensity', 1, 0, 4)
 Settings.addFloat ('postfx.bloom.threshold',     ' - Threshold', 1, 0, 8)
-Settings.addBool  ('postfx.sharpen.enable',      'Sharpen',     true)
+Settings.addBool  ('postfx.sharpen.enable',   'Sharpen',     true)
+Settings.addFloat ('postfx.sharpen.strength', ' - Strength', 1, 0, 3)
+Settings.addFloat ('postfx.sharpen.radius',   ' - Radius',   2, 1, 6)
 Settings.addBool  ('postfx.radialblur.enable',   'RadialBlur',  false)
 Settings.addFloat ('postfx.radialblur.strength', ' - Strength', 1, 0, 1)
 Settings.addFloat ('postfx.radialblur.scanlines', ' - Scanlines', 1, 0, 1)
 Settings.addBool  ('postfx.tonemap.enable',      'Tonemap',     true)
 Settings.addEnum  ('postfx.tonemap.operator',    ' - Operator', 1, { 'AgX', 'ACES', 'Filmic', 'Khronos' })
 Settings.addFloat ('postfx.exposure.ev',         ' - Exposure EV', 0, -4, 4)
+Settings.addBool  ('postfx.autoexposure.enable', 'Auto-Exposure', false)
+Settings.addFloat ('postfx.autoexposure.key',    ' - Key (mid-gray)', 0.18, 0.02, 1)
+Settings.addFloat ('postfx.autoexposure.minEV',  ' - Min EV', -6, -8, 2)
+Settings.addFloat ('postfx.autoexposure.maxEV',  ' - Max EV', 2, -8, 4)
+Settings.addFloat ('postfx.autoexposure.speed',  ' - Adapt (s)', 0.5, 0.05, 3)
 Settings.addBool  ('postfx.vignette.enable',     'Vignette',    true)
 Settings.addFloat ('postfx.vignette.strength',   ' - Strength', 0.25, 0, 1)
 Settings.addFloat ('postfx.vignette.hardness',   ' - Hardness', 20.0, 2, 32)
@@ -79,7 +109,16 @@ Settings.addEnum  ('render.textureFilter', 'Texture Filter', 3, { 'Bilinear', 'T
 Settings.addFloat ('render.shadow.radius', 'Shadow Radius (PCF)',   2, 0, 8)
 Settings.addFloat ('render.shadow.bias',   'Shadow Bias',           0.001, -0.01, 0.1)
 Settings.addFloat ('render.shadow.scale',  'Shadow Dist Scale',     0.0005, 0, 0.01)
+Settings.addBool  ('render.sun.enable',    'Sun Light',             true)
+Settings.addFloat ('render.sun.intensity', ' - Intensity',          1, 0, 6)
+Settings.addFloat ('render.sun.fill',      ' - Ambient Fill',       0.12, 0, 1)
+Settings.addFloat ('render.sun.warmth',    ' - Warmth',             1, 0, 1)
+Settings.addBool  ('render.sun.shadows',   ' - Shadows',            true)
+Settings.addFloat ('render.sun.shadowRange', ' - Shadow Range',     8000, 500, 20000)
 Settings.addBool  ('render.vsync',       'VSync',                 true)
+
+Settings.addFloat ('lighting.ambientEnv', 'Environment Light',     1, 0, 3)
+Settings.addFloat ('lighting.specular',   'Dielectric Specular',   0.35, 0, 1)
 
 local function createBuffer (sx, sy, format)
   local self = Tex2D.Create(sx, sy, format)
@@ -273,10 +312,12 @@ function Renderer:free ()
     self.buffer0:free()
     self.buffer1:free()
     self.buffer2:free()
+    self.uiBuffer:free()
     self.dsBuffer0:free()
     self.dsBuffer1:free()
     self.zBuffer:free()
     self.zBufferL:free()
+    self.meterTex:free()
   end
 end
 
@@ -368,11 +409,15 @@ function Renderer:start (resX, resY, ss)
     self.buffer0 = createBuffer(sx, sy, colorFormat)
     self.buffer1 = createBuffer(sx, sy, colorFormat)
     self.buffer2 = createBuffer(sx, sy, colorFormat)
+    self.uiBuffer = createBuffer(sx, sy, colorFormat)
     self.zBuffer = createBuffer(sx, sy, depthFormat)
     self.zBufferL = createBuffer(sx, sy, TexFormat.R32F)
 
     self.dsBuffer0 = createBuffer(resX / self.ds, resY / self.ds, colorFormat)
     self.dsBuffer1 = createBuffer(resX / self.ds, resY / self.ds, colorFormat)
+
+    -- 1x1 exposure-meter texel (see Renderer:meter). Read back at ~10 Hz.
+    self.meterTex = createBuffer(1, 1, colorFormat)
   end
 
   self.buffer0:setMipRange(0, 0)
@@ -419,15 +464,58 @@ function Renderer:startPostEffects ()
   -- leaving stale frames behind (visual mirror/feedback recursion at 2x).
 end
 
-function Renderer:startUI ()
+function Renderer:startUI (tex)
+  -- UI content goes into a dedicated target so it can either be folded into the
+  -- scene immediately (legacy: stopUI) or parked and overlaid AFTER the post
+  -- chain (game: endUI + compositeUI) so the HUD/debug panel stays crisp and is
+  -- not affected by tonemap/exposure/bloom/vignette/sharpen/grain.
+  self.uiTex = tex or self.buffer1
   RenderTarget.Push(self.sx, self.sy)
-  RenderTarget.BindTex2D(self.buffer1)
+  RenderTarget.BindTex2D(self.uiTex)
   RenderTarget.BindTex2D(self.zBuffer)
   Draw.Clear(0, 0, 0, 0)
   BlendMode.Push(BlendMode.Alpha)
   CullFace.Push(CullFace.None)
   RenderState.PushDepthTest(false)
   RenderState.PushDepthWritable(false)
+end
+
+function Renderer:endUI ()
+  if not self.uiTex then return end
+  self.uiTex:pop()
+  BlendMode.Pop()
+  CullFace.Pop()
+  RenderState.PopDepthTest()
+  RenderState.PopDepthWritable()
+end
+
+-- Layer the UI target onto the current scene buffer (buffer0), then swap it
+-- into place. post=true when buffer0 is already a finalized display-space
+-- picture (after tonemap): straight alpha overlay so UI colors are not re-gamma'd.
+function Renderer:compositeUI (post)
+  if not self.uiTex then return end
+  local shader = Cache.Shader('ui', post and 'filter/ui_overlay' or 'ui/composite')
+  BlendMode.PushDisabled()
+  self.buffer2:push()
+  if shader then -- item 4: skip a broken composite, still restore buffer state
+    shader:start()
+      Shader.SetTex2D('srcBottom', self.buffer0)
+      Shader.SetTex2D('srcTop', self.uiTex)
+      Draw.Color(1, 1, 1, 1)
+      Draw.Rect(0, 0, self.sx, self.sy)
+    shader:stop()
+  end
+  self.buffer2:pop()
+  self.buffer2, self.buffer0 = self.buffer0, self.buffer2
+  BlendMode.Pop()
+end
+
+function Renderer:stopUI ()
+  -- Legacy behavior: draw the UI, then composite it into the scene immediately
+  -- (before the post chain). Test apps use this; the game uses
+  -- startUI/endUI + compositeUI(post=true) instead.
+  self:endUI()
+  self:compositeUI()
 end
 
 function Renderer:stop ()
@@ -446,30 +534,96 @@ function Renderer:stopAlpha ()
 end
 
 function Renderer:stopUI ()
-  self.buffer1:pop()
-  BlendMode.Pop()
-  CullFace.Pop()
-  RenderState.PopDepthTest()
-  RenderState.PopDepthWritable()
-
-  BlendMode.PushDisabled()
-  self.buffer2:push()
-  local shader = Cache.Shader('ui', 'ui/composite')
-  if shader then -- item 4: broken composite -> skip the draw, but still pop + swap to keep buffer state balanced
-    shader:start()
-      Shader.SetTex2D('srcBottom', self.buffer0)
-      Shader.SetTex2D('srcTop', self.buffer1)
-      Draw.Color(1, 1, 1, 1)
-      Draw.Rect(0, 0, self.sx, self.sy)
-    shader:stop()
-  end
-  self.buffer2:pop()
-  self.buffer2, self.buffer0 = self.buffer0, self.buffer2
-  BlendMode.Pop()
+  -- Legacy behavior: draw the UI, then composite it into the scene immediately
+  -- (before the post chain). Test apps use this; the game uses
+  -- endUI + compositeUI(post=true) instead.
+  self:endUI()
+  self:compositeUI()
 end
 
 function Renderer:swap ()
   self.buffer0, self.buffer1 = self.buffer1, self.buffer0
+end
+
+--[[
+  meter -- sample the pre-tonemap HDR scene, every frame, into a 1x1 texel.
+  ----------------------------------------------------------------------------
+  One tiny reduce pass (4096 scatter taps inside a single fragment) writes
+  avg/max/%over/lit — see res/shader/fragment/filter/exposure.glsl. The texel
+  is read back on a ~100 ms throttle (glGetTexImage forces a GPU sync; 10 Hz is
+  plenty for both the DebugWindow readout and auto-exposure adaptation). The
+  numbers live in `self.exposure`; the debug panel polls them.
+]]---------------------------------------------------------------------------
+function Renderer:meter ()
+  local shader = Cache.Shader('ui', 'filter/exposure')
+  if not (shader and self.meterTex) then return end
+
+  self.frameSeed = (self.frameSeed + 1) % 4096
+  do -- Render the meter texel (target is 1x1, so unit-rect the quad).
+    self.meterTex:pushLevel(0)
+    shader:start()
+      Shader.SetFloat2('size', self.sx, self.sy)
+      Shader.SetFloat('timeSeed', self.frameSeed + 1)
+      Shader.SetTex2D('src', self.buffer0)
+      Draw.Color(1, 1, 1, 1)
+      Draw.Rect(0, 0, 1, 1)
+    shader:stop()
+    self.meterTex:pop()
+  end
+
+  local now = Time.GetRaw()
+  if now - self.meterLast >= 100 then
+    self.meterLast = now
+    local b = self.meterTex:getDataBytes(PixelFormat.RGBA, DataFormat.Float):managed()
+    self.exposure.avg  = b:readF32()
+    self.exposure.max  = b:readF32()
+    self.exposure.over = b:readF32()
+    self.exposure.lit  = b:readF32()
+  end
+end
+
+--[[
+  autoExposureEV -- target EV from the meter, smoothed over time.
+  ----------------------------------------------------------------------------
+  Key the lit-content luminance `exposure.lit` to a mid-gray key (default
+  0.18 linear) so "key <-> 0 stops". EV = log2(lit) - log2(key), clamped to
+  [minEV, maxEV]. The manual Exposure EV slider acts as an offset/bias on top.
+  The value eases toward target with a per-frame exponential (time constant
+  `speed` seconds) so changes read as eye adaptation rather than stepping.
+]]---------------------------------------------------------------------------
+function Renderer:autoExposureEV ()
+  local ex = self.exposure or { lit = 0 }
+  local key = Settings.get('postfx.autoexposure.key') or 0.18
+  local minEV = Settings.get('postfx.autoexposure.minEV') or -6
+  local maxEV = Settings.get('postfx.autoexposure.maxEV') or 2
+  local speed = Settings.get('postfx.autoexposure.speed') or 0.5
+  local l = ex.lit or 0
+
+  local l2 = math.log(2)
+  local target = minEV
+  if l > 1e-5 then
+    target = (math.log(l) - math.log(key)) / l2
+    if target < minEV then target = minEV end
+    if target > maxEV then target = maxEV end
+  end
+
+  -- Smooth toward target (eye-adaptation feel). dt computed from the ticker
+  -- since Renderer has no update loop of its own.
+  local now = Time.GetRaw()
+  local dt = 0
+  if self.autoTime then dt = (now - self.autoTime) / 1000.0 end
+  self.autoTime = now
+  if dt > 0.25 then dt = 0.25 end   -- clamp pauses/load stalls
+
+  local ev = self.autoEV or 0
+  if dt > 0 then
+    local t = 1.0 - math.exp(-dt / math.max(0.05, speed))
+    ev = ev + (target - ev) * t
+  else
+    ev = target
+  end
+  self.autoEV = ev
+  return ev
 end
 
 function Renderer:tonemap ()
@@ -478,7 +632,12 @@ function Renderer:tonemap ()
   self.buffer1:pushLevel(self.level)
   shader:start()
     Shader.SetInt('texOp', Settings.get('postfx.tonemap.operator') or 1)
-    Shader.SetFloat('exposure', 2.0 ^ (Settings.get('postfx.exposure.ev') or 0))
+    local ev = Settings.get('postfx.exposure.ev') or 0
+    if Settings.get('postfx.autoexposure.enable') then
+      -- Manual EV becomes a bias applied on top of the auto exposure.
+      ev = ev + self:autoExposureEV()
+    end
+    Shader.SetFloat('exposure', 2.0 ^ ev)
     Shader.SetTex2D('src', self.buffer0)
     Draw.Color(1, 1, 1, 1)
     Draw.Rect(0, 0, self.sx, self.sy)

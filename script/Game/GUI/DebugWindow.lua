@@ -279,6 +279,40 @@ function DebugWindow:createUISection ()
     )
 end
 
+function DebugWindow:createHDRMeterSection ()
+  local function renderer ()
+    local gv = self.ltheory and self.ltheory.gameView
+    return gv and gv.renderer
+  end
+  local function val (key, fmt)
+    return UI.Label():setMinWidth(60):setFormat(fmt)
+      :setPollFn(function ()
+        local r = renderer()
+        return r and r.exposure and r.exposure[key] or 0 end)
+  end
+  return UI.NavGroup()
+    :add(UI.Collapsible('HDR Meter')
+      :add(UI.Grid():setCols(1):setPad(2, 12, 2, 2)
+        :add(UI.Label('Avg Luma (center-wt)'))
+        :add(val('avg', '%.4f'))
+        :add(UI.Label('Max Luma'))
+        :add(val('max', '%.4f'))
+        :add(UI.Label('Pixels > 1.0'))
+        :add(UI.Label():setMinWidth(60):setFormat('%.1f')
+          :setPollFn(function ()
+            local r = renderer()
+            return r and r.exposure and (100.0 * r.exposure.over) or 0 end))
+        :add(UI.Label('Lit Luma (AE key)'))
+        :add(val('lit', '%.4f'))
+        :add(UI.Label('Auto EV'))
+        :add(UI.Label():setMinWidth(60):setFormat('%+.2f')
+          :setPollFn(function ()
+            local r = renderer()
+            return r and r.autoEV or 0 end))
+      )
+    )
+end
+
 function DebugWindow:createSettingsSections ()
   local vars = Settings.getAll()
   for i = 1, #vars do
@@ -393,6 +427,18 @@ function DebugWindow.DumpSettings ()
       table.insert(lines, string.format('lua:     %.2f kb | gc %.2f kb/s | passes %d | freq %.2f Hz',
         GC.GetMemory() / 1024, emaAlloc, GC.GetPasses(), GC.GetFrequency()))
     end
+
+    do -- HDR exposure meter readout (lit buffer, pre-tonemap)
+      local r = lt.gameView and lt.gameView.renderer
+      if r and r.exposure then
+        table.insert(lines, string.format('hdr:     avg %s max %s over1 %.2f%% lit %s autoEV %+.2f',
+          string.format('%.4f', r.exposure.avg),
+          string.format('%.4f', r.exposure.max),
+          100.0 * r.exposure.over,
+          string.format('%.4f', r.exposure.lit),
+          r.autoEV or 0))
+      end
+    end
   end
   table.insert(lines, '')
   table.insert(lines, '-- settings --')
@@ -433,6 +479,7 @@ function DebugWindow.Create (ltheory)
     :add(self:createProfilingGraphs())
     :add(self:createAudioSection())
     :add(self:createUISection())
+    :add(self:createHDRMeterSection())
 
   self:createSettingsSections()
 

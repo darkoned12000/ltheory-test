@@ -153,9 +153,16 @@ Config.gpu = {
   bloomIntensity     = 1,      --   contribution (0..4)
   bloomThreshold     = 1,      --   soft-knee floor (0..8)
   sharpen            = true,   -- unsharp high-pass sharpen
+  sharpenStrength    = 1,      --   unsharp amount (0..3)
+  sharpenRadius      = 2,      --   blur radius for the high-pass mask (1..6)
   tonemap            = true,   -- HDR -> display (AgX) + sRGB; false = raw clamp
   tonemapOperator    = 'AgX',  --   AgX | ACES | Filmic | Khronos
   exposureEV         = 0,      --   exposure stops (-4..4)
+  autoExposure       = false,  --   keyed auto-exposure; manual EV becomes a bias
+  autoExposureKey    = 0.18,   --     mid-gray key (linear) maps to 0 stops
+  autoExposureMinEV  = -6,     --     deep-space floor (darker = blacker)
+  autoExposureMaxEV  = 2,      --     bright-ceiling cap
+  autoExposureSpeed  = 0.5,    --     adaptation time constant (s)
   vignette           = true,   -- cinematic darkened corners
   vignetteStrength   = 0.25,   --   (0..1)
   vignetteHardness   = 20,     --   falloff toward center (2..32)
@@ -166,6 +173,21 @@ Config.gpu = {
   radialblur         = false,  -- radial motion blur / scanlines
   radialblurStrength = 1,      --   (0..1)
   radialblurScanlines = 1,     --   (0..1)
+
+  -- Sun: the warm directional light + ambient fill that makes asteroid fields /
+  -- dust lanes read as "lit by the system's star" (System.starDir). Matches the
+  -- hardcoded starColor (1, 0.5, 0.1) used by planet atmospheric scattering.
+  sunLight        = true,  -- directional + dust backlight contribution
+  sunIntensity    = 1,     --   direct/ambient brightness (0..6)
+  sunAmbientFill  = 0.12,  --   hemisphere fill so shadows aren't pure black
+  sunWarmth       = 1,     --   1 = warm orange (matching starColor), 0 = white
+  sunShadows      = true,  -- directional shadow map from the sun
+  sunShadowRange  = 8000,  --   half-size of the ortho shadow box (world units)
+
+  -- PBR finishing: dielectric specular intensity (0..1) and IBL intensity
+  -- (scales the irMap/envMap ambient in light/global).
+  dielectricSpec = 0.35,
+  ambientEnv     = 1,
 
   -- Texture / edge quality.
   filtering     = 'Aniso', -- Bilinear | Trilinear | Aniso (texture filter quality)
