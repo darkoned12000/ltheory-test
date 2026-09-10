@@ -60,7 +60,10 @@ void main () {
   float aoF = mix(1.0, ao, aoStrength);
 
   if (aoShow > 0.5) {
-    fragData0 = vec4(vec3(aoF), 1.0);   /* preview: pure AO */
+    /* Occlusion mask: white = the contact darkening AO adds in the composite,
+     * black = untouched. Inverting the raw 1.0-unoccluded factor so the preview
+     * reads as "what AO does," not a light switch. */
+    fragData0 = vec4(vec3(1.0 - aoF), 1.0);
     return;
   }
 

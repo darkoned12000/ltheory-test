@@ -56,25 +56,27 @@ unchanged: `Render.AO` avg **0.058 ms** @4800×2700 @2x SS on the 7900 XTX (was
  3. Near-range footprint floor `0.2 -> 0.05`: at 0.2, R < 100 units on 10-60 unit
     rocks swept the tap horizon off-surface -> constant ~1.0. Floor lowered so close
     rocks actually get AO (`0611aa9`).
- 4. **"Show on brightens everything" is by design + a real fix**: `ssao.show`
-    previews the RAW AO map (sky + open space = 1.0 white), so starfield-heavy views
-    read brighter — that part is correct. BUT a same-frame A/B (ao_off/ao_on
-    screenshots, analyzed numerically 2026-09-10) showed the AO contribution to the
-    lit composite was **zero** (mean 101.8 vs 102.9, dark 49.7 vs 49.0%, histograms
-    ~identical): AO only modulates the ambient term (`global.glsl:68`,
-    `(irMap*envScale + fill) * aoF`) and the ambient was tiny
+ 4. **AO's reach was zero in the lit composite** (same-frame ao_off/ao_on
+    screenshots, analyzed numerically 2026-09-10: mean 101.8 vs 102.9, dark 49.7 vs
+    49.0%, histograms ~identical): AO only modulates the ambient term
+    (`global.glsl:68`, `(irMap*envScale + fill) * aoF`) and the ambient was tiny
     (`sunAmbientFill 0.12`, `ambientEnv 1`). Headless readback of the map on real
     geometry showed it is healthy (mean 0.95, 89% of pixels 0.75-0.88) — the chain
-    works, the composite just had nothing for AO to darken. Fix: **ambient rebalance**
-    `sunAmbientFill 0.12 -> 0.3`, `ambientEnv 1 -> 1.35` (gpu seeds + panel defaults,
-    both reversed exactly by the debug sliders). Specular is deliberately not
-    modulated (`global.glsl:73` — AO never occludes the sun gloss).
- Also documented: `ssao.show` intentionally previews the RAW AO map — users
- tuning with Show on are looking at the un-baked darkest case and *will* see
- oversaturation; real look needs Show off. `ssao.enable` stays `false` per the
- mid-tier gate. Phase C remaining: default-row eyeball on the asteroid field +
- planet approach with the rebalanced ambient (user), then Phase D extras.
- Phase D (extras) still pending (§8 has the B notes).
+    works, the composite just had nothing for AO to darken. Fix: **ambient
+    rebalance** `sunAmbientFill 0.12 -> 0.3`, `ambientEnv 1 -> 1.35` (gpu seeds +
+    panel defaults, both reversed exactly by the debug sliders). Specular is
+    deliberately not modulated (`global.glsl:73` — AO never occludes the sun gloss).
+ 5. **Show's legend, not its math, confused the look**: `ssao.show` previewed the
+    RAW AO factor, where unoccluded = 1.0 white — so sky, the player ship, and convex
+    rocks rendered as a bright slab ("like a light switch", twice reported). Show now
+    renders the INVERTED **occlusion mask** (`1 - aoF`): white = the contact
+    darkening AO adds to the composite, black = untouched. Same data, intuitive
+    annotation to tune against.
+ Also documented: with Show on you are looking at the un-baked darkest case;
+ oversaturation is expected and the real look needs Show off. `ssao.enable` stays
+ `false` per the mid-tier gate. Phase C remaining: default-row eyeball on the
+ asteroid field + planet approach with the rebalanced ambient (user), then Phase D
+ extras. Phase D (extras) still pending (§8 has the B notes).
 
 ---
 
@@ -350,8 +352,9 @@ integrator. Output `aoFull` (R8, full-res) is what `global.glsl` samples; a 1×1
 - Global pass: when `self.aoFull` exists set `texAO = aoFull, aoStrength =
   Settings.get('ssao.intensity') or 1`; else bind `aoWhite`.
 - Optional preview: when `ssao.show` is on, the AO pass's output REPLACES the
-  ambient term (global.glsl branch) so the panel shows pure AO — makes tuning and
-  screenshots trivial, reuses the existing dump machinery (`PHX_DEBUG_DUMP`).
+  ambient term (global.glsl branch) with the inverted occlusion mask `1 - aoF`
+  (white = authored darkening) — makes tuning and screenshots trivial, reuses the
+  existing dump machinery (`PHX_DEBUG_DUMP`).
 
 `Renderer.lua`
 - `Renderer:free()` frees the AO textures (guard).
@@ -379,7 +382,7 @@ in `Renderer.lua` next to the other Settings:
 | `ssao.steps`             | enum  | 3     | taps per slice (2/3/4/6) |
 | `ssao.thickness`         | float | 0.25  | silhouette bias 0..1 |
 | `ssao.blur`              | enum  | 1     | bilateral denoise passes (0/1/2) |
-| `ssao.show`              | bool  | false | preview: render pure AO (for tuning/screenshots) |
+| `ssao.show`              | bool  | false | preview: occlusion mask 1-aoF, white=darkened (tuning/screenshots) |
 
 `Config.gpu` seeds: `aoEnabled` (false), `aoQuality`, `aoRadius`, `aoIntensity`,
 `aoDirections`, `aoSteps`, `aoThickness`, `aoBlur`. (Naming is the engine's existing
