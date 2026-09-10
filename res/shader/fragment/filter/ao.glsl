@@ -79,8 +79,12 @@ float sliceVisibility (vec3 P, vec3 N, float dist, vec2 uv, float mat) {
    * ship scale; scale by camera distance (clamped) so the screen footprint of
    * the falloff stays similar. Metal hulls get a wider, subtler footprint.
    * The 2.5 upper clamp (was 4.0) tames the background smear/trails users saw at
-   * chase-cam range — beyond ~2.5x the footprint reads as overdone, not depth. */
-  float R = aoRadius * clamp(dist / 1000.0, 0.2, 2.5);
+   * chase-cam range — beyond ~2.5x the footprint reads as overdone, not depth.
+   * Floor 0.05 (was 0.2): flying close to a 10-60u asteroid, the old 0.2 floor
+   * forced R>=100u -> marches flew off the rock and the whole map read ~0.98
+   * flat (Show preview showed a bright slab). For near geometry, R must be
+   * *smaller* than the occluder or contact AO washes out. */
+  float R = aoRadius * clamp(dist / 1000.0, 0.05, 2.5);
   if (mat == Material_Metal) R *= 2.0;
 
   /* Per-pixel blue-noise slice rotation + per-frame jitter. */
