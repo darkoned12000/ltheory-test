@@ -10,6 +10,20 @@ local Batcher = require('Game.Batcher')
 -- Set PHX_DEBUG_DUMP=120 to snapshot ~2s after boot.
 local dumpTargetFrame = tonumber(os.getenv('PHX_DEBUG_DUMP') or '')
 
+-- AO render targets: color-only buffers (no depth attachment), clamped + linear,
+-- cleared once so the FBO is complete. Half-res R8/16F for passes 1-2, full-res
+-- R8 for the final depth-aware upsample.
+local function aoTarget (w, h, format)
+  local t = Tex2D.Create(w, h, format)
+  t:setMagFilter(TexFilter.Linear)
+  t:setMinFilter(TexFilter.Linear)
+  t:setWrapMode(TexWrapMode.Clamp)
+  t:push()
+  Draw.Clear(0, 0, 0, 0)
+  t:pop()
+  return t
+end
+
 
 -- Point-light shadow maps (item #3). For each light we render the opaque world
 -- into a Depth32F texture using an ortho frustum centered on the light and
@@ -151,6 +165,106 @@ function GameView:renderSunShadow (world)
 end
 
 
+-- GTAO chain: aoview (half-res view rays + NdotV) -> ao (naive horizon
+-- integral, half-res) -> aoblur (full-res depth-aware upsample + denoise).
+-- Ambient-only by construction: only light/global.glsl consumes texAO, so the
+-- sun and point lights are untouched. See ssao-gtao-implementation.md.
+function GameView:renderAO ()
+  local r = self.renderer
+  local sx, sy = r.sx, r.sy
+
+  local q = Settings.get('ssao.quality') or 2
+  local k = (q <= 1) and 1 or ((q == 2) and 2 or 4)
+  local aoW = math.max(1, math.floor(sx / k))
+  local aoH = math.max(1, math.floor(sy / k))
+  local aoMip = math.log(math.max(1, sx / aoW)) / math.log(2)
+
+  -- (Re)create the half-res targets on resolution/quality change.
+  if not self.aoView or self.aoView:getSize().x ~= aoW then
+    if self.aoView then
+      self.aoView:free()
+      self.aoRaw:free()
+    end
+    self.aoView = aoTarget(aoW, aoH, TexFormat.RGBA16F)
+    self.aoRaw  = aoTarget(aoW, aoH, TexFormat.R8)
+  end
+  -- Full-res composite texture (what global.glsl samples).
+  if not self.aoFull or self.aoFull:getSize().x ~= sx then
+    if self.aoFull then self.aoFull:free() end
+    self.aoFull = aoTarget(sx, sy, TexFormat.R8)
+  end
+  -- 1x1 white fallback bound whenever the AO chain is off.
+  if not self.aoWhite then
+    self.aoWhite = aoTarget(1, 1, TexFormat.R8)
+    self.aoWhite:push()
+    Draw.Color(1, 1, 1, 1)
+    Draw.Rect(0, 0, 1, 1)
+    self.aoWhite:pop()
+  end
+
+  Profiler.Begin('Render.AO')
+
+  do -- Pass 1: per-pixel view ray + NdotV (half-res)
+    local shader = Cache.Shader('worldray', 'filter/aoview')
+    if shader then
+      RenderTarget.Push(aoW, aoH)
+      RenderTarget.BindTex2D(self.aoView)
+      shader:start()
+      Shader.SetTex2D('texDepth', r.zBufferL)
+      Shader.SetTex2D('texNormalMat', r.buffer1)
+      Shader.SetFloat('aoMip', aoMip)
+      Draw.Rect(-1, -1, 2, 2)
+      shader:stop()
+      RenderTarget.Pop()
+    end
+  end
+
+  do -- Pass 2: horizon integral -> aoRaw (half-res). Fullscreen vertex (ui):
+    -- this pass needs only uv + its own mView/mProj uniforms — no world rays.
+    local shader = Cache.Shader('ui', 'filter/ao')
+    if shader then
+      local dirs  = { 2, 4, 6, 8 }
+      local steps = { 2, 3, 4, 6 }
+      RenderTarget.Push(aoW, aoH)
+      RenderTarget.BindTex2D(self.aoRaw)
+      shader:start()
+      Shader.SetTex2D('texView', self.aoView)
+      Shader.SetTex2D('texNormalMat', r.buffer1)
+      Shader.SetTex2D('texDepth', r.zBufferL)
+      Shader.SetFloat('aoRadius',   Settings.get('ssao.radius') or 500)
+      Shader.SetFloat('aoIntensity', Settings.get('ssao.intensity') or 1)
+      Shader.SetFloat('aoMip',      aoMip)
+      Shader.SetFloat('aoSpacing',  1.0 / 3.0)
+      Shader.SetFloat('thickness',  Settings.get('ssao.thickness') or 0.25)
+      Shader.SetFloat('timeSeed',   (r.frameSeed or 0) + 1)
+      Shader.SetInt  ('dirCount',   dirs[Settings.get('ssao.directions')] or 4)
+      Shader.SetInt  ('stepCount',  steps[Settings.get('ssao.steps')] or 3)
+      Draw.Rect(0, 0, aoW, aoH)
+      shader:stop()
+      RenderTarget.Pop()
+    end
+  end
+
+  do -- Pass 3: full-res depth-aware upsample + denoise -> aoFull
+    local shader = Cache.Shader('ui', 'filter/aoblur')
+    if shader then
+      local rad = Settings.get('ssao.radius') or 500
+      RenderTarget.Push(sx, sy)
+      RenderTarget.BindTex2D(self.aoFull)
+      shader:start()
+      Shader.SetTex2D('texAO', self.aoRaw)
+      Shader.SetTex2D('texDepth', r.zBufferL)
+      Shader.SetFloat('aoMip', aoMip)
+      Shader.SetFloat('aoBlurScale', 8.0 / math.max(1e-3, rad * rad))
+      Draw.Rect(0, 0, sx, sy)
+      shader:stop()
+      RenderTarget.Pop()
+    end
+  end
+
+  Profiler.End()
+end
+
 function GameView:draw (focus, active)
   if dumpTargetFrame then
     GameView.__dumpFrame = (GameView.__dumpFrame or 0) + 1
@@ -257,6 +371,12 @@ function GameView:draw (focus, active)
       end
     end
 
+    do -- GTAO: screen-space ambient occlusion (ambient-only, before the global pass)
+      if Settings.get('ssao.enable') then
+        self:renderAO(world)
+      end
+    end
+
     do -- Global lighting (environment)
       local shader = Cache.Shader('worldray', 'light/global')
       if shader then
@@ -266,6 +386,16 @@ function GameView:draw (focus, active)
         Shader.SetTex2D('texDepth', self.renderer.zBufferL)
         Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
         Shader.SetFloat('envScale', Settings.get('lighting.ambientEnv') or 1)
+        if self.aoFull then
+          Shader.SetTex2D('texAO', self.aoFull)
+          Shader.SetFloat('aoStrength', Settings.get('ssao.intensity') or 1)
+          Shader.SetFloat('aoShow', Settings.get('ssao.show') and 1 or 0)
+        else
+          -- AO off: bind the white fallback (or any texture — aoStrength 0 kills it)
+          Shader.SetTex2D('texAO', self.aoWhite or self.renderer.zBufferL)
+          Shader.SetFloat('aoStrength', 0)
+          Shader.SetFloat('aoShow', 0)
+        end
         Draw.Rect(-1, -1, 2, 2)
         shader:stop()
         self.renderer.buffer2:pop()

@@ -51,6 +51,19 @@ local Renderer = class(function (self)
   seed('lighting.specular',  gpu.dielectricSpec)
   seed('lighting.ambientEnv', gpu.ambientEnv)
 
+  local aoQIdx    = { Off = 1, Half = 2, Quarter = 3 }
+  local aoDirIdx  = { ['2'] = 1, ['4'] = 2, ['6'] = 3, ['8'] = 4 }
+  local aoStepIdx = { ['2'] = 1, ['3'] = 2, ['4'] = 3, ['6'] = 4 }
+  local aoBlurIdx = { ['0'] = 1, ['1'] = 2, ['2'] = 3 }
+  seed('ssao.enable',    gpu.aoEnabled)
+  seed('ssao.quality',   aoQIdx[gpu.aoQuality])
+  seed('ssao.radius',    gpu.aoRadius)
+  seed('ssao.intensity', gpu.aoIntensity)
+  seed('ssao.directions', aoDirIdx[gpu.aoDirections])
+  seed('ssao.steps',     aoStepIdx[gpu.aoSteps])
+  seed('ssao.thickness', gpu.aoThickness)
+  seed('ssao.blur',      aoBlurIdx[gpu.aoBlur])
+
   local filterIdx = { Bilinear = 1, Trilinear = 2, Aniso = 3, Anisotropic = 3 }
   seed('render.textureFilter', filterIdx[gpu.filtering])
 
@@ -119,6 +132,19 @@ Settings.addBool  ('render.vsync',       'VSync',                 true)
 
 Settings.addFloat ('lighting.ambientEnv', 'Environment Light',     1, 0, 3)
 Settings.addFloat ('lighting.specular',   'Dielectric Specular',   0.35, 0, 1)
+
+-- Screen-space ambient occlusion (GTAO). Default OFF until the mid-tier perf
+-- gate in ssao-gtao-implementation.md is measured; the debug section is
+-- auto-built from the 'ssao' prefix (first key segment) by DebugWindow.
+Settings.addBool  ('ssao.enable',      'Ambient Occlusion',  false)
+Settings.addEnum  ('ssao.quality',     ' - Resolution',      2, { 'Off', 'Half', 'Quarter' })
+Settings.addFloat ('ssao.radius',      ' - Radius',          500, 0.1, 4000)
+Settings.addFloat ('ssao.intensity',   ' - Intensity',       1, 0, 3)
+Settings.addEnum  ('ssao.directions',  ' - Directions',      2, { '2', '4', '6', '8' })
+Settings.addEnum  ('ssao.steps',       ' - Steps',           2, { '2', '3', '4', '6' })
+Settings.addFloat ('ssao.thickness',   ' - Thickness',       0.25, 0, 1)
+Settings.addEnum  ('ssao.blur',        ' - Denoise',         2, { '0', '1', '2' })
+Settings.addBool  ('ssao.show',        ' - Show',            false)
 
 local function createBuffer (sx, sy, format)
   local self = Tex2D.Create(sx, sy, format)

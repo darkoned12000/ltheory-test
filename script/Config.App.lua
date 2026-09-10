@@ -189,6 +189,18 @@ Config.gpu = {
   dielectricSpec = 0.35,
   ambientEnv     = 1,
 
+  -- GTAO screen-space ambient occlusion (see ssao-gtao-implementation.md).
+  -- Opt-in: kept OFF by default until a mid-tier GPU measurement proves the
+  -- cost; the debug-panel 'ssao' section enables it live.
+  aoEnabled     = false, -- master switch
+  aoQuality     = 'Half',-- Off | Half | Quarter AO resolution
+  aoRadius      = 500,   -- world-space occlusion radius (0.1..4000)
+  aoIntensity   = 1,     -- AO power curve / strength (0..3)
+  aoDirections  = 4,     -- GTAO slices (2/4/6/8)
+  aoSteps       = 3,     -- taps per slice (2/3/4/6)
+  aoThickness   = 0.25,  -- silhouette bias (0..1) — keeps rims lit, not black
+  aoBlur        = 1,     -- bilateral denoise passes (0/1/2)
+
   -- Texture / edge quality.
   filtering     = 'Aniso', -- Bilinear | Trilinear | Aniso (texture filter quality)
   superSample   = '2x',    -- Off | 2x | 4x (SSAA: renders the frame over-res)
