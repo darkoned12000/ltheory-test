@@ -5,12 +5,12 @@ local LTheory = Application()
 local rng = RNG.FromTime()
 
 function LTheory:generate ()
-  self.seed = rng:get64()
-  if true then
-    -- self.seed = 7035008865122330386ULL
-    -- self.seed = 15054808765102574876ULL
-    -- self.seed = 1777258448479734603ULL
-    -- self.seed = 5023726954312599969ULL
+  if Config.gen.seedGlobal then
+    -- Reproducible world for A/B testing (ao_off / ao_on pairs). Grab the
+    -- "Seed: <n>" line from a boot log and paste it here as <n>ULL.
+    self.seed = Config.gen.seedGlobal
+  else
+    self.seed = rng:get64()
   end
   printf('Seed: %s', self.seed)
   printf('Resolution: %dx%d', self.resX, self.resY)

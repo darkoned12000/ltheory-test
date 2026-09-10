@@ -26,7 +26,7 @@ local goodSeeds = {
 
 Config.gen = {
   debug      = false, -- Enable verbose mesh-generation diagnostics (bad normals, etc.)
-  seedGlobal = nil, -- Set to force deterministic global RNG
+  seedGlobal = nil, -- Set to force deterministic global RNG (honoured by LTheory + PhysicsTest; paste a boot-log "Seed: N" line, N as <n>ULL)
   seedSystem = nil, -- Set to force deterministic system generation
 
   origin     = Vec3f(0, 0, 0), -- Set far from zero to test engine precision
