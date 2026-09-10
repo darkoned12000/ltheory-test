@@ -24,6 +24,106 @@ local function aoTarget (w, h, format)
   return t
 end
 
+-- Blue-noise 64x64 slice-rotation LUT (Phase B). Frequency-domain-ranked blue
+-- noise: forward-FFT a deterministic white field, high-pass the low-frequency
+-- band, inverse-FFT, then assign ranks so the marginal distribution stays
+-- uniform on [0,1). Determinism comes from a Park-Miller LCG (exact in double).
+-- Low-frequency suppression is what keeps the half-res AO stable under the 3x3
+-- denoise + 2x SS; a white-noise rotation would crawl. Build once (~2ms) at
+-- first use, cache on self.aoNoise (R8, point, repeat).
+local function fft1D (re, im, base, stride, n, inverse)
+  local j = 0
+  for i = 0, n - 1 do
+    if i < j then
+      local ri, gi = re[base+i*stride], im[base+i*stride]
+      re[base+i*stride], im[base+i*stride] = re[base+j*stride], im[base+j*stride]
+      re[base+j*stride], im[base+j*stride] = ri, gi
+    end
+    local m = n >> 1
+    while m >= 1 and j >= m do j = j - m; m = m >> 1 end
+    j = j + m
+  end
+  local len = 2
+  while len <= n do
+    local ang = (inverse and 1 or -1) * (2 * math.pi) / len
+    local wdRe, wdIm = math.cos(ang), math.sin(ang)
+    local half = len >> 1
+    for k = 0, n - 1, len do
+      local wRe, wIm = 1.0, 0.0
+      for x = 0, half - 1 do
+        local i0, i1 = base + (k+x)*stride, base + (k+x+half)*stride
+        local vRe = re[i1]*wRe - im[i1]*wIm
+        local vIm = re[i1]*wIm + im[i1]*wRe
+        local uRe, uIm = re[i0], im[i0]
+        re[i0], im[i0] = uRe + vRe, uIm + vIm
+        re[i1], im[i1] = uRe - vRe, uIm - vIm
+        wRe, wIm = wRe*wdRe - wIm*wdIm, wRe*wdIm + wIm*wdRe
+      end
+    end
+    len = len * 2
+  end
+  if inverse then
+    for i = 0, n - 1 do
+      re[base+i*stride] = re[base+i*stride] / n
+      im[base+i*stride] = im[base+i*stride] / n
+    end
+  end
+end
+
+local function smoothstep (a, b, x)
+  x = math.min(1, math.max(0, (x - a) / (b - a)))
+  return x * x * (3 - 2 * x)
+end
+
+local function buildBlueNoise (n)
+  local total = n * n
+  local re, im = {}, {}
+  local x = 123457 -- Park-Miller seed; values in [0,1)
+  local function rng ()
+    x = (x * 16807) % 2147483647
+    return (x - 1) / 2147483646
+  end
+  for i = 0, total - 1 do re[i] = rng(); im[i] = 0.0 end
+  for r = 0, n - 1 do fft1D(re, im, r*n, 1, n, false) end
+  for c = 0, n - 1 do fft1D(re, im, c, n, n, false) end
+  local half = n / 2
+  for v = 0, n - 1 do
+    local dv = v
+    if dv > half then dv = dv - n end
+    for u = 0, n - 1 do
+      local du = u
+      if du > half then du = du - n end
+      local rho = math.sqrt(du*du + dv*dv) / half
+      local w = (du == 0 and dv == 0) and 0.0 or smoothstep(0.10, 0.90, rho)
+      local i = v*n + u
+      re[i] = re[i] * w
+      im[i] = im[i] * w
+    end
+  end
+  for r = 0, n - 1 do fft1D(re, im, r*n, 1, n, true) end
+  for c = 0, n - 1 do fft1D(re, im, c, n, n, true) end
+  local ord = {}
+  for i = 0, total - 1 do ord[i+1] = { re[i], i } end
+  table.sort(ord, function (a, b) return a[1] < b[1] end)
+  local out = {}
+  for k, e in ipairs(ord) do out[e[2]] = (k - 0.5) / total end
+  return out
+end
+
+local function buildBlueNoiseTex (n)
+  local vals = buildBlueNoise(n)
+  local total = n * n
+  local bytes = Bytes.Create(total)
+  local p = ffi.cast('uint8_t*', bytes:getData())
+  for i = 0, total - 1 do p[i] = math.floor(vals[i] * 256 + 0.5) % 256 end
+  local tex = Tex2D.Create(n, n, TexFormat.R8)
+  tex:setDataBytes(bytes, PixelFormat.Red, DataFormat.U8)
+  tex:setMagFilter(TexFilter.Point)
+  tex:setMinFilter(TexFilter.Point)
+  tex:setWrapMode(TexWrapMode.Repeat)
+  return tex
+end
+
 
 -- Point-light shadow maps (item #3). For each light we render the opaque world
 -- into a Depth32F texture using an ortho frustum centered on the light and
@@ -202,6 +302,11 @@ function GameView:renderAO ()
     self.aoWhite:pop()
   end
 
+  -- Blue-noise 64x64 slice-rotation LUT (built once, resolution-independent).
+  if not self.aoNoise then
+    self.aoNoise = buildBlueNoiseTex(64)
+  end
+
   Profiler.Begin('Render.AO')
 
   do -- Pass 1: per-pixel view ray + NdotV (half-res)
@@ -231,10 +336,12 @@ function GameView:renderAO ()
       Shader.SetTex2D('texView', self.aoView)
       Shader.SetTex2D('texNormalMat', r.buffer1)
       Shader.SetTex2D('texDepth', r.zBufferL)
+      Shader.SetTex2D('texNoise', self.aoNoise)
       Shader.SetFloat('aoRadius',   Settings.get('ssao.radius') or 500)
       Shader.SetFloat('aoIntensity', Settings.get('ssao.intensity') or 1)
       Shader.SetFloat('aoMip',      aoMip)
       Shader.SetFloat('aoSpacing',  1.0 / 3.0)
+      Shader.SetFloat('aoNoiseSize', 64.0)
       Shader.SetFloat('thickness',  Settings.get('ssao.thickness') or 0.25)
       Shader.SetFloat('timeSeed',   (r.frameSeed or 0) + 1)
       Shader.SetInt  ('dirCount',   dirs[Settings.get('ssao.directions')] or 4)
@@ -262,7 +369,7 @@ function GameView:renderAO ()
     end
   end
 
-  Profiler.End()
+Profiler.End()
 end
 
 function GameView:draw (focus, active)

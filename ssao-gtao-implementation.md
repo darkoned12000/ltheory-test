@@ -27,6 +27,20 @@ the 1024×768 @2x SS gate, vs ≤1.2 ms target); lab memory at that res ≈ 42 M
 "<3 MB" estimate was optimistic (full-res aoFull alone exceeds it at larger windows).
 A real bug was found & fixed during bring-up: the horizon integral was dividing by
 `dirCount` twice (`sliceVisibility` already averages) → uniform 0.25 everywhere.
+**Phase B landed** (2026-09-09): pass 2 is now the full cosine-windowed sky
+integral — per slice it marches BOTH directions tracking separate horizons h0/h1
+and evaluates `vis = (cos h0 + cos h1)/2` exactly (closed form vs brute-force
+integral verified to 4+ digits), replacing the Phase A symmetric `1−sin(h)`
+approximation; slice rotation is now a **64×64 blue-noise LUT** (frequency-domain
+ranked blue noise generated once on the CPU, deterministic Park-Miller seed, R8 /
+nearest / repeat) instead of `hash12`, plus the per-frame `timeSeed` jitter.
+Verified in-game: sky invariantly AO=1, min fully-occluded pixels sit in real
+0.8-mean 5×5 clusters (not speckle), and a CPU replica of the exact shader math
+matches the `aoRaw` readback on 8/8 sampled mid-band pixels (|err| ≤ 0.033,
+residual is GPU textureLod-mip vs CPU bilinear on the depth taps). Perf
+unchanged: `Render.AO` avg **0.058 ms** @4800×2700 @2x SS on the 7900 XTX (was
+0.056 ms pre-Phase-B) — the two-sided march is bandwidth-absorbed. LUT totals
++4 KB memory. Phase C (tuning) + Phase D (extras) still pending.
 Phases B/C/D still pending (§8 has the B notes).
 
 ---
