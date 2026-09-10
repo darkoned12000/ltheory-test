@@ -87,10 +87,16 @@ unchanged: `Render.AO` avg **0.058 ms** @4800×2700 @2x SS on the 7900 XTX (was
     shaders OK/0 FAIL, clean boot.
  Also documented: with Show on you are looking at the isolated ambient term —
  oversaturation vs the real look is expected and the real look needs Show off.
- `ssao.enable` stays `false` per the mid-tier gate. Phase C remaining: default-row
- eyeball on the asteroid field + planet approach with the rebalanced ambient
- (user), then Phase D
- extras. Phase D (extras) still pending (§8 has the B notes).
+ `ssao.enable` stays `false` per the mid-tier gate.
+
+**Phase C closed** (2026-09-10): user confirmed dent/crevice darkening — the
+ inside of a rock dent reads darker than the flat outside, in exactly the predicted
+ locations, with `ssao.intensity` at the user-approved default **1.5** (bumped
+ from 1.0 so a fresh launch reads without panel fiddling; `Config.gpu` seed +
+ panel default, still slider-revertible). Remaining ships/quality gates from §7 are
+ noted below Phase D.
+
+Phase D (extras) — §9 list, each additive and toggle-gated:
 
 ---
 
