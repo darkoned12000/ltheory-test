@@ -60,10 +60,15 @@ void main () {
   float aoF = mix(1.0, ao, aoStrength);
 
   if (aoShow > 0.5) {
-    /* Occlusion mask: white = the contact darkening AO adds in the composite,
-     * black = untouched. Inverting the raw 1.0-unoccluded factor so the preview
-     * reads as "what AO does," not a light switch. */
-    fragData0 = vec4(vec3(1.0 - aoF), 1.0);
+    /* Preview: the ambient contribution AO modulates, in isolation — crevice/
+     * rim darkening reads clearly without sun/specular climbing on top.
+     * Farplane NoShade pixels (skybox) stay 1.0 so the preview never blanks
+     * the background; the additive passes (sun glints, point lights, stars)
+     * still add on top. */
+    if (mat == Material_NoShade)
+      fragData0 = vec4(vec3(1.0), 1.0);
+    else
+      fragData0 = vec4((linear(textureLod(irMap, N, 8.0).xyz) * envScale + fill) * aoF, 1.0);
     return;
   }
 

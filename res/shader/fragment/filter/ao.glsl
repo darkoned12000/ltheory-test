@@ -3,8 +3,8 @@
 #include math
 
 /* GTAO pass 2 — full cosine-windowed sky integral -> aoRaw (R8, half-res).
- * Per azimuthal slice (rotated per pixel by a 64x64 blue-noise LUT + per-frame
- * timeSeed jitter), march BOTH directions tracking the maximum horizon elevation
+ * Per azimuthal slice (rotated per pixel by a 64x64 blue-noise LUT), march BOTH
+ * directions tracking the maximum horizon elevation
  * sin(theta) h0/h1 above the tangent plane, then integrate the exact
  * cosine-windowed sky visibility over the slice:
  *   vis = (cos(h0) + cos(h1)) / 2 = (sqrt(1-h0^2) + sqrt(1-h1^2)) / 2
@@ -12,6 +12,12 @@
  * contact darkening reads directionally correct instead of the Phase A
  * symmetric 1-sin(h) approximation. Blue-noise slice rotation suppresses
  * low-frequency low-fluence structure so the 3x3 denoise + 2x SS reads stable.
+ * NOTE: the slice rotation is intentionally time-INVARIANT. Phase B had a
+ * per-frame `fract(timeSeed)` jitter; user feedback (2026-09-10) showed it
+ * shimmers every frame — flaring into obvious flicker in the AO preview and as
+ * grain drift on hulls. Per-pixel blue-noise rotation still dithers spatially;
+ * temporal decorrelation can return under a setting if banding ever shows on
+ * large flat gradients.
  */
 
 #autovar mat4 mProj
@@ -30,7 +36,6 @@ uniform float aoMip;       /* log2(sx/aoSx)         */
 uniform float aoSpacing;   /* slice step fraction of radius */
 uniform float aoNoiseSize; /* LUT texels per axis    */
 uniform float thickness;   /* silhouette bias 0..1  */
-uniform float timeSeed;    /* frame slice jitter    */
 uniform int   dirCount;    /* 2/4/6/8               */
 uniform int   stepCount;   /* 2/3/4/6               */
 
@@ -87,12 +92,12 @@ float sliceVisibility (vec3 P, vec3 N, float dist, vec2 uv, float mat) {
   float R = aoRadius * clamp(dist / 1000.0, 0.05, 2.5);
   if (mat == Material_Metal) R *= 2.0;
 
-  /* Per-pixel blue-noise slice rotation + per-frame jitter. */
+  /* Per-pixel blue-noise slice rotation (temporally stable — see header note). */
   float nz = texture(texNoise, uv * aoNoiseSize).x;
 
   float vis = 0.0;
   for (int i = 0; i < dirCount; ++i) {
-    float ang = (float(i) + nz + fract(timeSeed)) * (TAU / float(dirCount));
+    float ang = (float(i) + nz) * (TAU / float(dirCount));
     vec3 D = T1 * cos(ang) + T2 * sin(ang);
 
     float h0 = 0.0, h1 = 0.0;

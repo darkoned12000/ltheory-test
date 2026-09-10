@@ -33,7 +33,8 @@ and evaluates `vis = (cos h0 + cos h1)/2` exactly (closed form vs brute-force
 integral verified to 4+ digits), replacing the Phase A symmetric `1−sin(h)`
 approximation; slice rotation is now a **64×64 blue-noise LUT** (frequency-domain
 ranked blue noise generated once on the CPU, deterministic Park-Miller seed, R8 /
-nearest / repeat) instead of `hash12`, plus the per-frame `timeSeed` jitter.
+nearest / repeat) instead of `hash12`.; the per-frame `timeSeed` jitter was
+removed in Phase C tuning (see item 6).
 Verified in-game: sky invariantly AO=1, min fully-occluded pixels sit in real
 0.8-mean 5×5 clusters (not speckle), and a CPU replica of the exact shader math
 matches the `aoRaw` readback on 8/8 sampled mid-band pixels (|err| ≤ 0.033,
@@ -68,14 +69,27 @@ unchanged: `Render.AO` avg **0.058 ms** @4800×2700 @2x SS on the 7900 XTX (was
     deliberately not modulated (`global.glsl:73` — AO never occludes the sun gloss).
  5. **Show's legend, not its math, confused the look**: `ssao.show` previewed the
     RAW AO factor, where unoccluded = 1.0 white — so sky, the player ship, and convex
-    rocks rendered as a bright slab ("like a light switch", twice reported). Show now
-    renders the INVERTED **occlusion mask** (`1 - aoF`): white = the contact
-    darkening AO adds to the composite, black = untouched. Same data, intuitive
-    annotation to tune against.
- Also documented: with Show on you are looking at the un-baked darkest case;
- oversaturation is expected and the real look needs Show off. `ssao.enable` stays
- `false` per the mid-tier gate. Phase C remaining: default-row eyeball on the
- asteroid field + planet approach with the rebalanced ambient (user), then Phase D
+    rocks rendered as a bright slab ("like a light switch", twice reported). A first
+    fix (inverted `1 - aoF` mask) read correctly but BLACKED the whole frame —
+    "removes the background/skybox entirely", and the full-amplitude noise over the
+    black slab read as *"stars flicker a lot"*. Show now renders the **ambient
+    contribution AO modulates, in isolation**: `(irMap*envScale + fill) * aoF` for
+    every material, with farplane `Material_NoShade` pixels pinned to 1.0 so the
+    skybox/background stays; the additive passes (sun glints, point lights, stars)
+    still draw on top. Crevice/rim darkening reads clearly against an intact scene.
+ 6. **Spatial-only slice rotation (flicker root cause)**: Phase B's per-frame
+    `fract(timeSeed)` rotated the AO slices every frame, shimming the whole map —
+    invisible as ambient-scale grain, obnoxious as full-amplitude flicker in the
+    preview and as grain drift on hulls. Removed the jitter (and the `timeSeed`
+    uniform + its push): rotation is now per-pixel blue-noise only, temporally
+    stable. Trade-off: we lose temporal decorrelation — if banding ever appears on
+    large flat gradients, reinstate a *slow* rotation under a setting. Verified: 129
+    shaders OK/0 FAIL, clean boot.
+ Also documented: with Show on you are looking at the isolated ambient term —
+ oversaturation vs the real look is expected and the real look needs Show off.
+ `ssao.enable` stays `false` per the mid-tier gate. Phase C remaining: default-row
+ eyeball on the asteroid field + planet approach with the rebalanced ambient
+ (user), then Phase D
  extras. Phase D (extras) still pending (§8 has the B notes).
 
 ---
@@ -289,7 +303,6 @@ uniform float     aoIntensity;// pow curve (settings)
 uniform int       dirCount;   // 2/4/6/8
 uniform int       stepCount;  // 2/3/4
 uniform float     thickness;  // heuristic bias 0..1
-uniform float     timeSeed;   // Renderer.frameSeed for rotating slices
 const float sampleSpacing = 1.0 / 3.0; // FOV-ish falloff, see tuning §6
 
 void main() {
@@ -298,7 +311,7 @@ void main() {
   // assemble orthonormal T1,T2 from N (robust to N≈±Y)
   float ao = 0.0;
   for (i in dirCount) {
-    float ang = i/dirCount * TAU + rotate(noise(uv, timeSeed));
+    float ang = i/dirCount * TAU + noiseRotate(uv); // per-pixel blue noise only
     vec2 dir = T1*cos(ang) + T2*sin(ang);
     // march the slice in both directions, track max horizon elevation
     float h0 = 0.0, h1 = 0.0;                   // in tangents
@@ -352,15 +365,15 @@ integrator. Output `aoFull` (R8, full-res) is what `global.glsl` samples; a 1×1
 - Global pass: when `self.aoFull` exists set `texAO = aoFull, aoStrength =
   Settings.get('ssao.intensity') or 1`; else bind `aoWhite`.
 - Optional preview: when `ssao.show` is on, the AO pass's output REPLACES the
-  ambient term (global.glsl branch) with the inverted occlusion mask `1 - aoF`
-  (white = authored darkening) — makes tuning and screenshots trivial, reuses the
+  ambient term (global.glsl branch) with `(irMap*envScale + fill) * aoF` while
+  NoShade (skybox) pixels stay at 1.0 — shows the ambient AO contribution in
+  isolation with the background intact; tuning and screenshots trivial, reuses the
   existing dump machinery (`PHX_DEBUG_DUMP`).
 
 `Renderer.lua`
 - `Renderer:free()` frees the AO textures (guard).
-- `Renderer:meter()` — no change, but `self.frameSeed` (already cycling 0–4096)
-  is passed as `timeSeed` to rotate the GTAO slices per frame (temporal jitter → no
-  shimmer at 2x supersample).
+- `Renderer:meter()` — no change. Slice rotation is spatial-only now (the per-frame
+  `timeSeed` pass was removed during Phase C flicker fix; see item 6 above).
 
 `Config.App.lua` (`Config.gpu`) seeds each `ssao.*` setting (names below).
 
@@ -382,7 +395,7 @@ in `Renderer.lua` next to the other Settings:
 | `ssao.steps`             | enum  | 3     | taps per slice (2/3/4/6) |
 | `ssao.thickness`         | float | 0.25  | silhouette bias 0..1 |
 | `ssao.blur`              | enum  | 1     | bilateral denoise passes (0/1/2) |
-| `ssao.show`              | bool  | false | preview: occlusion mask 1-aoF, white=darkened (tuning/screenshots) |
+| `ssao.show`              | bool  | false | preview: ambient+AO in isolation, skybox kept (tuning/screenshots) |
 
 `Config.gpu` seeds: `aoEnabled` (false), `aoQuality`, `aoRadius`, `aoIntensity`,
 `aoDirections`, `aoSteps`, `aoThickness`, `aoBlur`. (Naming is the engine's existing
@@ -429,7 +442,9 @@ Phasing (each commit boots clean + validator-green):
    settings, `Config.gpu` seeds, global-pass hook. Working but naive first pass
    (uniform-horizon approximation) so the diff is inspectable early.
 2. **Phase B** — upgrade pass 2 to the full GTAO horizon integral + blue-noise LUT
-   + per-frame `timeSeed`. This is where quality arrives.
+   (spatial-only rotation; the planned per-frame `timeSeed` jitter was dropped in
+   Phase C when it surfaced as flicker — AO is temporally stable by design now).
+   This is where quality arrives.
 3. **Phase C** — bilateral denoise tuning + `thickness`/`radius`/`intensity`
    defaults calibrated on the asteroid field and a planet approach (this is the
    actual "wow" tuning — expect this phase to eat half the time).
