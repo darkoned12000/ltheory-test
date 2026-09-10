@@ -41,21 +41,40 @@ residual is GPU textureLod-mip vs CPU bilinear on the depth taps). Perf
 unchanged: `Render.AO` avg **0.058 ms** @4800×2700 @2x SS on the 7900 XTX (was
 0.056 ms pre-Phase-B) — the two-sided march is bandwidth-absorbed. LUT totals
 +4 KB memory.
-**Phase C (tuning) started** (2026-09-10): in-game feedback confirmed NO halo
-(depth-aware upsample is tight at object edges) but flagged *"overdone at higher
-settings"* and *"black trails in the background"*. Root causes identified, two
-landed:
-1. The distance scale clamp `radius * clamp(dist/1000, 0.2, 4.0)` blew the march
-   footprint up to 4x at chase-cam range — tangents swept ~1.3*R (~2100+ units)
-   across hulls/background. Cap tightened `4.0 -> 2.5`.
-2. Default `thickness` `0.25 -> 0.40` (plan §6's "rim silhouettes read as lit, not
-   flat black rings" lever).
-Also documented: `ssao.show` intentionally previews the RAW AO map — users
-tuning with Show on are looking at the un-baked darkest case and *will* see
-oversaturation; real look needs Show off. `ssao.enable` stays `false` per the
-mid-tier gate. Phase C remaining: default-row eyeball on the asteroid field +
-planet approach (user), then Phase D extras.
-Phase D (extras) still pending (§8 has the B notes).
+**Phase C (tuning) — in-flight** (2026-09-10). In-game feedback confirmed NO halo
+ (depth-aware upsample is tight at object edges) but flagged *"overdone at higher
+ settings"* and *"black trails in the background"*; later *"Show on brightens
+ everything"* and *"no edge/surface changes flying around the asteroid"*. Root
+ causes tracked, in order:
+ 1. Occlusion-radius clamp `radius * clamp(dist/1000, 0.2, 4.0)` blew the march
+    footprint up to 4x at chase-cam range — tangents swept ~1.3*R (~2100+ units)
+    across hulls/background. Cap tightened `4.0 -> 2.5` (`006b31d`).
+ 2. Thickness experiment `0.25 -> 0.40`: the damper (`1 - thickness*exp(-|Δ|/R)`)
+    suppresses occluders at the SAME depth as the center pixel (Δ≈0) — i.e. exactly
+    the crevice/contact AO we want. At 0.40 the map rode ~flat 0.97. **Reverted to
+    0.25** (`84a6758`).
+ 3. Near-range footprint floor `0.2 -> 0.05`: at 0.2, R < 100 units on 10-60 unit
+    rocks swept the tap horizon off-surface -> constant ~1.0. Floor lowered so close
+    rocks actually get AO (`0611aa9`).
+ 4. **"Show on brightens everything" is by design + a real fix**: `ssao.show`
+    previews the RAW AO map (sky + open space = 1.0 white), so starfield-heavy views
+    read brighter — that part is correct. BUT a same-frame A/B (ao_off/ao_on
+    screenshots, analyzed numerically 2026-09-10) showed the AO contribution to the
+    lit composite was **zero** (mean 101.8 vs 102.9, dark 49.7 vs 49.0%, histograms
+    ~identical): AO only modulates the ambient term (`global.glsl:68`,
+    `(irMap*envScale + fill) * aoF`) and the ambient was tiny
+    (`sunAmbientFill 0.12`, `ambientEnv 1`). Headless readback of the map on real
+    geometry showed it is healthy (mean 0.95, 89% of pixels 0.75-0.88) — the chain
+    works, the composite just had nothing for AO to darken. Fix: **ambient rebalance**
+    `sunAmbientFill 0.12 -> 0.3`, `ambientEnv 1 -> 1.35` (gpu seeds + panel defaults,
+    both reversed exactly by the debug sliders). Specular is deliberately not
+    modulated (`global.glsl:73` — AO never occludes the sun gloss).
+ Also documented: `ssao.show` intentionally previews the RAW AO map — users
+ tuning with Show on are looking at the un-baked darkest case and *will* see
+ oversaturation; real look needs Show off. `ssao.enable` stays `false` per the
+ mid-tier gate. Phase C remaining: default-row eyeball on the asteroid field +
+ planet approach with the rebalanced ambient (user), then Phase D extras.
+ Phase D (extras) still pending (§8 has the B notes).
 
 ---
 

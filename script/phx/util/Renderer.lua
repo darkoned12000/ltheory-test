@@ -124,13 +124,13 @@ Settings.addFloat ('render.shadow.bias',   'Shadow Bias',           0.001, -0.01
 Settings.addFloat ('render.shadow.scale',  'Shadow Dist Scale',     0.0005, 0, 0.01)
 Settings.addBool  ('render.sun.enable',    'Sun Light',             true)
 Settings.addFloat ('render.sun.intensity', ' - Intensity',          1, 0, 6)
-Settings.addFloat ('render.sun.fill',      ' - Ambient Fill',       0.12, 0, 1)
+Settings.addFloat ('render.sun.fill',      ' - Ambient Fill',       0.30, 0, 1)
 Settings.addFloat ('render.sun.warmth',    ' - Warmth',             1, 0, 1)
 Settings.addBool  ('render.sun.shadows',   ' - Shadows',            true)
 Settings.addFloat ('render.sun.shadowRange', ' - Shadow Range',     8000, 500, 20000)
 Settings.addBool  ('render.vsync',       'VSync',                 true)
 
-Settings.addFloat ('lighting.ambientEnv', 'Environment Light',     1, 0, 3)
+Settings.addFloat ('lighting.ambientEnv', 'Environment Light',     1.35, 0, 3)
 Settings.addFloat ('lighting.specular',   'Dielectric Specular',   0.35, 0, 1)
 
 -- Screen-space ambient occlusion (GTAO). Default OFF until the mid-tier perf

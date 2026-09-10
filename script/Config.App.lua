@@ -179,7 +179,9 @@ Config.gpu = {
   -- hardcoded starColor (1, 0.5, 0.1) used by planet atmospheric scattering.
   sunLight        = true,  -- directional + dust backlight contribution
   sunIntensity    = 1,     --   direct/ambient brightness (0..6)
-  sunAmbientFill  = 0.12,  --   hemisphere fill so shadows aren't pure black
+  sunAmbientFill  = 0.3,   --   hemisphere fill so shadows aren't pure black; lifted
+                           --   from 0.12 so GTAO (ambient-only) has visible contrast
+                           --   (ao_on==ao_off composite measured 2026-09-10)
   sunWarmth       = 1,     --   1 = warm orange (matching starColor), 0 = white
   sunShadows      = true,  -- directional shadow map from the sun
   sunShadowRange  = 8000,  --   half-size of the ortho shadow box (world units)
@@ -187,7 +189,7 @@ Config.gpu = {
   -- PBR finishing: dielectric specular intensity (0..1) and IBL intensity
   -- (scales the irMap/envMap ambient in light/global).
   dielectricSpec = 0.35,
-  ambientEnv     = 1,
+  ambientEnv     = 1.35,  -- IBL scale; lifted 1->1.35 so ambient-only AO reads
 
   -- GTAO screen-space ambient occlusion (see ssao-gtao-implementation.md).
   -- Opt-in: kept OFF by default until a mid-tier GPU measurement proves the
