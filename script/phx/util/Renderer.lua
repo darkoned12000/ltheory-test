@@ -142,7 +142,7 @@ Settings.addFloat ('ssao.radius',      ' - Radius',          500, 0.1, 4000)
 Settings.addFloat ('ssao.intensity',   ' - Intensity',       1, 0, 3)
 Settings.addEnum  ('ssao.directions',  ' - Directions',      2, { '2', '4', '6', '8' })
 Settings.addEnum  ('ssao.steps',       ' - Steps',           2, { '2', '3', '4', '6' })
-Settings.addFloat ('ssao.thickness',   ' - Thickness',       0.25, 0, 1)
+Settings.addFloat ('ssao.thickness',   ' - Thickness',       0.40, 0, 1)
 Settings.addEnum  ('ssao.blur',        ' - Denoise',         2, { '0', '1', '2' })
 Settings.addBool  ('ssao.show',        ' - Show',            false)
 

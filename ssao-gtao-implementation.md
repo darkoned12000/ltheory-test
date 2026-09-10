@@ -40,8 +40,22 @@ matches the `aoRaw` readback on 8/8 sampled mid-band pixels (|err| ≤ 0.033,
 residual is GPU textureLod-mip vs CPU bilinear on the depth taps). Perf
 unchanged: `Render.AO` avg **0.058 ms** @4800×2700 @2x SS on the 7900 XTX (was
 0.056 ms pre-Phase-B) — the two-sided march is bandwidth-absorbed. LUT totals
-+4 KB memory. Phase C (tuning) + Phase D (extras) still pending.
-Phases B/C/D still pending (§8 has the B notes).
++4 KB memory.
+**Phase C (tuning) started** (2026-09-10): in-game feedback confirmed NO halo
+(depth-aware upsample is tight at object edges) but flagged *"overdone at higher
+settings"* and *"black trails in the background"*. Root causes identified, two
+landed:
+1. The distance scale clamp `radius * clamp(dist/1000, 0.2, 4.0)` blew the march
+   footprint up to 4x at chase-cam range — tangents swept ~1.3*R (~2100+ units)
+   across hulls/background. Cap tightened `4.0 -> 2.5`.
+2. Default `thickness` `0.25 -> 0.40` (plan §6's "rim silhouettes read as lit, not
+   flat black rings" lever).
+Also documented: `ssao.show` intentionally previews the RAW AO map — users
+tuning with Show on are looking at the un-baked darkest case and *will* see
+oversaturation; real look needs Show off. `ssao.enable` stays `false` per the
+mid-tier gate. Phase C remaining: default-row eyeball on the asteroid field +
+planet approach (user), then Phase D extras.
+Phase D (extras) still pending (§8 has the B notes).
 
 ---
 

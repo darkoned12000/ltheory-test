@@ -77,8 +77,10 @@ float sliceVisibility (vec3 P, vec3 N, float dist, vec2 uv, float mat) {
 
   /* Effective radius: constant-in-world feels dead at planet scale and blown at
    * ship scale; scale by camera distance (clamped) so the screen footprint of
-   * the falloff stays similar. Metal hulls get a wider, subtler footprint. */
-  float R = aoRadius * clamp(dist / 1000.0, 0.2, 4.0);
+   * the falloff stays similar. Metal hulls get a wider, subtler footprint.
+   * The 2.5 upper clamp (was 4.0) tames the background smear/trails users saw at
+   * chase-cam range — beyond ~2.5x the footprint reads as overdone, not depth. */
+  float R = aoRadius * clamp(dist / 1000.0, 0.2, 2.5);
   if (mat == Material_Metal) R *= 2.0;
 
   /* Per-pixel blue-noise slice rotation + per-frame jitter. */
