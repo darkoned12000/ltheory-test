@@ -1,5 +1,7 @@
 local Boxes = {}
 
+local sin, cos = math.sin, math.cos
+
 -- Box(position, scale, rotation, bevel)
 function Boxes.Box (p, s, r, b)
   return { p = p, s = s, r = r or Vec3d(0, 0, 0), b = b }
@@ -44,13 +46,9 @@ function Boxes.BoxesToMesh (boxes, bevel, res, mirror)
 end
 
 -- Polar(radius function, stacks, slices, capped)
--- Different from Shapes.Prism() bc of construction method;
--- may be better for texturing, not as good for warping.
 function Boxes.Polar (radiusFn, stacks, slices, capped)
   local self = Mesh.Create()
   local fvi = self:getVertexCount() -- first vertex index
-  -- always get one less "side" than #stacks given by fn paramater
-  -- because first & last column of vertexes is duplicated
   slices = slices + 1
 
   for i = 1, stacks do

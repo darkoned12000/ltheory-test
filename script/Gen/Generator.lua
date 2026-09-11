@@ -6,10 +6,12 @@ local function Add (type, weight, fn)
 end
 
 local function Get (type, rng)
-  if not generators[type] then
+  local dist = generators[type]
+  if not dist then
     Log.Error("No generators for asset type '%s' are loaded", type)
+    return nil
   end
-  return generators[type]:sample(rng)
+  return dist:sample(rng)
 end
 
 return {

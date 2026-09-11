@@ -16,8 +16,7 @@ local BATCH_INITIAL = 16384  -- first pool size; grown host-only between frames 
 local current = nil  -- { output = DrawJob[], bodies = void*[], count = int, capacity = int } or nil
 local pool_output, pool_bodies, pool_capacity = nil, nil, 0  -- persistent host-owned pools
 local pending_grow = 0  -- >0 means grow pool before next frame (set on overflow, consumed in begin)
-local queue = nil    -- RenderJobQueue* (lazy init on first flag-on use; persists across frames/reload
-                     -- since this module persists; queue holds no frame state so reload is safe)
+local queue = nil    -- RenderJobQueue* (lazy init on first flag-on use; persists across frames/reload)
 
 function Batcher.isOpen ()
   return current ~= nil
@@ -44,17 +43,20 @@ function Batcher.begin ()
 end
 
 function Batcher.record (material, mesh, entity, lodDistance, split)
-  -- Returns true if recorded (workers fill matrices later), false if caller should draw
-  -- immediately via legacy path. Only called when a batch is open.
+  -- Guard against calls outside an active Batcher session (e.g. shadow passes or multithread off)
+  if not current then return false end
+
   -- onStart/state/body guards stay in Lua: C++ workers cannot check Lua callbacks.
   if material.onStart ~= nil then return false end
   if material.state == nil then return false end
   if entity.body == nil then return false end
+
   local b = current
   if b.count >= b.capacity then
     if pending_grow == 0 then pending_grow = b.capacity * 2 end  -- grow host-only before next frame
     return false  -- overflow this frame: legacy fallback per object (§5.4 capacity rule)
   end
+
   local job = b.output[b.count]
   job.state = material.state
   job.mesh = mesh
@@ -75,7 +77,7 @@ function Batcher.replay ()
   current = nil
   if not b or b.count == 0 then return end
   if queue == nil then
-    queue = RenderJobQueue_ffi.Create((Config.render and Config.render.workers) or 0)  -- 0 = auto; lives for process lifetime
+    queue = RenderJobQueue_ffi.Create((Config.render and Config.render.workers) or 0)  -- 0 = auto
   end
   Profiler.Begin('Render.BatchBuild')
   RenderJobQueue_ffi.BuildBatch(queue, b.bodies, b.output, b.count)  -- workers fill matrices; barrier waits

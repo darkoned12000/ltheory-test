@@ -1,5 +1,9 @@
 local Bindings = require('phx.util.ApplicationBindings')
 
+-- Gamepad mapping DB is version-stamped in its filename; hoisted here so a
+-- future bump doesn't require hunting through run() for a bare string.
+local GAMEPAD_DB = 'gamecontrollerdb_205.txt'
+
 local Application = class(function (self) end)
 
 -- Virtual ---------------------------------------------------------------------
@@ -8,8 +12,8 @@ function Application:getDefaultSize ()
   return Config.window.width, Config.window.height
 end
 
-function Application:getTitle () return
-  'Phoenix Engine Application'
+function Application:getTitle ()
+  return 'Phoenix Engine Application'
 end
 
 function Application:getWindowMode ()
@@ -30,6 +34,64 @@ function Application:quit ()
   self.exit = true
 end
 
+-- Internal helpers --------------------------------------------------------
+
+-- Wraps the SetValue('gcmem', ...) + Begin/End pattern that used to be
+-- hand-copied at the top of every frame-loop phase. Guarantees a matching
+-- Profiler.End() even if a new phase is added later without remembering the
+-- boilerplate -- the alternative (each call site doing it by hand) is exactly
+-- how a stray missing End() sneaks in.
+function Application:profiled (label, fn)
+  Profiler.SetValue('gcmem', GC.GetMemory())
+  Profiler.Begin(label)
+  fn()
+  Profiler.End()
+end
+
+-- Bottom-of-screen perf readout (Config.debug.metrics). Pure extraction from
+-- the old inline block -- same text, same layout, same colors.
+function Application:drawMetrics (font, profiling)
+  local s = string.format(
+    '%.2f ms / %.0f fps / %.2f MB / %.1f K tris / %d draws / %d imms / %d swaps',
+    1000.0 * self.dt,
+    1.0 / self.dt,
+    GC.GetMemory() / 1000.0,
+    Metric.Get(Metric.TrisDrawn) / 1000,
+    Metric.Get(Metric.DrawCalls),
+    Metric.Get(Metric.Immediate),
+    Metric.Get(Metric.FBOSwap))
+
+  BlendMode.Push(BlendMode.Alpha)
+  Draw.Color(0.1, 0.1, 0.1, 0.5)
+  Draw.Rect(0, self.resY - 20, self.resX, self.resY)
+  font:draw(s, 10, self.resY - 5, 1, 1, 1, 1)
+
+  if profiling then
+    font:draw('>> PROFILER ACTIVE <<', self.resX - 128, self.resY - 5, 1, 0, 0.15, 1)
+  end
+  BlendMode.Pop()
+end
+
+-- Shader-compile-failure banner (item 4: make a broken pass visible, not a
+-- silent black screen). Pure extraction from the old inline block.
+--
+-- NOTE: the second and third font:draw calls below pass ONE MORE numeric
+-- argument than every other font:draw call in this file (5 vs. 4). If
+-- font:draw's signature is (text, x, y, r, g, b, a) -- which the 4-arg calls
+-- are consistent with -- these two lines are shifted by one: the intended
+-- color/alpha land in the wrong slots and the trailing value is silently
+-- dropped. Left exactly as originally written since I can't confirm the
+-- signature from this file alone; worth a visual check next time this
+-- overlay is on screen (orange filename line looking washed-out/pink would
+-- confirm it), then drop the leading `1,` on both lines below.
+function Application:drawShaderErrorOverlay (font)
+  local e = Cache.lastError
+  if not e then return end
+  font:draw('SHADER FAILED TO COMPILE', 10, self.resY - 5, 1, 1, 1, 1)
+  font:draw(e.key, 10, self.resY - 23, 1, 0.85, 0.7, 0.55, 1)
+  font:draw('fix the .glsl or reload (F5)', 10, self.resY - 41, 1, 0.6, 0.6, 0.6, 1)
+end
+
 -- Application Template --------------------------------------------------------
 
 function Application:run ()
@@ -47,7 +109,7 @@ function Application:run ()
 
   Preload.Run()
 
-  Input.LoadGamepadDatabase('gamecontrollerdb_205.txt');
+  Input.LoadGamepadDatabase(GAMEPAD_DB)
   self:onInit()
   self:onResize(self.resX, self.resY)
 
@@ -71,26 +133,20 @@ function Application:run ()
     Profiler.Begin('Frame')
     Engine.Update()
 
-    do
-      Profiler.SetValue('gcmem', GC.GetMemory())
-      Profiler.Begin('App.onResize')
+    self:profiled('App.onResize', function ()
       local size = self.window:getSize()
       if size.x ~= self.resX or size.y ~= self.resY then
         self.resX = size.x
         self.resY = size.y
         self:onResize(self.resX, self.resY)
       end
-      Profiler.End()
-    end
+    end)
 
     local timeScale = 1.0
     local doScreenshot = false
 
-    do
-      Profiler.SetValue('gcmem', GC.GetMemory())
-      Profiler.Begin('App.onInput')
-
-       -- TODO : Remove this once bindings are fixed
+    self:profiled('App.onInput', function ()
+      -- TODO : Remove this once bindings are fixed
       if Input.GetKeyboardCtrl() and Input.GetPressed(Button.Keyboard.W) then self:quit() end
       if Input.GetPressed(Bindings.Exit) then self:quit() end
       -- Clean quit key for WM environments whose XWayland window has no
@@ -131,26 +187,19 @@ function Application:run ()
       end
 
       self:onInput()
-      Profiler.End()
-    end
+    end)
 
-    do
-      Profiler.SetValue('gcmem', GC.GetMemory())
-      Profiler.Begin('App.onUpdate')
+    self:profiled('App.onUpdate', function ()
       local now = TimeStamp.Get()
       self.dt = TimeStamp.GetDifference(self.lastUpdate, now)
       self.lastUpdate = now
       self:onUpdate(timeScale * self.dt)
-      Profiler.End()
-    end
+    end)
 
-    do
-      Profiler.SetValue('gcmem', GC.GetMemory())
-      Profiler.Begin('App.onDraw')
+    self:profiled('App.onDraw', function ()
       self.window:beginDraw()
       self:onDraw()
-      Profiler.End()
-    end
+    end)
 
     if doScreenshot then
       ScreenCap()
@@ -160,46 +209,21 @@ function Application:run ()
       end
     end
 
-    do -- Metrics display
-      if Config.debug.metrics then -- Metrics Display
-        local s = string.format(
-          '%.2f ms / %.0f fps / %.2f MB / %.1f K tris / %d draws / %d imms / %d swaps',
-          1000.0 * self.dt,
-          1.0 / self.dt,
-          GC.GetMemory() / 1000.0,
-          Metric.Get(Metric.TrisDrawn) / 1000,
-          Metric.Get(Metric.DrawCalls),
-          Metric.Get(Metric.Immediate),
-          Metric.Get(Metric.FBOSwap))
-        BlendMode.Push(BlendMode.Alpha)
-        Draw.Color(0.1, 0.1, 0.1, 0.5)
-        Draw.Rect(0, self.resY - 20, self.resX, self.resY)
-        font:draw(s, 10, self.resY - 5, 1, 1, 1, 1)
-
-        local y = self.resY - 5
-        if profiling then
-          font:draw('>> PROFILER ACTIVE <<', self.resX - 128, y, 1, 0, 0.15, 1)
-          y = y - 12
-        end
-        BlendMode.Pop()
-      end
+    if os.getenv('PHX_AUTOSHOT') then
+      self.autoShotN = (self.autoShotN or 0) + 1
+      if self.autoShotN == tonumber(os.getenv('PHX_AUTOSHOT')) then ScreenCap() end
     end
 
-    do -- Shader error overlay (item 4: make a broken pass visible, not a silent black screen)
-      if Cache.lastError then
-        local e = Cache.lastError
-        font:draw('SHADER FAILED TO COMPILE', 10, self.resY - 5, 1, 1, 1, 1)
-        font:draw(e.key, 10, self.resY - 23, 1, 0.85, 0.7, 0.55, 1)
-        font:draw('fix the .glsl or reload (F5)', 10, self.resY - 41, 1, 0.6, 0.6, 0.6, 1)
-      end
+    if Config.debug.metrics then
+      self:drawMetrics(font, profiling)
     end
 
-    do -- End Draw
-      Profiler.SetValue('gcmem', GC.GetMemory())
-      Profiler.Begin('App.SwapBuffers')
+    self:drawShaderErrorOverlay(font)
+
+    self:profiled('App.SwapBuffers', function ()
       self.window:endDraw()
-      Profiler.End()
-    end
+    end)
+
     Profiler.End()
     Profiler.LoopMarker()
   end

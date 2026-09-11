@@ -187,6 +187,22 @@ Config.gpu = {
   fogR       = 0.04,     -- haze tint color
   fogG       = 0.06,
   fogB       = 0.13,
+  fogMaxHaze = 0.95,
+  fogTint    = 0.15,
+
+  -- Volumetric nebula/dust (nebula.*, fog-nebula Phase 1). World-space banks,
+  -- correct transmittance (star occlusion), single-scatter inscatter (HG phase
+  -- + irMap ambient), depth-aware reconstruction. Off = renderer never invoked.
+  nebulaEnabled  = false,
+  nebulaQuality  = 'High',     -- Off | Low | Medium | High (steps 8/16/24, evals 2/2/3)
+  nebulaDebug    = 'Composite',      -- Off | Density | Transmittance | Lighting | Steps | Anchors
+  nebulaDensity  = 1,          --   medium master gain (0..4)
+  nebulaRadius   = 12000,      --   max march distance, world units
+  nebulaG        = 0,          --   Henyey-Greenstein phase (phase 1.5 tune-up)
+  nebulaTint     = 0.0,       --   inscatter tint mix (0..1)
+  nebulaTintR    = 1.0,          --     1 = warm (1, .6, .2)
+  nebulaTintG    = 1.0,
+  nebulaTintB    = 1.0,
 
   -- Sun: the warm directional light + ambient fill that makes asteroid fields /
   -- dust lanes read as "lit by the system's star" (System.starDir). Matches the
@@ -222,7 +238,7 @@ Config.gpu = {
 
   -- Texture / edge quality.
   filtering     = 'Aniso', -- Bilinear | Trilinear | Aniso (texture filter quality)
-  superSample   = '2x',    -- Off | 2x | 4x (SSAA: renders the frame over-res)
+  superSample   = 'Off',    -- Off | 2x | 4x (SSAA: renders the frame over-res)
 
   -- Future: antiAlias = 'TAA' — temporal AA (planned, not yet wired).
 }

@@ -13,8 +13,9 @@ local function createDiffuseMap (mesh, source, res)
   shader:stop()
   self:pop()
 
+  self:genMipmap()
   self:setMagFilter(TexFilter.Linear)
-  self:setMinFilter(TexFilter.Linear)
+  self:setMinFilter(TexFilter.LinearMipLinear)
   return self
 end
 

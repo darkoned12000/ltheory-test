@@ -3,14 +3,15 @@ local Joint        = require('Gen.ShapeLib.Joint')
 local JointField   = require('Gen.ShapeLib.JointField')
 local Shape        = require('Gen.ShapeLib.Shape')
 local Style        = require('Gen.ShapeLib.Style')
+
 -- shapes
 local BasicShapes  = require('Gen.ShapeLib.BasicShapes')
 local Cluster      = require('Gen.ShapeLib.Cluster')
 local Scaffolding  = require('Gen.ShapeLib.Scaffolding')
 local Module       = require('Gen.ShapeLib.Module')
 local RandomShapes = require('Gen.ShapeLib.RandomShapes')
--- local ShipWarps    = require('Gen.ShipWarps')
 require('Gen.ShapeLib.Warp')
+
 -- util
 local MathUtil     = require('Gen.MathUtil')
 local Parametric   = require('Gen.ShapeLib.Parametric')
@@ -105,18 +106,12 @@ function ShipFighter.SurfaceDetail(rng, shape)
         rng:getUniformRange(0.05, 0.5))
       )
     elseif rng:chance(0.05) then
-      shape:greeble(rng,
-        1, -- tessellations
-        0.01, 0.03 -- low, high size
-      )
+      shape:greeble(rng, 1, 0.01, 0.03)
     else
-      -- never bevel other details- looks uggo
-      -- but always bevel if no other details applied- sharp corners are bleh
       shape = shape:bevel(rng:getUniformRange(0.1, 1.0))
     end
   else
     local amt = Settings.get('genship.global.surfaceAmt')
-    -- 2 = none
     if type == 3 then
       shape:stellate(amt)
     elseif type == 4 then
@@ -149,7 +144,6 @@ function ShipFighter.EngineSingle(rng)
   local z = math.abs(aabb.upper.z - aabb.lower.z)
   engine:center(0, 0, -z/2.0)
 
-  -- extrude forward-facing face so that it looks more 'attached' to the ship
   local pi = engine:getPolyWithNormal(Vec3d(0, 0, 1))
   local t = math.pi*1.05
   local l = 0.1
@@ -168,7 +162,6 @@ function ShipFighter.TurretSingle(rng)
   turret:scale(r, r, r)
   turret:rotate(0, math.pi/2, 0)
 
-  -- extrude to create gun shape
   local pi = turret:getPolyWithNormal(Vec3d(0, 0, 1))
   local t = math.pi*1.05
   local l = rng:getUniformRange(0.05, 0.5)
@@ -181,12 +174,10 @@ function ShipFighter.TurretSingle(rng)
   local z = math.abs(aabb.upper.z - aabb.lower.z)
   turret:center(0, 0, -z/2.0)
 
-  -- extrude backward-facing face so that it looks more 'attached' to the ship
-  local pi = turret:getPolyWithNormal(Vec3d(0, 0, -1))
-  local t = math.pi*1.05
-  local l = 0.1
+  local piBack = turret:getPolyWithNormal(Vec3d(0, 0, -1))
+  l = 0.1
   r = 0.25
-  turret:extrudePoly(pi, l,
+  turret:extrudePoly(piBack, l,
             Vec3d(r, r, r),
             Vec3d(0, math.sin(t), math.cos(t)))
 
@@ -220,7 +211,6 @@ function ShipFighter.WingMounts(rng, bodyAABB, res)
 end
 
 function ShipFighter.HullStandard(rng)
-  -- settings
   local length, cxy, r, res
   if Settings.get('genship.override') then
     r = Settings.get('genship.standard.hullRadius')
@@ -235,22 +225,20 @@ function ShipFighter.HullStandard(rng)
     res = rng:choose({3, 4, 5, 6, 8, 10, 20, 24, 28, 30})
   end
 
-  -- basic shape
-  local shape, type
-
+  local shape
   local type = Settings.get('genship.standard.hullType')
   if type == 1 or Settings.get('genship.override') == false then
     local dist = Distribution()
-    dist:add(2, 0.85) -- standard prism
-    dist:add(3, 0.15) -- sphere
+    dist:add(2, 0.85)
+    dist:add(3, 0.15)
     type = dist:sample(rng)
   end
 
-  if type == 2 then -- standard prism
+  if type == 2 then
     shape = BasicShapes.Prism(2, res)
     shape:rotate(0, math.pi * 0.5, 0)
     if res % 2 ~= 0 then
-      shape:rotate(0, 0, math.pi * 0.5) -- for bilateral symmetry
+      shape:rotate(0, 0, math.pi * 0.5)
     end
 
     local pi = shape:getPolyWithNormal(Vec3d(0, 0, 1))
@@ -261,7 +249,7 @@ function ShipFighter.HullStandard(rng)
 
     local back = shape:getPolyWithNormal(Vec3d(0, 0, -1))
     shape:extrudePoly(back, 0.3, Vec3d(0.5, 0.5, 0.5), Vec3d(0, math.sin(t), math.cos(t)))
-  elseif type == 3 then -- sphere
+  elseif type == 3 then
     shape = BasicShapes.Ellipsoid(res)
     if res % 2 ~= 0 then
       shape:rotate(math.pi*0.5, 0, 0)
@@ -269,10 +257,9 @@ function ShipFighter.HullStandard(rng)
     shape:scale(1, 1, length)
   end
 
-  -- scaling & detail
   shape:scale(r, r, 1)
 
-  if Settings['genship.override'] then
+  if Settings.get('genship.override') then
     shape = ShipFighter.SurfaceDetail(rng, shape)
   end
 
@@ -281,11 +268,10 @@ end
 
 function ShipFighter.HullSurreal(rng, res)
   local shape
-
   local hullSize
+
   if Settings.get('genship.override') then
     res = math.floor(Settings.get('genship.surreal.hullRes'))
-
     hullSize = Vec3d(
       Settings.get('genship.surreal.hullWidth'),
       Settings.get('genship.surreal.hullHeight'),
@@ -299,7 +285,6 @@ function ShipFighter.HullSurreal(rng, res)
     )
   end
 
-  -- basic shape type
   local bodyType = Settings.get('genship.surreal.bodyType')
   if bodyType == 1 or Settings.get('genship.override') == false then
     local dist = Distribution()
@@ -312,7 +297,6 @@ function ShipFighter.HullSurreal(rng, res)
 
   if bodyType == 2 then
     shape = BasicShapes.Prism(2, res)
-    -- extrude to make hull shape
     shape:rotate(0, math.pi/2, 0)
     if res == 3 then
       shape:rotate(0, 0, math.pi*0.5)
@@ -323,13 +307,11 @@ function ShipFighter.HullSurreal(rng, res)
                   rng:getUniformRange(0.1, 1.0),
                   rng:getUniformRange(0.1, 0.5)),
               Vec3d(0, 0, 1))
-    -- create 'back' portion
     local back = shape:getPolyWithNormal(Vec3d(0, 0, -1))
     shape:extrudePoly(back, 0.3, Vec3d(0.5, 0.5, 0.5), Vec3d(0, 0, -1))
   elseif bodyType == 3 then
     shape = BasicShapes.IrregularPrism(rng)
     shape:rotate(math.pi/2, math.pi/2, 0)
-    -- scale to make hull shape
     shape:scale(1, 1, hullSize.z)
   elseif bodyType == 4 then
     shape = BasicShapes.Ellipsoid(res)
@@ -337,7 +319,6 @@ function ShipFighter.HullSurreal(rng, res)
     shape = BasicShapes.Box()
   end
 
-  -- warps
   shape:scale(hullSize.x, hullSize.y, 1.0)
 
   if rng:chance(0.5) then
@@ -350,25 +331,18 @@ function ShipFighter.HullSurreal(rng, res)
   end
 
   shape = ShipFighter.SurfaceDetail(rng, shape)
-
   return shape
 end
 
 function ShipFighter.WingsSurreal(rng, bodyAABB, ship)
   local wings = Shape()
 
-  local n
-  if Settings.get('genship.override') then
-    n = math.floor(Settings.get('genship.surreal.numWings'))
-  else
-    n = rng:getInt(1, 5)
-  end
+  local n = Settings.get('genship.override')
+            and math.floor(Settings.get('genship.surreal.numWings'))
+            or rng:getInt(1, 5)
 
   for i = 1, n do
-    -- wing shape type
     local baseWing
-
-    -- shape type
     local type = Settings.get('genship.surreal.wingType')
     if type == 1 or Settings.get('genship.override') == false then
       local dist = Distribution()
@@ -416,53 +390,40 @@ function ShipFighter.WingsSurreal(rng, bodyAABB, ship)
       h = Math.Clamp(rng:getExp()*0.2 + 0.8, 0.1, 2)
     end
 
-    -- extrude (x) to make wing shape
     local pi1 = baseWing:getPolyWithNormal(Vec3d(1, 0, 0))
     baseWing:extrudePoly(pi1, l, Vec3d(1, rng:getUniformRange(0.1, 0.5), 1))
-
-    -- random scaling (y, z)
     baseWing:scale(1, h, w)
-    baseWing:tessellate(rng:getInt(0,2))
+    baseWing:tessellate(rng:getInt(0, 1))
 
-    -- clone BEFORE adding decoration to preserve bilateral symmetry
     local wing1 = baseWing:clone()
 
-    -- decoration
     if Settings.get('genship.override') == false or
        (Settings.get('genship.override') and Settings.get('genship.global.randDetail')) then
-      local n = rng:getInt(0, 3)
-      for i = 0, n do
-        local ind = rng:getInt(1, #wing1.polys)
+      local nExt = rng:getInt(0, 3)
+      for k = 0, nExt do
+        local ind = rng:getInt(1, math.max(1, #wing1.polys))
         wing1:extrudePoly(ind, rng:getUniformRange(0.2, 1.0))
       end
     end
 
-    if type ~= 6 then -- often crash or look super uggo on torus
+    if type ~= 6 then
       wing1 = ShipFighter.SurfaceDetail(rng, wing1)
     end
 
-    -- rotate
     local roll = rng:getUniformRange(math.pi* -0.5, math.pi * 0.5)
     local yaw = rng:getUniformRange(0.0, math.pi*0.5)
     wing1:rotate(yaw, 0, roll)
 
-    -- translate
     local posShip = ship.verts[ship:getRandomPoly(rng)[1]]
     local posWing = wing1.verts[wing1:getRandomPoly(rng)[1]]
-    if posWing == nil then
-      print("ShipFighter.WingsSurreal: bad poly on wing")
-      posWing = Vec3d(0, 0, 0)
-    end
-    if posShip == nil then
-      print("ShipFighter.WingsSurreal: bad poly on ship")
-      posShip = Vec3d(0, 0, 0)
-    end
+    posWing = posWing or Vec3d(0, 0, 0)
+    posShip = posShip or Vec3d(0, 0, 0)
+
     local x = posShip.x - posWing.x
     local y = posShip.y - posWing.y
     local z = posShip.z - posWing.z
     wing1:translate(x, y, z)
 
-    -- choose number of wings in this set
     local numWings
     if type ~= 6 then
       local dist = Distribution()
@@ -471,15 +432,12 @@ function ShipFighter.WingsSurreal(rng, bodyAABB, ship)
       dist:add(4, 0.25)
       numWings = dist:sample(rng)
     else
-      -- tori (type 6) don't look good in odd groups
-      -- bc of no guaruntee for bilateral symmetery
       local dist = Distribution()
       dist:add(2, 0.65)
       dist:add(4, 0.35)
       numWings = dist:sample(rng)
     end
 
-    -- clone to create second wing
     local wing2 = wing1:clone()
     wing2:mirror(true, false, false)
 
@@ -504,18 +462,14 @@ end
 
 function ShipFighter.WingsStandard(rng, bodyAABB)
   local shape = Shape()
-
-  local n
-  if Settings.get('genship.override') then
-    n = math.floor(Settings.get('genship.standard.numWings'))
-  else
-    n = rng:getUniformRange(1, 3)
-  end
+  local n = Settings.get('genship.override')
+            and math.floor(Settings.get('genship.standard.numWings'))
+            or rng:getUniformRange(1, 3)
 
   for i = 1, n do
     local wing1 = BasicShapes.Box(0)
-
     local l, w, point
+
     if Settings.get('genship.override') then
       l = Settings.get('genship.standard.wingLength')
       w = Settings.get('genship.standard.wingWidth')
@@ -526,19 +480,13 @@ function ShipFighter.WingsStandard(rng, bodyAABB)
       point = rng:getUniformRange(0.05, 1.0)
     end
 
-    -- scale & extrude to create shape
     wing1:scale(0.1, 0.2, w)
     local pi1 = wing1:getPolyWithNormal(Vec3d(1, 0, 0))
-    wing1:extrudePoly(pi1, l, Vec3d(1.0,
-      rng:getUniformRange(0.05, 0.5), -- thin-ness
-      point)
-    )
+    wing1:extrudePoly(pi1, l, Vec3d(1.0, rng:getUniformRange(0.05, 0.5), point))
 
-    -- make tips pointy
     pi1 = wing1:getPolyWithNormal(Vec3d(1, 0, 0))
     wing1:extrudePoly(pi1, 0.2, Vec3d(1, 0.1, 1))
 
-    -- winglets
     if rng:chance(0.5) then
       local winglet = wing1:clone():scale(0.5, 0.5, 0.5)
       local wingAABB = wing1:getAABB()
@@ -551,24 +499,19 @@ function ShipFighter.WingsStandard(rng, bodyAABB)
       wing1 = ShipFighter.SurfaceDetail(rng, wing1)
     end
 
-    -- rotate & position
-    local xPos
-    if Settings.get('genship.override') then
-      xPos = Settings.get('genship.standard.wingDist')
-    else
-      xPos = bodyAABB.upper.x
-    end
+    local xPos = Settings.get('genship.override')
+                 and Settings.get('genship.standard.wingDist')
+                 or bodyAABB.upper.x
 
     local roll = rng:getUniformRange(math.pi* -0.5, math.pi * 0.5)
     local yaw = rng:getUniformRange(0.0, math.pi*0.5)
     wing1:rotate(yaw, 0, roll)
     wing1:translate(xPos, 0, 0)
 
-    -- decoration
-    wing1:tessellate(rng:getInt(0,2))
+    wing1:tessellate(rng:getInt(0, 1))
     if Settings.get('genship.override') == false or
        (Settings.get('genship.override') and Settings.get('genship.global.randDetail')) then
-      wing1:extrudePoly(rng:getInt(1, #wing1.polys), rng:getUniformRange(0.2, 1.0))
+      wing1:extrudePoly(rng:getInt(1, math.max(1, #wing1.polys)), rng:getUniformRange(0.2, 1.0))
     end
 
     local wing2 = wing1:clone()
@@ -584,7 +527,6 @@ end
 function ShipFighter.WingsTie (rng)
   local shape = Shape()
 
-  -- base shape
   local type = Settings.get('genship.standard.tieWingShape')
   if type == 1 or Settings.get('genship.override') == false then
     type = rng:choose({2, 3, 4, 5})
@@ -602,7 +544,6 @@ function ShipFighter.WingsTie (rng)
     wing = BasicShapes.IrregularPrism(rng, 2, 3)
   end
 
-  -- make wide, flat shape
   local r, split, dist
   if Settings.get('genship.override') then
     r = Settings.get('genship.standard.wingLength')
@@ -611,11 +552,10 @@ function ShipFighter.WingsTie (rng)
   else
     r = rng:getUniformRange(0.5, 3.0)
     dist = rng:getExp()*0.25 + 1.5
-    split = type == 5 -- by default, only split triangle shape
+    split = (type == 5)
   end
   wing:scale(r, 0.1, r)
 
-  -- decoration
   if Settings.get('genship.override') == false or
        (Settings.get('genship.override') and Settings.get('genship.global.randDetail')) then
     local ndist = Distribution()
@@ -626,37 +566,32 @@ function ShipFighter.WingsTie (rng)
     ndist:add(10, 0.10)
     local n = ndist:sample(rng)
     for i = 0, n do
-      local ind = rng:getInt(1, #wing.polys)
+      local ind = rng:getInt(1, math.max(1, #wing.polys))
       local length = 0.5
       local norm = wing:getFaceNormal(wing.polys[ind])
       if norm.y ~= 1 and norm.y ~= -1 then
-        -- don't increase width of wing
         length = rng:getUniformRange(0.1, 1.0)
       end
       wing:extrudePoly(ind, length)
     end
   end
 
-  -- double wing
   if split then
     local wingHalf = wing:clone()
     wingHalf:mirror(false, false, true)
     local gap = r*0.5 + rng:getUniformRange(0.1, 0.5)
     wingHalf:translate(0, 0, -gap)
     wing:add(wingHalf)
-    -- add connector between the two wings
+
     wing:center()
     local bar = BasicShapes.Box()
     bar:scale(rng:getUniformRange(0.05, 0.5), 0.05, gap*0.5)
     wing:add(bar)
   end
 
-  -- rotate
   wing:rotate(math.pi*0.5, 0, math.pi*0.5)
-  -- place
   wing:translate(dist, 0, 0)
 
-  -- add connection
   local connector = BasicShapes.Prism(2, 6)
   connector:rotate(0, 0, math.pi*0.5)
   local cr = 1.0
@@ -665,13 +600,10 @@ function ShipFighter.WingsTie (rng)
   connector:extrudePoly(pi, dist, Vec3d(1, 0.5, 0.5))
   wing:add(connector)
 
-  -- wing decoration
   wing = ShipFighter.SurfaceDetail(rng, wing)
 
-  -- wing warping
   local wingAABB = wing:getAABB()
-  local yMin = wingAABB.lower.y
-  local yMax = wingAABB.upper.y
+  local yMin, yMax = wingAABB.lower.y, wingAABB.upper.y
   if rng:chance(0.5) then
     local dir = rng:choose({1, -1})
     local amt = rng:getUniformRange(0.1, 0.5)
@@ -684,13 +616,11 @@ function ShipFighter.WingsTie (rng)
     )
   end
 
-  -- add second wing
   local wing2 = wing:clone()
   wing2:mirror(true, false, false)
   shape:add(wing):add(wing2)
   return shape
 end
-
 
 -- ] PARTS
 
@@ -702,11 +632,9 @@ function ShipFighter.Surreal (rng)
   local res = rng:choose({3, 4, 6, 8, 10, 20})
   local shape = ShipFighter.HullSurreal(rng, res)
 
-  -- other parts
   local bodyAABB = shape:getAABB()
   shape:add(ShipFighter.WingsSurreal(rng, bodyAABB, shape))
 
-  -- shape = ShipWarps.CurveWarps(rng, shape)
   local rcpRadius = 1.0 / shape:getRadius()
   shape:scale(rcpRadius, rcpRadius, rcpRadius)
 
@@ -714,18 +642,16 @@ function ShipFighter.Surreal (rng)
 end
 
 function ShipFighter.Standard (rng)
-  -- hull
   local res = rng:choose({3, 4, 6, 8, 10, 20})
   local shape = ShipFighter.HullStandard(rng)
 
   local bodyAABB = shape:getAABB()
 
-  -- wings
   local wingType = Settings.get('genship.standard.wingType')
   if wingType == 1 or Settings.get('genship.override') == false then
     local dist = Distribution()
-    dist:add(2, 0.75) -- standard
-    dist:add(3, 0.25) -- tie
+    dist:add(2, 0.75)
+    dist:add(3, 0.25)
     wingType = dist:sample(rng)
   end
   if wingType == 2 then
@@ -734,11 +660,8 @@ function ShipFighter.Standard (rng)
     shape:add(ShipFighter.WingsTie(rng, bodyAABB))
   end
 
-  -- other parts
   shape:add(ShipFighter.WingMounts(rng, bodyAABB, res))
 
-  -- final warps
-  -- shape = ShipWarps.CurveWarps(rng, shape)
   shape = shape:bevel(rng:getUniformRange(0.1, 0.8))
   local rcpRadius = 3.0 / shape:getRadius()
   shape:scale(rcpRadius, rcpRadius, rcpRadius)

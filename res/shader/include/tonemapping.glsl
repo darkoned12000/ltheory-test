@@ -1,11 +1,52 @@
 #ifndef include_tonemapping
 #define include_tonemapping
 
+/* =========================================================================
+ * Color Grading Micro-Knobs (Roadmap #14)
+ * ========================================================================= */
+
+// ITU-R BT.709 Luminance coefficients
+const vec3 LumaCoeffs = vec3(0.2126, 0.7152, 0.0722);
+
+// Saturation: sat = 0.0 (monochrome), sat = 1.0 (neutral), sat > 1.0 (vibrant)
+vec3 applySaturation(vec3 color, float sat) {
+  float luma = dot(color, LumaCoeffs);
+  return mix(vec3(luma), color, sat);
+}
+
+// Contrast: contrast = 1.0 (neutral), contrast > 1.0 (punchy)
+vec3 applyContrast(vec3 color, float contrast) {
+  return max(vec3(0.0), (color - vec3(0.5)) * contrast + vec3(0.5));
+}
+
+// Lift / Gamma / Gain (Shadows / Midtones / Highlights)
+// lift = vec3(0.0), gamma = vec3(1.0), gain = vec3(1.0) is neutral
+vec3 applyLiftGammaGain(vec3 color, vec3 lift, vec3 gamma, vec3 gain) {
+  vec3 c = color * gain + lift * (vec3(1.0) - color);
+  vec3 invGamma = vec3(1.0) / max(gamma, vec3(1e-4));
+  return pow(max(c, vec3(0.0)), invGamma);
+}
+
+// White Balance (Temperature [-1..1] Warm/Cool, Tint [-1..1] Magenta/Green)
+vec3 applyColorTint(vec3 color, float temp, float tint) {
+  vec3 tempAdjust = vec3(1.0 + temp * 0.1, 1.0, 1.0 - temp * 0.1);
+  vec3 tintAdjust = vec3(1.0 + tint * 0.1, 1.0 - tint * 0.1, 1.0 + tint * 0.1);
+  return max(vec3(0.0), color * tempAdjust * tintAdjust);
+}
+
+/* =========================================================================
+ * sRGB Encoding
+ * ========================================================================= */
+
 vec3 encodeSrgb(vec3 c) {
   vec3 lo = 12.92 * c;
   vec3 hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
   return mix(lo, hi, step(vec3(0.0031308), c));
 }
+
+/* =========================================================================
+ * ACES Fitted
+ * ========================================================================= */
 
 vec3 RRTAndODTFit(vec3 v) {
   vec3 a = v * (v + 0.0245786) - 0.000090537;
@@ -28,6 +69,10 @@ vec3 acesFitted(vec3 color) {
   return clamp(color, 0.0, 1.0);
 }
 
+/* =========================================================================
+ * Filmic Hable (Uncharted 2 Operator)
+ * ========================================================================= */
+
 vec3 filmicHable(vec3 x) {
   const float A = 0.15;
   const float B = 0.50;
@@ -41,6 +86,10 @@ vec3 filmicHable(vec3 x) {
   float white = ((W * (A * W + C * B) + D * E) / (W * (A * W + B) + D * F)) - E / F;
   return clamp(curve / white, 0.0, 1.0);
 }
+
+/* =========================================================================
+ * Khronos PBR Neutral
+ * ========================================================================= */
 
 vec3 pbrNeutral(vec3 c) {
   const float startCompression = 0.8 - 0.04;
@@ -57,6 +106,10 @@ vec3 pbrNeutral(vec3 c) {
   float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
   return mix(c, vec3(newPeak), g);
 }
+
+/* =========================================================================
+ * AgX Tonemapper
+ * ========================================================================= */
 
 vec3 agxDefaultContrastApprox(vec3 x) {
   vec3 x2 = x * x;

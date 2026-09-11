@@ -147,9 +147,10 @@ function ShipCapital.Triangle (rng)
   return shape:finalize()
 end
 
+-- Fix: Redirected call to ShipDetail.Plate instead of missing ShipCapital.Plate
 function ShipCapital.Burger(rng)
   local shape = Shape()
-  shape:add(ShipCapital.Plate(rng))
+  shape:add(ShipDetail.Plate(rng))
 
   return shape:finalize()
 end

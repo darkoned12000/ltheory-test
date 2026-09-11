@@ -2,92 +2,189 @@ local Cache = require('phx.util.Cache')
 
 -- TODO JP : Refactor all of this monolithic nonsense into RenderPass objects.
 
+--------------------------------------------------------------------------------
+-- Settings registration + GPU config seeding
+--------------------------------------------------------------------------------
+-- Each row below is the single source of truth for one Settings.add*() entry.
+-- It replaces three things that used to live separately (and could drift out
+-- of sync with each other): the Settings.add* call itself, the flat seed(...)
+-- call that pulled a matching value out of Config.gpu, and -- for enums -- a
+-- hand-written {label = index} lookup table used only to translate a GPU
+-- config string into the right Settings.addEnum index.
+--
+-- Reordering an enum's displayed options (e.g. changing the AO quality list
+-- from {Off,Half,Quarter} to something else) now automatically updates the
+-- index used for GPU seeding, because the index is derived from the SAME
+-- `options` array passed to Settings.addEnum, not a separate copy.
+--
+-- Fields:
+--   kind    : 'bool' | 'float' | 'enum'
+--   key     : Settings key, e.g. 'postfx.bloom.enable'
+--   label   : display label passed straight to Settings.add*
+--   default : default value (enum default is an option INDEX, as before)
+--   gpu     : Config.gpu field name this is seeded from (nil = not GPU-seedable)
+--   min/max : bounds, 'float' only
+--   options : option label array, 'enum' only
+--   optKey  : OPTIONAL function(rawGpuValue) -> option label string. Use this
+--             when the raw Config.gpu value isn't already spelled exactly like
+--             one of `options` (numbers vs. string labels, alternate spellings
+--             like "Anisotropic" vs. "Aniso", etc). Defaults to identity.
+--------------------------------------------------------------------------------
+
+local function idKey (v) return v end
+local function strKey (v) return v ~= nil and tostring(v) or nil end
+
+local SETTINGS = {
+  -- Post FX -------------------------------------------------------------------
+  { kind = 'bool',  key = 'postfx.aberration.enable',   label = 'Aberration',   default = false, gpu = 'aberration' },
+  { kind = 'float', key = 'postfx.aberration.strength', label = ' - Strength',  default = 1, min = 0, max = 1, gpu = 'aberrationStrength' },
+
+  { kind = 'bool',  key = 'postfx.bloom.enable',        label = 'Bloom',        default = true,  gpu = 'bloom' },
+  { kind = 'float', key = 'postfx.bloom.radius',        label = ' - Radius',    default = 48, min = 4, max = 64, gpu = 'bloomRadius' },
+  { kind = 'float', key = 'postfx.bloom.intensity',     label = ' - Intensity', default = 1, min = 0, max = 4, gpu = 'bloomIntensity' },
+  { kind = 'float', key = 'postfx.bloom.threshold',     label = ' - Threshold', default = 1, min = 0, max = 8, gpu = 'bloomThreshold' },
+
+  { kind = 'bool',  key = 'postfx.sharpen.enable',      label = 'Sharpen',      default = true, gpu = 'sharpen' },
+  { kind = 'float', key = 'postfx.sharpen.strength',    label = ' - Strength',  default = 1, min = 0, max = 3, gpu = 'sharpenStrength' },
+  { kind = 'float', key = 'postfx.sharpen.radius',      label = ' - Radius',    default = 2, min = 1, max = 6, gpu = 'sharpenRadius' },
+
+  { kind = 'bool',  key = 'postfx.radialblur.enable',    label = 'RadialBlur',   default = false, gpu = 'radialblur' },
+  { kind = 'float', key = 'postfx.radialblur.strength',  label = ' - Strength',  default = 1, min = 0, max = 1, gpu = 'radialblurStrength' },
+  { kind = 'float', key = 'postfx.radialblur.scanlines', label = ' - Scanlines', default = 1, min = 0, max = 1, gpu = 'radialblurScanlines' },
+
+  { kind = 'bool',  key = 'postfx.tonemap.enable',    label = 'Tonemap',       default = true, gpu = 'tonemap' },
+  { kind = 'enum',  key = 'postfx.tonemap.operator',  label = ' - Operator',   default = 1,
+    options = { 'AgX', 'ACES', 'Filmic', 'Khronos' }, gpu = 'tonemapOperator' },
+  { kind = 'float', key = 'postfx.exposure.ev',       label = ' - Exposure EV', default = 0, min = -4, max = 4, gpu = 'exposureEV' },
+
+  -- Color Grading Micro-Knobs (Roadmap #14)
+  { kind = 'float', key = 'postfx.color.sat',       label = ' - Saturation',  default = 1.0, min = 0, max = 3, gpu = 'colorSat' },
+  { kind = 'float', key = 'postfx.color.contrast',  label = ' - Contrast',    default = 1.0, min = 0, max = 3, gpu = 'colorContrast' },
+  { kind = 'float', key = 'postfx.color.temp',      label = ' - Temp (W/C)',  default = 0.0, min = -1, max = 1, gpu = 'colorTemp' },
+  { kind = 'float', key = 'postfx.color.tint',      label = ' - Tint (M/G)',  default = 0.0, min = -1, max = 1, gpu = 'colorTint' },
+
+  { kind = 'bool',  key = 'postfx.autoexposure.enable', label = 'Auto-Exposure',    default = false, gpu = 'autoExposure' },
+  { kind = 'float', key = 'postfx.autoexposure.key',    label = ' - Key (mid-gray)', default = 0.18, min = 0.02, max = 1, gpu = 'autoExposureKey' },
+  { kind = 'float', key = 'postfx.autoexposure.minEV',  label = ' - Min EV',        default = -6, min = -8, max = 2, gpu = 'autoExposureMinEV' },
+  { kind = 'float', key = 'postfx.autoexposure.maxEV',  label = ' - Max EV',        default = 2, min = -8, max = 4, gpu = 'autoExposureMaxEV' },
+  { kind = 'float', key = 'postfx.autoexposure.speed',  label = ' - Adapt (s)',     default = 0.5, min = 0.05, max = 3, gpu = 'autoExposureSpeed' },
+
+  { kind = 'bool',  key = 'postfx.vignette.enable',   label = 'Vignette',    default = true, gpu = 'vignette' },
+  { kind = 'float', key = 'postfx.vignette.strength', label = ' - Strength', default = 0.25, min = 0, max = 1, gpu = 'vignetteStrength' },
+  { kind = 'float', key = 'postfx.vignette.hardness', label = ' - Hardness', default = 20.0, min = 2, max = 32, gpu = 'vignetteHardness' },
+
+  { kind = 'bool',  key = 'postfx.grain.enable',   label = 'Film Grain', default = false, gpu = 'grain' },
+  { kind = 'float', key = 'postfx.grain.strength', label = ' - Amount',  default = 1, min = 0, max = 4, gpu = 'grainStrength' },
+
+  { kind = 'bool',  key = 'postfx.fog.enable',  label = 'Distance Haze', default = false, gpu = 'fogEnable' },
+  { kind = 'float', key = 'postfx.fog.density', label = ' - Density',    default = 0.000005, min = 0, max = 0.0005, gpu = 'fogDensity' },
+  { kind = 'float', key = 'postfx.fog.tint',    label = ' - Tint',       default = 0.15, min = 0, max = 1, gpu = 'fogTint' },
+  { kind = 'float', key = 'postfx.fog.maxHaze', label = ' - Max Haze',   default = 0.95, min = 0, max = 1, gpu = 'fogMaxHaze' },
+  { kind = 'float', key = 'postfx.fog.r',       label = ' - Color R',    default = 0.04, min = 0, max = 1, gpu = 'fogR' },
+  { kind = 'float', key = 'postfx.fog.g',       label = ' - Color G',    default = 0.06, min = 0, max = 1, gpu = 'fogG' },
+  { kind = 'float', key = 'postfx.fog.b',       label = ' - Color B',    default = 0.13, min = 0, max = 1, gpu = 'fogB' },
+
+  { kind = 'bool',  key = 'nebula.enable',  label = 'Nebula Volume', default = false, gpu = 'nebulaEnabled' },
+  { kind = 'enum',  key = 'nebula.quality', label = ' - Quality',    default = 2,
+    options = { 'Off', 'Low', 'Medium', 'High' }, gpu = 'nebulaQuality' },
+  { kind = 'enum',  key = 'nebula.debug',   label = ' - Debug View', default = 1,
+    options = { 'Off', 'Density', 'Transmittance', 'Lighting', 'Steps', 'Anchors' }, gpu = 'nebulaDebug' },
+  { kind = 'float', key = 'nebula.density', label = ' - Density',    default = 1, min = 0, max = 4, gpu = 'nebulaDensity' },
+  { kind = 'float', key = 'nebula.radius',  label = ' - Radius',     default = 12000, min = 500, max = 40000, gpu = 'nebulaRadius' },
+  { kind = 'float', key = 'nebula.g',       label = ' - Phase g',    default = 0, min = -1, max = 1, gpu = 'nebulaG' },
+  { kind = 'float', key = 'nebula.tint',    label = ' - Glow Tint',  default = 0.0, min = 0, max = 1, gpu = 'nebulaTint' },
+  { kind = 'float', key = 'nebula.tintR',   label = '   Color R',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintR' },
+  { kind = 'float', key = 'nebula.tintG',   label = '   Color G',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintG' },
+  { kind = 'float', key = 'nebula.tintB',   label = '   Color B',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintB' },
+
+  -- Core render -----------------------------------------------------------
+  { kind = 'float', key = 'render.fovY',        label = 'FOV',           default = 70, min = 50, max = 100 },
+  { kind = 'enum',  key = 'render.superSample', label = 'SuperSampling', default = 2,
+    options = { 'Off', '2x', '4x' }, gpu = 'superSample' },
+  { kind = 'bool',  key = 'render.wireframe',   label = 'Wireframe',             default = false },
+  { kind = 'bool',  key = 'render.cullface',    label = 'Backface Culling',      default = true },
+  { kind = 'bool',  key = 'render.showBuffers', label = 'Show Deferred Buffers', default = false },
+  { kind = 'enum',  key = 'render.textureFilter', label = 'Texture Filter', default = 3,
+    options = { 'Bilinear', 'Trilinear', 'Trilinear + Aniso' }, gpu = 'filtering',
+    optKey = function (v)
+      if v == 'Aniso' or v == 'Anisotropic' then return 'Trilinear + Aniso' end
+      return v
+    end },
+  { kind = 'float', key = 'render.shadow.radius', label = 'Shadow Radius (PCF)', default = 2, min = 0, max = 8 },
+  { kind = 'float', key = 'render.shadow.bias',   label = 'Shadow Bias',         default = 0.001, min = -0.01, max = 0.1 },
+  { kind = 'float', key = 'render.shadow.scale',  label = 'Shadow Dist Scale',   default = 0.0005, min = 0, max = 0.01 },
+
+  { kind = 'bool',  key = 'render.sun.enable',    label = 'Sun Light',       default = true, gpu = 'sunLight' },
+  { kind = 'float', key = 'render.sun.intensity', label = ' - Intensity',    default = 1, min = 0, max = 6, gpu = 'sunIntensity' },
+  { kind = 'float', key = 'render.sun.fill',      label = ' - Ambient Fill', default = 0.30, min = 0, max = 1, gpu = 'sunAmbientFill' },
+  { kind = 'float', key = 'render.sun.warmth',    label = ' - Warmth',       default = 1, min = 0, max = 1, gpu = 'sunWarmth' },
+  { kind = 'bool',  key = 'render.sun.shadows',   label = ' - Shadows',      default = true, gpu = 'sunShadows' },
+  { kind = 'float', key = 'render.sun.shadowRange', label = ' - Shadow Range', default = 8000, min = 500, max = 20000, gpu = 'sunShadowRange' },
+  { kind = 'enum',  key = 'render.sun.shadowSize',  label = ' - Shadow Res',   default = 4,
+    options = { '256', '512', '1024', '2048' }, gpu = 'sunShadowSize', optKey = strKey },
+
+  { kind = 'bool',  key = 'render.vsync', label = 'VSync', default = true },
+
+  { kind = 'float', key = 'lighting.ambientEnv', label = 'Environment Light',   default = 1.35, min = 0, max = 3, gpu = 'ambientEnv' },
+  { kind = 'float', key = 'lighting.specular',   label = 'Dielectric Specular', default = 0.35, min = 0, max = 1, gpu = 'dielectricSpec' },
+
+  -- SSAO / GTAO -------------------------------------------------------------
+  { kind = 'bool',  key = 'ssao.enable',      label = 'Ambient Occlusion', default = false, gpu = 'aoEnabled' },
+  { kind = 'enum',  key = 'ssao.quality',     label = ' - Resolution',     default = 2,
+    options = { 'Off', 'Half', 'Quarter' }, gpu = 'aoQuality' },
+  { kind = 'float', key = 'ssao.radius',      label = ' - Radius',         default = 500, min = 0.1, max = 4000, gpu = 'aoRadius' },
+  { kind = 'float', key = 'ssao.intensity',   label = ' - Intensity',      default = 1.5, min = 0, max = 3, gpu = 'aoIntensity' },
+  { kind = 'float', key = 'ssao.fillOcclude', label = ' - Fill Occlude',   default = 1, min = 0, max = 1, gpu = 'fillOcclude' },
+  { kind = 'enum',  key = 'ssao.directions',  label = ' - Directions',     default = 2,
+    options = { '2', '4', '6', '8' }, gpu = 'aoDirections', optKey = strKey },
+  { kind = 'enum',  key = 'ssao.steps',       label = ' - Steps',          default = 2,
+    options = { '2', '3', '4', '6' }, gpu = 'aoSteps', optKey = strKey },
+  { kind = 'float', key = 'ssao.thickness',   label = ' - Thickness',      default = 0.25, min = 0, max = 1, gpu = 'aoThickness' },
+  { kind = 'enum',  key = 'ssao.blur',        label = ' - Denoise',        default = 2,
+    options = { '0', '1', '2' }, gpu = 'aoBlur', optKey = strKey },
+  { kind = 'bool',  key = 'ssao.show',        label = ' - Show',           default = false },
+}
+
+for _, s in ipairs(SETTINGS) do
+  if s.kind == 'bool' then
+    Settings.addBool(s.key, s.label, s.default)
+  elseif s.kind == 'float' then
+    Settings.addFloat(s.key, s.label, s.default, s.min, s.max)
+  elseif s.kind == 'enum' then
+    Settings.addEnum(s.key, s.label, s.default, s.options)
+    s.optionIndex = {}
+    for i, name in ipairs(s.options) do s.optionIndex[name] = i end
+  end
+end
+
+local function seedFromGpu (gpu)
+  for _, s in ipairs(SETTINGS) do
+    if s.gpu and Settings.exists(s.key) then
+      local raw = gpu[s.gpu]
+      if raw ~= nil then
+        if s.kind == 'enum' then
+          local optKey = s.optKey or idKey
+          local idx = s.optionIndex[optKey(raw)]
+          if idx then Settings.set(s.key, idx) end
+        else
+          Settings.set(s.key, raw)
+        end
+      end
+    end
+  end
+end
+
+--------------------------------------------------------------------------------
+
 local Renderer = class(function (self)
   self.ds = 4
 
-  -- GPU portability: seed the whole graphics surface from Config.gpu if present,
-  -- so a weak machine can drop expensive passes (bloom/sharpen/tonemap/...), an
-  -- HDR look can be baked from config instead of the debug-window sliders, and a
-  -- future in-game Settings screen will present exactly this set. Guarded by
-  -- Settings.exists() so it's inert until Config.App.lua has defined the block;
-  -- a key left nil (or absent) keeps the built-in/debug-window default.
-  local gpu = (Config and Config.gpu) or {}
-  local function seed (key, value)
-    if Settings.exists(key) and value ~= nil then Settings.set(key, value) end
+  seedFromGpu((Config and Config.gpu) or {})
+
+  if Settings.exists('render.vsync') and Config and Config.render and Config.render.vsync ~= nil then
+    Settings.set('render.vsync', Config.render.vsync)
   end
 
-  seed('postfx.bloom.enable',        gpu.bloom)
-  seed('postfx.bloom.radius',        gpu.bloomRadius)
-  seed('postfx.bloom.intensity',     gpu.bloomIntensity)
-  seed('postfx.bloom.threshold',     gpu.bloomThreshold)
-  seed('postfx.sharpen.enable',      gpu.sharpen)
-  seed('postfx.sharpen.strength',    gpu.sharpenStrength)
-  seed('postfx.sharpen.radius',      gpu.sharpenRadius)
-  seed('postfx.tonemap.enable',      gpu.tonemap)
-  seed('postfx.exposure.ev',         gpu.exposureEV)
-  seed('postfx.autoexposure.enable', gpu.autoExposure)
-  seed('postfx.autoexposure.key',    gpu.autoExposureKey)
-  seed('postfx.autoexposure.minEV',  gpu.autoExposureMinEV)
-  seed('postfx.autoexposure.maxEV',  gpu.autoExposureMaxEV)
-  seed('postfx.autoexposure.speed',  gpu.autoExposureSpeed)
-  seed('postfx.vignette.enable',     gpu.vignette)
-  seed('postfx.vignette.strength',   gpu.vignetteStrength)
-  seed('postfx.vignette.hardness',   gpu.vignetteHardness)
-  seed('postfx.grain.enable',        gpu.grain)
-  seed('postfx.grain.strength',      gpu.grainStrength)
-  seed('postfx.aberration.enable',   gpu.aberration)
-  seed('postfx.aberration.strength', gpu.aberrationStrength)
-  seed('postfx.radialblur.enable',   gpu.radialblur)
-  seed('postfx.radialblur.strength', gpu.radialblurStrength)
-  seed('postfx.radialblur.scanlines', gpu.radialblurScanlines)
-  seed('postfx.fog.enable',          gpu.fogEnable)
-  seed('postfx.fog.density',         gpu.fogDensity)
-  seed('postfx.fog.tint',            gpu.fogTint)
-  seed('postfx.fog.maxHaze',         gpu.fogMaxHaze)
-  seed('postfx.fog.r',               gpu.fogR)
-  seed('postfx.fog.g',               gpu.fogG)
-  seed('postfx.fog.b',               gpu.fogB)
-
-  seed('render.sun.enable',    gpu.sunLight)
-  seed('render.sun.intensity', gpu.sunIntensity)
-  seed('render.sun.fill',      gpu.sunAmbientFill)
-  seed('render.sun.warmth',    gpu.sunWarmth)
-  seed('render.sun.shadows',   gpu.sunShadows)
-  seed('render.sun.shadowRange', gpu.sunShadowRange)
-  local sunShadowIdx = { ['256'] = 1, ['512'] = 2, ['1024'] = 3, ['2048'] = 4 }
-  seed('render.sun.shadowSize', sunShadowIdx[gpu.sunShadowSize])
-
-  seed('lighting.specular',  gpu.dielectricSpec)
-  seed('lighting.ambientEnv', gpu.ambientEnv)
-
-  local aoQIdx    = { Off = 1, Half = 2, Quarter = 3 }
-  local aoDirIdx  = { ['2'] = 1, ['4'] = 2, ['6'] = 3, ['8'] = 4 }
-  local aoStepIdx = { ['2'] = 1, ['3'] = 2, ['4'] = 3, ['6'] = 4 }
-  local aoBlurIdx = { ['0'] = 1, ['1'] = 2, ['2'] = 3 }
-  seed('ssao.enable',    gpu.aoEnabled)
-  seed('ssao.quality',   aoQIdx[gpu.aoQuality])
-  seed('ssao.radius',    gpu.aoRadius)
-  seed('ssao.intensity', gpu.aoIntensity)
-  seed('ssao.fillOcclude', gpu.fillOcclude)
-  seed('ssao.directions', aoDirIdx[gpu.aoDirections])
-  seed('ssao.steps',     aoStepIdx[gpu.aoSteps])
-  seed('ssao.thickness', gpu.aoThickness)
-  seed('ssao.blur',      aoBlurIdx[gpu.aoBlur])
-
-  local filterIdx = { Bilinear = 1, Trilinear = 2, Aniso = 3, Anisotropic = 3 }
-  seed('render.textureFilter', filterIdx[gpu.filtering])
-
-  local ssIdx = { ['Off'] = 1, ['2x'] = 2, ['4x'] = 3 }
-  seed('render.superSample', ssIdx[gpu.superSample])
-
-  local ops = { AgX = 1, ACES = 2, Filmic = 3, Khronos = 4 }
-  seed('postfx.tonemap.operator', ops[gpu.tonemapOperator])
-
-  -- VSync is a window/swap-interval setting (Config.render.vsync), applied live
-  -- by GameView; seed it so the debug control matches the window's startup state.
-  seed('render.vsync', (Config and Config.render) and Config.render.vsync)
-
-  -- Exposure meter / auto-exposure state (see Renderer:meter / autoExposureEV).
   self.exposure   = { avg = 0, max = 0, over = 0, lit = 0 }
   self.meterLast  = 0
   self.frameSeed  = 0
@@ -96,74 +193,6 @@ end)
 
 local colorFormat = TexFormat.RGBA16F
 local depthFormat = TexFormat.Depth32F
-
-Settings.addBool  ('postfx.aberration.enable',   'Aberration',  false)
-Settings.addFloat ('postfx.aberration.strength', ' - Strength', 1, 0, 1)
-Settings.addBool  ('postfx.bloom.enable',        'Bloom',       true)
-Settings.addFloat ('postfx.bloom.radius',        ' - Radius',   48, 4, 64)
-Settings.addFloat ('postfx.bloom.intensity',     ' - Intensity', 1, 0, 4)
-Settings.addFloat ('postfx.bloom.threshold',     ' - Threshold', 1, 0, 8)
-Settings.addBool  ('postfx.sharpen.enable',   'Sharpen',     true)
-Settings.addFloat ('postfx.sharpen.strength', ' - Strength', 1, 0, 3)
-Settings.addFloat ('postfx.sharpen.radius',   ' - Radius',   2, 1, 6)
-Settings.addBool  ('postfx.radialblur.enable',   'RadialBlur',  false)
-Settings.addFloat ('postfx.radialblur.strength', ' - Strength', 1, 0, 1)
-Settings.addFloat ('postfx.radialblur.scanlines', ' - Scanlines', 1, 0, 1)
-Settings.addBool  ('postfx.tonemap.enable',      'Tonemap',     true)
-Settings.addEnum  ('postfx.tonemap.operator',    ' - Operator', 1, { 'AgX', 'ACES', 'Filmic', 'Khronos' })
-Settings.addFloat ('postfx.exposure.ev',         ' - Exposure EV', 0, -4, 4)
-Settings.addBool  ('postfx.autoexposure.enable', 'Auto-Exposure', false)
-Settings.addFloat ('postfx.autoexposure.key',    ' - Key (mid-gray)', 0.18, 0.02, 1)
-Settings.addFloat ('postfx.autoexposure.minEV',  ' - Min EV', -6, -8, 2)
-Settings.addFloat ('postfx.autoexposure.maxEV',  ' - Max EV', 2, -8, 4)
-Settings.addFloat ('postfx.autoexposure.speed',  ' - Adapt (s)', 0.5, 0.05, 3)
-Settings.addBool  ('postfx.vignette.enable',     'Vignette',    true)
-Settings.addFloat ('postfx.vignette.strength',   ' - Strength', 0.25, 0, 1)
-Settings.addFloat ('postfx.vignette.hardness',   ' - Hardness', 20.0, 2, 32)
-Settings.addBool  ('postfx.grain.enable',        'Film Grain',  false)
-Settings.addFloat ('postfx.grain.strength',      ' - Amount',   1, 0, 4)
-Settings.addBool  ('postfx.fog.enable',   'Distance Haze',   false)
-Settings.addFloat ('postfx.fog.density',  ' - Density',    0.000005, 0, 0.0005)
-Settings.addFloat ('postfx.fog.tint',     ' - Tint',       0.15, 0, 1)
-Settings.addFloat ('postfx.fog.maxHaze',  ' - Max Haze',   0.95, 0, 1)
-Settings.addFloat ('postfx.fog.r',        ' - Color R',    0.04, 0, 1)
-Settings.addFloat ('postfx.fog.g',        ' - Color G',    0.06, 0, 1)
-Settings.addFloat ('postfx.fog.b',        ' - Color B',    0.13, 0, 1)
-
-Settings.addFloat ('render.fovY',        'FOV',                   70, 50, 100)
-Settings.addEnum  ('render.superSample', 'SuperSampling',         2, { 'Off', '2x', '4x' })
-Settings.addBool  ('render.wireframe',   'Wireframe',             false)
-Settings.addBool  ('render.cullface',    'Backface Culling',      true)
-Settings.addBool  ('render.showBuffers', 'Show Deferred Buffers', false)
-Settings.addEnum  ('render.textureFilter', 'Texture Filter', 3, { 'Bilinear', 'Trilinear', 'Trilinear + Aniso' })
-Settings.addFloat ('render.shadow.radius', 'Shadow Radius (PCF)',   2, 0, 8)
-Settings.addFloat ('render.shadow.bias',   'Shadow Bias',           0.001, -0.01, 0.1)
-Settings.addFloat ('render.shadow.scale',  'Shadow Dist Scale',     0.0005, 0, 0.01)
-Settings.addBool  ('render.sun.enable',    'Sun Light',             true)
-Settings.addFloat ('render.sun.intensity', ' - Intensity',          1, 0, 6)
-Settings.addFloat ('render.sun.fill',      ' - Ambient Fill',       0.30, 0, 1)
-Settings.addFloat ('render.sun.warmth',    ' - Warmth',             1, 0, 1)
-Settings.addBool  ('render.sun.shadows',   ' - Shadows',            true)
-Settings.addFloat ('render.sun.shadowRange', ' - Shadow Range',     8000, 500, 20000)
-Settings.addEnum  ('render.sun.shadowSize', ' - Shadow Res',        4, { '256', '512', '1024', '2048' })
-Settings.addBool  ('render.vsync',       'VSync',                 true)
-
-Settings.addFloat ('lighting.ambientEnv', 'Environment Light',     1.35, 0, 3)
-Settings.addFloat ('lighting.specular',   'Dielectric Specular',   0.35, 0, 1)
-
--- Screen-space ambient occlusion (GTAO). Default OFF until the mid-tier perf
--- gate in ssao-gtao-implementation.md is measured; the debug section is
--- auto-built from the 'ssao' prefix (first key segment) by DebugWindow.
-Settings.addBool  ('ssao.enable',      'Ambient Occlusion',  false)
-Settings.addEnum  ('ssao.quality',     ' - Resolution',      2, { 'Off', 'Half', 'Quarter' })
-Settings.addFloat ('ssao.radius',      ' - Radius',          500, 0.1, 4000)
-Settings.addFloat ('ssao.intensity',   ' - Intensity',       1.5, 0, 3)
-Settings.addFloat ('ssao.fillOcclude', ' - Fill Occlude',    1, 0, 1)
-Settings.addEnum  ('ssao.directions',  ' - Directions',      2, { '2', '4', '6', '8' })
-Settings.addEnum  ('ssao.steps',       ' - Steps',           2, { '2', '3', '4', '6' })
-Settings.addFloat ('ssao.thickness',   ' - Thickness',       0.25, 0, 1)
-Settings.addEnum  ('ssao.blur',        ' - Denoise',         2, { '0', '1', '2' })
-Settings.addBool  ('ssao.show',        ' - Show',            false)
 
 local function createBuffer (sx, sy, format)
   local self = Tex2D.Create(sx, sy, format)
@@ -177,24 +206,10 @@ local function createBuffer (sx, sy, format)
   return self
 end
 
-function Renderer:aberration (strength)
-  Draw.Color(1, 1, 1, 1)
-  local shader = Cache.Shader('ui', 'filter/aberration')
-  if not shader then return end   -- item 4: skip broken pass; buffer push/pop stay balanced below
-  self.buffer1:pushLevel(self.level)
-  shader:start()
-    Shader.SetFloat('strength', strength)
-    Shader.SetTex2D('src', self.buffer0)
-    Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.sx, self.sy)
-  shader:stop()
-  self.buffer1:pop()
-  self:swap()
-end
-
+--------------------------------------------------------------------------------
 function Renderer:applyFilter (frag, onSetVars)
   local shader = Cache.Shader('ui', 'filter/' .. frag)
-  if not shader then return end   -- item 4: skip broken pass; buffer push/pop stay balanced below
+  if not shader then return end
   self.buffer1:pushLevel(self.level)
   shader:start()
     Shader.SetTex2D('src', self.buffer0)
@@ -203,6 +218,106 @@ function Renderer:applyFilter (frag, onSetVars)
     Draw.Rect(0, 0, self.sx, self.sy)
   shader:stop()
   self.buffer1:pop()
+  self:swap()
+end
+
+function Renderer:aberration (strength)
+  Draw.Color(1, 1, 1, 1)
+  self:applyFilter('aberration', function ()
+    Shader.SetFloat('strength', strength)
+  end)
+end
+
+function Renderer:tonemap ()
+  self:applyFilter('tonemap', function ()
+    Shader.SetInt('texOp', Settings.get('postfx.tonemap.operator') or 1)
+    local ev = Settings.get('postfx.exposure.ev') or 0
+    if Settings.get('postfx.autoexposure.enable') then
+      ev = ev + self:autoExposureEV()
+    end
+    Shader.SetFloat('exposure', 2.0 ^ ev)
+
+    -- Color Grading Micro-Knobs (Roadmap #14)
+    Shader.SetFloat('colorSat',      Settings.get('postfx.color.sat') or 1.0)
+    Shader.SetFloat('colorContrast', Settings.get('postfx.color.contrast') or 1.0)
+    Shader.SetFloat('colorTemp',     Settings.get('postfx.color.temp') or 0.0)
+    Shader.SetFloat('colorTint',     Settings.get('postfx.color.tint') or 0.0)
+  end)
+end
+
+function Renderer:vignette ()
+  local strength = Settings.get('postfx.vignette.strength') or 0.5
+  local hardness = Settings.get('postfx.vignette.hardness') or 8.0
+  self:applyFilter('vignette', function ()
+    Shader.SetFloat('strength', strength)
+    Shader.SetFloat('hardness', hardness)
+  end)
+end
+
+function Renderer:grain (strength)
+  self:applyFilter('grain', function ()
+    Shader.SetFloat('strength', strength)
+    Shader.SetFloat('time', (tonumber(Time.GetRaw()) or 0) * 0.001)
+    Shader.SetFloat2('size', self.sx, self.sy)
+  end)
+end
+
+function Renderer:colorGrade (curve1, curve2)
+  self:applyFilter('colorgrade', function ()
+    Shader.SetTex1D('curve1', curve1)
+    Shader.SetTex1D('curve2', curve2)
+  end)
+end
+
+function Renderer:blur (dst, src, dx, dy, radius)
+  local shader = Cache.Shader('ui', 'filter/blur')
+  if not shader then return end
+  local size = src:getSize()
+  dst:push()
+  shader:start()
+    Shader.SetFloat('variance', 0.2 * radius)
+    Shader.SetFloat2('dir', dx, dy)
+    Shader.SetFloat2('size', size.x, size.y)
+    Shader.SetInt('radius', radius)
+    Shader.SetTex2D('src', src)
+    Draw.Color(1, 1, 1, 1)
+    Draw.Rect(0, 0, size.x, size.y)
+  shader:stop()
+  dst:pop()
+end
+
+function Renderer:sharpen (radius, sigma, strength)
+  Draw.Color(1, 1, 1, 1)
+
+  do -- Blur
+    local shader = Cache.Shader('ui', 'filter/blur2d')
+    if shader then
+      self.buffer2:pushLevel(self.level)
+      shader:start()
+        Shader.SetInt('radius', radius)
+        Shader.SetFloat('sigma', sigma)
+        Shader.SetFloat2('size', self.sx, self.sy)
+        Shader.SetTex2D('src', self.buffer0)
+        Draw.Rect(0, 0, self.sx, self.sy)
+      shader:stop()
+      self.buffer2:pop()
+    end
+  end
+
+  do -- High pass blend
+    local shader = Cache.Shader('ui', 'filter/sharpen')
+    if shader then
+      self.buffer1:pushLevel(self.level)
+      shader:start()
+        Shader.SetFloat('strength', strength)
+        Shader.SetTex2D('src', self.buffer0)
+        Shader.SetTex2D('srcBlur', self.buffer2)
+        Draw.Rect(0, 0, self.sx, self.sy)
+      shader:stop()
+      self.buffer1:pop()
+    end
+  end
+
   self:swap()
 end
 
@@ -217,15 +332,13 @@ function Renderer:bloom (radius)
   local baseW = self.resX / self.ds
   local baseH = self.resY / self.ds
 
-  -- Pyramid budget: few enough levels that every level keeps a 2x2 block for
-  -- the Karis downsample, and radius steers how many octaves get kept.
   local mips = 1
   while mips < 12 and math.floor(baseW / (2 ^ mips)) >= 2 and math.floor(baseH / (2 ^ mips)) >= 2 do
     mips = mips + 1
   end
   local levels = math.max(2, math.min(mips, 4 + math.floor(radius / 8)))
 
-  do -- Prefilter (guarded, item 4): soft-knee threshold of the HDR scene -> level 0
+  do -- Prefilter
     local shader = Cache.Shader('ui', 'filter/bloompre')
     if shader then
       A:pushLevel(0)
@@ -239,7 +352,7 @@ function Renderer:bloom (radius)
     end
   end
 
-  do -- Downsample (guarded, item 4): Karis-weighted average, one level per octave
+  do -- Downsample
     local shader = Cache.Shader('ui', 'filter/bloomdown')
     for i = 1, levels - 1 do
       if shader then
@@ -258,7 +371,7 @@ function Renderer:bloom (radius)
     end
   end
 
-  do -- Seed the accumulation chain with the coarsest level
+  do -- Seed accumulation
     local shader = Cache.Shader('ui', 'filter/identity')
     if shader then
       local w = math.floor(baseW / (2 ^ (levels - 1)))
@@ -274,7 +387,7 @@ function Renderer:bloom (radius)
     end
   end
 
-  do -- Progressive upsample (guarded, item 4): blend each level with the accumulated looser bloom
+  do -- Progressive upsample
     local shader = Cache.Shader('ui', 'filter/bloomup')
     for i = levels - 2, 0, -1 do
       if shader then
@@ -296,7 +409,7 @@ function Renderer:bloom (radius)
     end
   end
 
-  do -- Composite bloom back into the HDR scene (additive, pre-tonemap)
+  do -- Composite bloom
     local shader = Cache.Shader('ui', 'filter/bloomcomposite')
     if shader then
       B:setMipRange(0, 0)
@@ -313,43 +426,10 @@ function Renderer:bloom (radius)
     end
   end
 
-  -- Leave the pyramid textures unrestricted for the next frame
   A:setMipRange(0, 0)
   B:setMipRange(0, 0)
   A:setMinFilter(TexFilter.Linear)
   B:setMinFilter(TexFilter.Linear)
-end
-
-function Renderer:blur (dst, src, dx, dy, radius)
-  local shader = Cache.Shader('ui', 'filter/blur')
-  if not shader then return end   -- item 4: skip broken pass; dst push/pop stay balanced below
-  local size = src:getSize()
-  dst:push()
-  shader:start()
-    Shader.SetFloat('variance', 0.2 * radius)
-    Shader.SetFloat2('dir', dx, dy)
-    Shader.SetFloat2('size', size.x, size.y)
-    Shader.SetInt('radius', radius)
-    Shader.SetTex2D('src', src)
-    Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, size.x, size.y)
-  shader:stop()
-  dst:pop()
-end
-
-function Renderer:colorGrade (curve1, curve2)
-  local shader = Cache.Shader('ui', 'filter/colorgrade')
-  if not shader then return end   -- item 4: skip broken pass; buffer push/pop/swap stay balanced below
-  self.buffer1:pushLevel(self.level)
-  shader:start()
-    Shader.SetTex2D('src', self.buffer0)
-    Shader.SetTex1D('curve1', curve1)
-    Shader.SetTex1D('curve2', curve2)
-    Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.sx, self.sy)
-  shader:stop()
-  self.buffer1:pop()
-  self:swap()
 end
 
 function Renderer:free ()
@@ -364,27 +444,32 @@ function Renderer:free ()
     self.zBufferL:free()
     self.meterTex:free()
   end
+
+  if self.volView then
+    self.volView:free()
+    self.volView = nil
+  end
+  if self.texAnchors then
+    self.texAnchors:free()
+    self.texAnchors = nil
+  end
+  if self.anchorBytes then
+    self.anchorBytes:free()
+    self.anchorBytes = nil
+  end
 end
 
 function Renderer:present (x, y, sx, sy, useMips)
   Draw.Color(1, 1, 1, 1)
   RenderState.PushAllDefaults()
-  -- NOTE : core-profile — program 0 has no fixed-function fallback, so the
-  -- final window blit must run through an explicit passthrough shader.
   local shader = Cache.Shader('ui', 'filter/identity')
   if not shader then
-    RenderState.PopAll()   -- item 4: balance PushAllDefaults above; render black this frame instead of crashing on a broken identity pass
-    return end
+    RenderState.PopAll()
+    return
+  end
   shader:start()
-  if false and useMips then
-    self.buffer0:genMipmap()
-    self.buffer0:setMinFilter(TexFilter.LinearMipLinear)
-    self.buffer0:draw(x, y + sy, sx, -sy)
-    self.buffer0:setMinFilter(TexFilter.Linear)
-  else
     Shader.SetTex2D('src', self.buffer0)
     self.buffer0:draw(x, y + sy, sx, -sy)
-  end
   shader:stop()
   RenderState.PopAll()
 end
@@ -394,49 +479,16 @@ function Renderer:presentAll (x, y, sx, sy)
   RenderState.PushAllDefaults()
   local shader = Cache.Shader('ui', 'filter/identity')
   if not shader then
-    RenderState.PopAll()   -- item 4: balance PushAllDefaults above; render black this frame instead of crashing on a broken identity pass
-    return end
-  self.buffer0:draw(x, y + sy / 2, sx / 2, -sy / 2)
-  self.buffer1:draw(x + sx / 2, y + sy / 2, sx / 2, -sy / 2)
-  self.buffer2:draw(x, y + sy, sx / 2, -sy / 2)
-  self.zBufferL:draw(x + sx / 2, y + sy, sx / 2, -sy / 2)
+    RenderState.PopAll()
+    return
+  end
+  shader:start()
+    self.buffer0:draw(x, y + sy / 2, sx / 2, -sy / 2)
+    self.buffer1:draw(x + sx / 2, y + sy / 2, sx / 2, -sy / 2)
+    self.buffer2:draw(x, y + sy, sx / 2, -sy / 2)
+    self.zBufferL:draw(x + sx / 2, y + sy, sx / 2, -sy / 2)
   shader:stop()
   RenderState.PopAll()
-end
-
-function Renderer:sharpen (radius, sigma, strength)
-  Draw.Color(1, 1, 1, 1)
-
-  do -- Blur (guarded, item 4)
-    local shader = Cache.Shader('ui', 'filter/blur2d')
-    if shader then
-      self.buffer2:pushLevel(self.level)
-      shader:start()
-        Shader.SetInt('radius', radius)
-        Shader.SetFloat('sigma', sigma)
-        Shader.SetFloat2('size', self.sx, self.sy)
-        Shader.SetTex2D('src', self.buffer0)
-        Draw.Rect(0, 0, self.sx, self.sy)
-      shader:stop()
-      self.buffer2:pop()
-    end
-  end
-
-  do -- High pass blend (guarded, item 4)
-    local shader = Cache.Shader('ui', 'filter/sharpen')
-    if shader then
-      self.buffer1:pushLevel(self.level)
-      shader:start()
-        Shader.SetFloat('strength', strength)
-        Shader.SetTex2D('src', self.buffer0)
-        Shader.SetTex2D('srcBlur', self.buffer2)
-        Draw.Rect(0, 0, self.sx, self.sy)
-      shader:stop()
-      self.buffer1:pop()
-    end
-  end
-
-  self:swap()
 end
 
 function Renderer:start (resX, resY, ss)
@@ -461,7 +513,6 @@ function Renderer:start (resX, resY, ss)
     self.dsBuffer0 = createBuffer(resX / self.ds, resY / self.ds, colorFormat)
     self.dsBuffer1 = createBuffer(resX / self.ds, resY / self.ds, colorFormat)
 
-    -- 1x1 exposure-meter texel (see Renderer:meter). Read back at ~10 Hz.
     self.meterTex = createBuffer(1, 1, colorFormat)
   end
 
@@ -499,21 +550,9 @@ function Renderer:startAlpha (mode)
 end
 
 function Renderer:startPostEffects ()
-  -- Post effects run at the same resolution as the composited scene (level 0).
-  -- The old ss>1 path shifted the chain into mip level 1 via pushLevel/setMipRange;
-  -- that level did not exist on the render buffers (incomplete FBO -> the chain
-  -- silently no-oped and the final present sampled undefined mip data). The
-  -- full-chain post passes therefore draw to the ACTUAL buffer size (self.sx/sy,
-  -- = ss*res at supersample) rather than the logical resX/resY -- drawing a 1x
-  -- rect into a 2x buffer would only fill its bottom-left quarter each frame,
-  -- leaving stale frames behind (visual mirror/feedback recursion at 2x).
 end
 
 function Renderer:startUI (tex)
-  -- UI content goes into a dedicated target so it can either be folded into the
-  -- scene immediately (legacy: stopUI) or parked and overlaid AFTER the post
-  -- chain (game: endUI + compositeUI) so the HUD/debug panel stays crisp and is
-  -- not affected by tonemap/exposure/bloom/vignette/sharpen/grain.
   self.uiTex = tex or self.buffer1
   RenderTarget.Push(self.sx, self.sy)
   RenderTarget.BindTex2D(self.uiTex)
@@ -534,15 +573,12 @@ function Renderer:endUI ()
   RenderState.PopDepthWritable()
 end
 
--- Layer the UI target onto the current scene buffer (buffer0), then swap it
--- into place. post=true when buffer0 is already a finalized display-space
--- picture (after tonemap): straight alpha overlay so UI colors are not re-gamma'd.
 function Renderer:compositeUI (post)
   if not self.uiTex then return end
   local shader = Cache.Shader('ui', post and 'filter/ui_overlay' or 'ui/composite')
   BlendMode.PushDisabled()
   self.buffer2:push()
-  if shader then -- item 4: skip a broken composite, still restore buffer state
+  if shader then
     shader:start()
       Shader.SetTex2D('srcBottom', self.buffer0)
       Shader.SetTex2D('srcTop', self.uiTex)
@@ -556,9 +592,6 @@ function Renderer:compositeUI (post)
 end
 
 function Renderer:stopUI ()
-  -- Legacy behavior: draw the UI, then composite it into the scene immediately
-  -- (before the post chain). Test apps use this; the game uses
-  -- startUI/endUI + compositeUI(post=true) instead.
   self:endUI()
   self:compositeUI()
 end
@@ -578,33 +611,16 @@ function Renderer:stopAlpha ()
   RenderTarget.Pop()
 end
 
-function Renderer:stopUI ()
-  -- Legacy behavior: draw the UI, then composite it into the scene immediately
-  -- (before the post chain). Test apps use this; the game uses
-  -- endUI + compositeUI(post=true) instead.
-  self:endUI()
-  self:compositeUI()
-end
-
 function Renderer:swap ()
   self.buffer0, self.buffer1 = self.buffer1, self.buffer0
 end
 
---[[
-  meter -- sample the pre-tonemap HDR scene, every frame, into a 1x1 texel.
-  ----------------------------------------------------------------------------
-  One tiny reduce pass (4096 scatter taps inside a single fragment) writes
-  avg/max/%over/lit — see res/shader/fragment/filter/exposure.glsl. The texel
-  is read back on a ~100 ms throttle (glGetTexImage forces a GPU sync; 10 Hz is
-  plenty for both the DebugWindow readout and auto-exposure adaptation). The
-  numbers live in `self.exposure`; the debug panel polls them.
-]]---------------------------------------------------------------------------
 function Renderer:meter ()
   local shader = Cache.Shader('ui', 'filter/exposure')
   if not (shader and self.meterTex) then return end
 
   self.frameSeed = (self.frameSeed + 1) % 4096
-  do -- Render the meter texel (target is 1x1, so unit-rect the quad).
+  do
     self.meterTex:pushLevel(0)
     shader:start()
       Shader.SetFloat2('size', self.sx, self.sy)
@@ -627,15 +643,6 @@ function Renderer:meter ()
   end
 end
 
---[[
-  autoExposureEV -- target EV from the meter, smoothed over time.
-  ----------------------------------------------------------------------------
-  Key the lit-content luminance `exposure.lit` to a mid-gray key (default
-  0.18 linear) so "key <-> 0 stops". EV = log2(lit) - log2(key), clamped to
-  [minEV, maxEV]. The manual Exposure EV slider acts as an offset/bias on top.
-  The value eases toward target with a per-frame exponential (time constant
-  `speed` seconds) so changes read as eye adaptation rather than stepping.
-]]---------------------------------------------------------------------------
 function Renderer:autoExposureEV ()
   local ex = self.exposure or { lit = 0 }
   local key = Settings.get('postfx.autoexposure.key') or 0.18
@@ -652,13 +659,11 @@ function Renderer:autoExposureEV ()
     if target > maxEV then target = maxEV end
   end
 
-  -- Smooth toward target (eye-adaptation feel). dt computed from the ticker
-  -- since Renderer has no update loop of its own.
   local now = Time.GetRaw()
   local dt = 0
   if self.autoTime then dt = (now - self.autoTime) / 1000.0 end
   self.autoTime = now
-  if dt > 0.25 then dt = 0.25 end   -- clamp pauses/load stalls
+  if dt > 0.25 then dt = 0.25 end
 
   local ev = self.autoEV or 0
   if dt > 0 then
@@ -671,67 +676,139 @@ function Renderer:autoExposureEV ()
   return ev
 end
 
-function Renderer:tonemap ()
-  local shader = Cache.Shader('ui', 'filter/tonemap')
-  if not shader then return end   -- item 4: skip broken pass; buffer push/pop/swap stay balanced below
-  self.buffer1:pushLevel(self.level)
-  shader:start()
-    Shader.SetInt('texOp', Settings.get('postfx.tonemap.operator') or 1)
-    local ev = Settings.get('postfx.exposure.ev') or 0
-    if Settings.get('postfx.autoexposure.enable') then
-      -- Manual EV becomes a bias applied on top of the auto exposure.
-      ev = ev + self:autoExposureEV()
+function Renderer:volume (med)
+  local q = Settings.get('nebula.quality') or 1
+  if q <= 1 then return end
+  local steps = { 8, 16, 24 }
+  local evals = { 2, 2, 3 }
+  local stepF = steps[q - 1] or 16
+  local evalF = evals[q - 1] or 2
+
+  local shaderH = Cache.Shader('worldray', 'filter/volume')
+  local shaderF = Cache.Shader('worldray', 'filter/volblur')
+  if not (shaderH and shaderF) then return end
+
+  local volW = math.max(1, math.floor(self.sx / 2))
+  local volH = math.max(1, math.floor(self.sy / 2))
+  local volMip = 1.0
+
+  if not self.volView or self.volView:getSize().x ~= volW then
+    if self.volView then self.volView:free() end
+    self.volView = Tex2D.Create(volW, volH, TexFormat.RGBA16F)
+    self.volView:setMagFilter(TexFilter.Linear)
+    self.volView:setMinFilter(TexFilter.Linear)
+    self.volView:setWrapMode(TexWrapMode.Clamp)
+    self.volView:push()
+    Draw.Clear(0, 0, 0, 0)
+    self.volView:pop()
+  end
+
+  local anchors = med.anchors
+  local volCount = anchors and #anchors or 0
+  if volCount > 0 then
+    if not self.texAnchors then
+      self.texAnchors = Tex2D.Create(3, 16, TexFormat.RGBA32F)
+      self.texAnchors:setMagFilter(TexFilter.Linear)
+      self.texAnchors:setMinFilter(TexFilter.Linear)
+      self.texAnchors:setWrapMode(TexWrapMode.Clamp)
     end
-    Shader.SetFloat('exposure', 2.0 ^ ev)
-    Shader.SetTex2D('src', self.buffer0)
-    Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.sx, self.sy)
-  shader:stop()
-  self.buffer1:pop()
-  self:swap()
-end
+    if not self.anchorBytes then
+      self.anchorBytes = Bytes.Create(48 * 16)
+    end
 
-function Renderer:vignette ()
-  local strength = Settings.get('postfx.vignette.strength') or 0.5
-  local hardness = Settings.get('postfx.vignette.hardness') or 8.0
-  local shader = Cache.Shader('ui', 'filter/vignette')
-  if not shader then return end   -- item 4: skip broken pass; buffer push/pop/swap stay balanced below
-  self.buffer1:pushLevel(self.level)
-  shader:start()
-    Shader.SetFloat('strength', strength)
-    Shader.SetFloat('hardness', hardness)
-    Shader.SetTex2D('src', self.buffer0)
-    Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.sx, self.sy)
-  shader:stop()
-  self.buffer1:pop()
-  self:swap()
-end
+    local bytes = self.anchorBytes
+    local p = ffi.cast('float*', bytes:getData())
+    for i = 1, volCount do
+      local a = anchors[i]
+      local o = (i - 1) * 12
+      p[o + 0], p[o + 1], p[o + 2], p[o + 3]  = a[1], a[2], a[3], a[4]
+      p[o + 4], p[o + 5], p[o + 6], p[o + 7]  = a[5], a[6], a[7], 0
+      p[o + 8], p[o + 9], p[o + 10], p[o + 11] = a[8], a[9], a[10], 0
+    end
+    self.texAnchors:setDataBytes(bytes, PixelFormat.RGBA, DataFormat.Float)
+  end
 
-function Renderer:grain (strength)
-  local shader = Cache.Shader('ui', 'filter/grain')
-  if not shader then return end   -- item 4: skip broken pass; buffer push/pop/swap stay balanced below
-  self.buffer1:pushLevel(self.level)
-  shader:start()
-    Shader.SetFloat('strength', strength)
-    Shader.SetFloat('time', (tonumber(Time.GetRaw()) or 0) * 0.001)
-    Shader.SetFloat2('size', self.sx, self.sy)
-    Shader.SetTex2D('src', self.buffer0)
-    Draw.Color(1, 1, 1, 1)
-    Draw.Rect(0, 0, self.sx, self.sy)
-  shader:stop()
-  self.buffer1:pop()
-  self:swap()
+  local dens = Settings.get('nebula.density') or 1
+  local sigT = dens * 0.00005
+  local sigS = dens * 0.0000375
+  local volDist   = Settings.get('nebula.radius') or 12000
+  local volAniso  = Settings.get('nebula.g') or 0
+  local tintAmt   = Settings.get('nebula.tint') or 0.35
+  local tintR, tintG, tintB = Settings.get('nebula.tintR') or 1,
+                              Settings.get('nebula.tintG') or 0.6,
+                              Settings.get('nebula.tintB') or 0.2
+  local fx, fy, fz, fsp = 0.4, 0.2, 0.8, 40
+  local fl = math.sqrt(fx * fx + fy * fy + fz * fz)
+  local volTime = (tonumber(Time.GetRaw()) or 0) * 0.001
+  local volGather = 8.0 / (800.0 * 800.0)
+
+  Profiler.Begin('Render.Volume')
+
+  do -- Pass A
+    RenderTarget.Push(volW, volH)
+    RenderTarget.BindTex2D(self.volView)
+    RenderState.PushDepthTest(false)
+    shaderH:start()
+      Shader.SetTex2D('texDepth', self.zBufferL)
+      Shader.SetTexCube('envMap', med.envMap)
+      Shader.SetTexCube('irMap',  med.irMap)
+      Shader.SetTex2D('texNoise', med.noise)
+      Shader.SetFloat3('starDir',  med.starDir.x, med.starDir.y, med.starDir.z)
+      Shader.SetFloat3('sunColor', med.sunColor.x, med.sunColor.y, med.sunColor.z)
+      Shader.SetFloat('volMip',    volMip)
+      Shader.SetFloat('volDensity', dens)
+      Shader.SetFloat('volSigmaT',  sigT)
+      Shader.SetFloat('volSigmaS',  sigS)
+      Shader.SetFloat('volSteps',   stepF)
+      Shader.SetFloat('volDist',    volDist)
+      Shader.SetFloat('volEvals',   evalF)
+      Shader.SetFloat3('volFlow', 40 * fx / fl, 40 * fy / fl, 40 * fz / fl)
+      Shader.SetFloat('volTime',    volTime)
+      Shader.SetFloat('volCount',   volCount)
+      if volCount > 0 then Shader.SetTex2D('texAnchors', self.texAnchors) end
+      Shader.SetFloat('volAniso',   volAniso)
+      Shader.SetFloat3('volTint', tintR, tintG, tintB)
+      Shader.SetFloat('volTintAmt', tintAmt)
+      Draw.Color(1, 1, 1, 1)
+      Draw.Rect(-1, -1, 2, 2)
+    shaderH:stop()
+    RenderState.PopDepthTest()
+    RenderTarget.Pop()
+  end
+
+  do -- Pass B
+    self.buffer1:pushLevel(self.level)
+    RenderState.PushDepthTest(false)
+    shaderF:start()
+      Shader.SetInt('volMode', (Settings.get('nebula.debug') or 1) - 1)
+      Shader.SetTex2D('texVol',   self.volView)
+      Shader.SetTex2D('texScene', self.buffer0)
+      Shader.SetTex2D('texDepth', self.zBufferL)
+      Shader.SetFloat('volMip',    volMip)
+      Shader.SetFloat('volGather', volGather)
+      Shader.SetFloat('volDensity', dens)
+      Shader.SetFloat('volSigmaT',  sigT)
+      Shader.SetFloat('volSigmaS',  sigS)
+      Shader.SetFloat('volSteps',   stepF)
+      Shader.SetFloat('volDist',    volDist)
+      Shader.SetFloat('volEvals',   evalF)
+      Shader.SetFloat('volCount',   volCount)
+      if volCount > 0 then Shader.SetTex2D('texAnchors', self.texAnchors) end
+      Shader.SetFloat3('volFlow', 40 * fx / fl, 40 * fy / fl, 40 * fz / fl)
+      Shader.SetFloat('volTime',    volTime)
+      Shader.SetFloat3('volTint', tintR, tintG, tintB)
+      Draw.Color(1, 1, 1, 1)
+      Draw.Rect(-1, -1, 2, 2)
+    shaderF:stop()
+    RenderState.PopDepthTest()
+    self.buffer1:pop()
+    self:swap()
+  end
+
+  Profiler.End()
 end
 
 function Renderer:fog (envTex)
-  -- Exponential depth haze with aerial perspective: a `worldray` pass so each
-  -- pixel reconstructs the world view ray and blends toward the nebula color
-  -- sampled from the envMap behind it (tinted toward `postfx.fog.color`).
-  -- Uses zBufferL's linear eye distance; sky pixels (dist >= ~1e6 = the 1e6
-  -- farPlane the skybox writes via setDepth, see common.glsl) are exempt so
-  -- the starfield/nebula stay crisp and only real geometry hazes. envMap is
-  -- bound directly (System pops it from the var stack before the post chain).
   local shader = Cache.Shader('worldray', 'filter/fogw')
   if not shader then return end
   self.buffer1:pushLevel(self.level)

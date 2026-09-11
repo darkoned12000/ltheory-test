@@ -23,7 +23,8 @@ uniform float aoMip;            /* log2(sx/aoSx)           */
 
 void main () {
   vec4 normalMat = texture(texNormalMat, uv);
-  float dist = textureLod(texDepth, uv, aoMip).x;
+  // Sample depth at LOD 0.0 to prevent cross-edge depth averaging
+  float dist = textureLod(texDepth, uv, 0.0).x;
 
   /* Camera is the view-space origin; worldDir is a direction (camera at
    * worldOrigin), so a pure rotation (mat3 of mView) takes it to view space.
@@ -35,5 +36,6 @@ void main () {
   vec3 Nw = decodeNormal(normalMat.xy);
   float ndv = clamp(dot(mat3(mView) * Nw, -viewDir), 0.0, 1.0);
 
-  fragData0 = vec4(viewDir, (dist > 1e-4) ? ndv : 1.0);
+  bool isSky = (dist < 1e-4 || dist >= 900000.0);
+  fragData0 = vec4(viewDir, isSky ? 1.0 : ndv);
 }

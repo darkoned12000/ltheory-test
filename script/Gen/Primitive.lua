@@ -1,3 +1,9 @@
+local sqrt = math.sqrt
+
+--[[----------------------------------------------------------------------------
+  Constructs a point billboard quad. Vertex positions are set to (0,0,0) with
+  UV offsets passed in vertex attributes for GPU billboard expansion shaders.
+----------------------------------------------------------------------------]]--
 local function Billboard (u0, v0, u1, v1)
   local self = Mesh.Create()
   self:addVertex(0, 0, 0, 0, 0, 0, u0, v0)
@@ -8,9 +14,10 @@ local function Billboard (u0, v0, u1, v1)
   return self
 end
 
--- Sphere from tessellated icosahedron
--- n = number of tessellation passes; default is 1
--- NOTE : Mesh size is exponential in n; should never need more than 5 or 6!
+--[[----------------------------------------------------------------------------
+  Generates a spherical Mesh by subdividing an icosahedron `n` times.
+  Note: Vertex count scales exponentially ($20 \times 4^n$ tris); keep $n \le 5$.
+----------------------------------------------------------------------------]]--
 local function IcoSphere (n)
   local p = (1.0 + sqrt(5)) / 2.0
   local self = PolyMesh()

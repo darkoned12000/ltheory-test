@@ -9,6 +9,15 @@ layout(location = 0) out vec4 fragColor;
 uniform float exposure = 1.0;
 uniform int texOp = 1;
 
+/* Color Grading Micro-Knobs (Roadmap #14) */
+uniform float colorSat      = 1.0;         // 1.0 = neutral
+uniform float colorContrast = 1.0;         // 1.0 = neutral
+uniform float colorTemp     = 0.0;         // -1.0 (cool) .. 1.0 (warm)
+uniform float colorTint     = 0.0;         // -1.0 (green) .. 1.0 (magenta)
+uniform vec3  colorLift     = vec3(0.0);   // (0,0,0) = neutral
+uniform vec3  colorGamma    = vec3(1.0);   // (1,1,1) = neutral
+uniform vec3  colorGain     = vec3(1.0);   // (1,1,1) = neutral
+
 vec3 applyTonemap(vec3 c) {
   if (texOp == 1) return agxTonemap(c);
   if (texOp == 2) return acesFitted(c);
@@ -19,10 +28,24 @@ vec3 applyTonemap(vec3 c) {
 
 void main() {
   vec3 c = max(texture(src, uv).xyz, vec3(0.0));
-  c = applyTonemap(c * exposure);
+
+  // 1. Apply Exposure
+  c *= exposure;
+
+  // 2. Linear Space Color Grading
+  c = applyColorTint(c, colorTemp, colorTint);
+  c = applySaturation(c, colorSat);
+  c = applyContrast(c, colorContrast);
+  c = applyLiftGammaGain(c, colorLift, colorGamma, colorGain);
+
+  // 3. Tonemap Operator & sRGB Encoding
+  c = applyTonemap(c);
   c = encodeSrgb(c);
   c = clamp(c, vec3(0.0), vec3(1.0));
+
+  // 4. Dither (kills color banding on 8-bit displays)
   c -= (2.0 * noise3(noise(uv * 16.0)) - vec3(1.0)) / 256.0;
   c = clamp(c, vec3(0.0), vec3(1.0));
+
   fragColor = vec4(c, 1.0);
 }

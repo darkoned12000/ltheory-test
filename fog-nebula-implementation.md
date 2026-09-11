@@ -1,18 +1,10 @@
 # Nebula Fog / Dust Volume + Lightning Storm — Implementation Plan (branch: `fog-nebula`)
 
-Goal: build a **participating-media renderer with stylized anisotropic nebula lighting** — not a
-named-after-one-aesthetic effect. Freelancer/Starlancer are the *visual reference*, not the
-implementation scope, because the same medium should later serve dust, gas, planetary haze,
-engine smoke, storm volumes, and nebulae.
+Goal: build a **participating-media renderer with stylized anisotropic nebula lighting** — not a named-after-one-aesthetic effect. Freelancer/Starlancer are the *visual reference*, not the implementation scope, because the same medium should later serve dust, gas, planetary haze, engine smoke, storm volumes, and nebulae.
 
-Concretely: fly through drifting volumetric dust and nebula plumes that occlude the stars, glow
-against the sun with anisotropic forward scatter, get cut by independent god-rays, and are torn
-periodically by **lightning storms** — a branching bolt, a white-hot flash, and a *local*
-volumetric light that makes the cloud around the strike glow and decay. All opt-out, Perf-gated,
-and equivalence-tested like GTAO was.
+Concretely: fly through drifting volumetric dust and nebula plumes that occlude the stars, glow against the sun with anisotropic forward scatter, get cut by independent god-rays, and are torn periodically by **lightning storms** — a branching bolt, a white-hot flash, and a *local* volumetric light that makes the cloud around the strike glow and decay. All opt-out, Perf-gated, and equivalence-tested like GTAO was.
 
-Base branch `main` (GTAO + distance haze merged). Plan opened **2026-09-10**; reviewed by an
-LLM renderer engineer the same day and revised (§2). Status at the bottom.
+Base branch `main` (GTAO + distance haze merged). Plan opened **2026-09-10**; revised **2026-09-11** (§2, §3, §10).
 
 ---
 
@@ -20,264 +12,117 @@ LLM renderer engineer the same day and revised (§2). Status at the bottom.
 
 1. **Volumetric nebula/dust** — fly-through volume with parallax, not billboards or a 2D tint.
 2. **Sun-lit dust with anisotropy + god-rays** — forward-scatter phase, independent shaft pass.
-3. **Stars occluded by dust** — the sky behind a thick bank dims (`scene * T + inscatter`, never
-   `scene + additive`).
-4. **Lightning storm spike** — bolt + flash + the dust lights up **locally** at the strike, then
-   decays; a weather event, not a texture; audio hook data-driven behind the visual gate.
-5. **Nebula as sector content** — anchor volumes (real local clouds you can orbit), palette from
-   the same generator that makes the sky.
-6. **Opt-out + Perf-gated + A/B-toggleable + debug modes** — off = bit-identical frame; a debug
-   visualization enum so tuning stops being "summon screenshots by feel".
+3. **Stars occluded by dust** — the sky behind a thick bank dims (`scene * T + inscatter`, never `scene + additive`).
+4. **Lightning storm spike** — bolt + flash + the dust lights up **locally** at the strike, then decays; a weather event, not a texture; audio hook data-driven behind the visual gate.
+  - To bring "electricity and life" into nebulae (roadmap #4), the volumetric pipeline handles lightning strikes via a dynamic LightingEvent struct:  
+  - Local Energy Injection (LightingEvent)When an electrical storm triggers in a sector, the Lua game loop creates a temporary event record:
+    ```Lua 
+    local strike = {
+      pos = Vec3f(x, y, z),
+      color = Vec3f(0.4, 0.8, 1.0), -- Hot Electric Blue
+      energy = 15.0,                -- Intensity multiplier
+      radius = 3500.0,              -- Light flash radius
+      duration = 0.4                -- Seconds to decay
+    }
+    ```
+  - Volumetric Light Flash inside volume.glsl
+    - Inside the half-res raymarch pass, volume.glsl evaluates point-light attenuation from active lightning strikes:
+        $$\text{lightningLight} = \frac{\text{strike.color} \cdot \text{energy}}{\text{dist}^2 + 1.0} \cdot \exp(-\text{dist} \cdot \sigma_t)$$
+    - Because energy scatters through the local dust, a lightning bolt illuminates the interior of the cloud, causing surrounding gas tendrils to flash white-hot and slowly decay.
+  - Camera & Bloom Interaction
+    - Powerful strikes instantly trigger auto-exposure adaptation (Renderer:meter) and feed high-luminance pixels into Karis bloom (Renderer:bloom), producing realistic camera lens glare and glowing cloud rims.
+5. **Nebula as sector content** — anchor volumes (real local clouds you can orbit), palette from the same generator that makes the sky.
+6. **Opt-out + Perf-gated + A/B-toggleable + debug modes** — off = bit-identical frame; a debug visualization enum so tuning stops being "summon screenshots by feel".
 
-## 2. Review feedback incorporated (2026-09-10)
+---
 
-An independent renderer-engineer review (LLM) was solicited; its high-value corrections are now
-hard requirements, not suggestions:
+## 2. Review feedback & architectural corrections incorporated
 
-1. **Density field is world-space, not camera-anchored** — `density(worldPos)`, maintained in a
-   camera-following cell that *snaps on a large grid* (world pos = eye + dir · t). Camera-space
-   lobes cause swimming (clouds rotate/translate with you) and break streaming. Snapping cell =
-   deterministic coords, infinite traversal, no giant world primitive. (§3)
-2. **No multi-octave FBM in Phase 1** — start with 2 noise evals (low-freq coherent + one
-   higher-freq modulation). Large-scale structure beats fractal detail; detail can come from
-   lighting + jitter. Add octaves only if A/B shows they buy something. (§3, §5)
-3. **Transfer/scattering equation is the explicit contract (ADR math)** — `sigma_t` (absorption +
-   scattering) separated from `sigma_s` (scattering); accumulation via `T *= exp(-sigma_t·ρ·ds)`
-   and `inscatter += T·sigma_s·ρ·lighting·ds`; composite `scene*T + inscatter`. This is what
-   makes "opaque core that still glows past its silhouette" controllable. (§3)
-4. **Nested full sun raymarch is prohibited in Phase 1** — `sunTrans` is a fixed-cost
-   approximation (`exp(-ρ·sunShadowDistance·sigmaSolar)` or ≤4 sun samples per volume sample).
-   24 camera steps × 24 sun steps would blow the budget; Phase 3 may refine. (§3)
-5. **God-rays are a separate pass boundary** — "what does the medium do to light" vs "where do we
-   emphasize directional shafts" are separate products with separate A/B on/off knobs. (§4)
-6. **Anchors use a bounded active-volume interface, not an ever-growing shader loop** — CPU
-   spatially culls `NebulaVolume` records (center/halfExtent/seed/density/tint/noiseScale),
-   uploads only volumes intersecting `[camera ± volumeDist]`, shader iterates that fixed list.
-   Streaming-ready for #13. (§3)
-7. **The volume must not sample the rendered envMap as its radiance** — env-influencing-env is
-   visually weird. Split the concepts: **palette** (medium albedo, from the nebula generator's
-   seed/ramp) and **illumination** (actual lighting: `sunColor`/`sunFill` + `irMap` ambient). The
-   `irMap` (already-integrated ambient gradient) is the medium's base light — one of the
-   strongest ideas in the plan. (§3)
-8. **Lightning is a first-class `LightingEvent`** — one data record
-   `{position, color, energy, radius, falloff, startTime, duration, seed}` drives bolt +
-   local volumetric light + exposure contribution + bloom + audio. Never a pile of visual hacks.
-   (§6)
-9. **Authored flash, responsive exposure** — the flash is the light itself; autoexposure merely
-   *responds* (otherwise flash→meter→scene-darkens feedback muddies it). (§6)
-10. **Bolt = procedural camera-facing ribbon** (deterministic from storm seed; branching
-    topology via recursive midpoint displacement); GPUParticles reserved for sparks/secondary
-    arcs/storm particulate — each system does what it's good at. (§6)
-11. **Temporal reprojection is a Phase-5+ candidate, not Phase 1** (motion/history/invalidation
-    are a separate bug class; get the static volume right first). (§8)
-12. **Three termination conditions, explicitly**: `tEnd = min(sceneDepth, volumeDist,
-    volumeIntersectionEnd)`, `tStart = volumeIntersectionStart` — skip empty space before an
-    anchor; major optimization once local nebulae exist. (§3)
-13. **Off = renderer-disabled, not density-zero** — the A/B contract means *no allocation, no
-    pass, no uniform binds, no shader invocation, no state mutation* (a zero-density pass can
-    still perturb FP/render-target behavior). Test `Config.gpu.nebula = 0` and
-    `nebula.enable = false`, not `density = 0`. (§7)
-14. **Per-piece perf budget, not one number** — base volume ≤0.65, reconstruction ≤0.20,
-    god-rays ≤0.30, lightning ≤0.10 → normal target ≤0.95 ms; measured at *worst-case* density,
-    max anchor count, max lightning complexity at **1024×768 @2×SS**, not the prettiest scene. (§7)
-15. **Quality ladder is a resource matrix internally, one public enum externally** — Q0 disabled /
-    Q1 half-res 8 steps 2 evals no shafts / Q2 half-res 16 steps 2–3 evals optional shafts /
-    Q3 half-res 24 steps 3–4 evals shafts + better reconstruction. Change internals without
-    breaking the settings contract. (§5)
-16. **Debug modes**: `nebula.debug = off | density | transmittance | lighting | steps | anchors`
-    (black→white density, black→opaque transmittance, false-color step count, AABB overlays). (§5)
-17. **Test fixtures**, not subjective screenshots: A = white sun/black sky (anisotropy, sun
-    lighting, density, transmittance); B = stars behind dense volume (occlusion `X*T`, depth
-    termination, sky gate); C = lightning in dense volume (local flash, bolt, exposure, bloom,
-    decay, no residual state). (§7)
+1. **Density field is world-space, not camera-anchored** — `density(worldPos)`, maintained in a camera-following cell that *snaps on a large grid* (world pos = eye + dir $\cdot$ t). Camera-space lobes cause swimming and break streaming.
+2. **No multi-octave FBM in Phase 1** — start with 2 noise evals (low-freq coherent + higher-freq modulation). Detail comes from lighting + jitter.
+3. **Transfer/scattering equation is the explicit contract (ADR math)** — $\sigma_t$ (absorption + scattering) separated from $\sigma_s$ (scattering); accumulation via $T *= \exp(-\sigma_t \cdot \rho \cdot ds)$ and $\text{inscatter} += T \cdot \sigma_s \cdot \rho \cdot \text{lighting} \cdot ds$; composite $\text{scene} \cdot T + \text{inscatter}$.
+4. **Nested full sun raymarch is prohibited in Phase 1** — `sunTrans` is a fixed-cost approximation. 24 camera steps $\times$ 24 sun steps would blow the budget.
+5. **God-rays are a separate pass boundary** — "what does the medium do to light" vs "where do we emphasize directional shafts" are separate products with separate A/B knobs.
+6. **Anchors use a bounded active-volume interface, not an ever-growing shader loop** — CPU spatially culls `NebulaVolume` records, uploads only volumes intersecting `[camera ± volumeDist]`, shader iterates that fixed list ($\le 16$).
+7. **The volume must not sample the rendered envMap as its radiance** — split the concepts: **palette** (medium albedo, from generator's seed/ramp) and **illumination** (actual lighting: `sunColor` + `irMap` ambient).
+8. **Plumes require Euclidean spherical distance falloff (No $L_\infty$ AABBs)** — anchor density envelopes must use $\|p - c\| / r$ with $C^1$ Hermite `smoothstep(1.0, 0.0, dist)` falloffs. Chebyshev box metrics ($L_\infty$) create 90-degree box corners floating in space and are strictly forbidden.
+9. **Depth sampling must use LOD 0.0** — both pass A (`volume.glsl`) and pass B (`volblur.glsl`) must sample `texDepth` at base level `0.0`. Bilinear filtering on depth mips across silhouettes causes depth bleeding and premature ray cutoffs.
+10. **Bilateral upsample fallback on depth edges** — when 3x3 bilateral gather weights sum to $w_{\text{sum}} < 1\text{e-}4$ at sharp depth edges (e.g., planet silhouette vs. sky), `volblur.glsl` must fall back directly to the center tap `texelFetch(texVol, pH, 0)`. Dividing zero accumulated color by $\epsilon$ creates pure black silhouette outlines.
+11. **Lua hash determinism via integer grid** — `NebulaVolumes.lua` must use 32-bit bitwise integer hashing (`hash32`) operating on cell integer coordinates $(i_{cx}, i_{cy}, i_{cz})$ rather than `math.sin` on float world positions to avoid precision loss at large world origins.
+12. **Zero-allocation anchor upload** — `Renderer:volume` uses a persistent `self.anchorBytes` buffer instead of allocating 768-byte buffer instances per frame on the C-FFI heap.
+13. **Off = renderer-disabled, not density-zero** — test `Config.gpu.nebula = 0` and `nebula.enable = false`, not `density = 0`.
+14. **Per-piece perf budget**: base volume $\le 0.65$ ms, reconstruction $\le 0.20$ ms, god-rays $\le 0.30$ ms, lightning $\le 0.10$ ms $\rightarrow$ normal target $\le 0.95$ ms @ 1024x768 2xSS.
 
 ---
 
 ## 3. Architecture
 
-One half-res world-space volume pass → depth-aware reconstruction → independent god-ray emphasis
-→ haze → meter → tonemap. No new rendering subsystem — this is the GTAO/haze pass family.
-
+One half-res world-space volume pass $\rightarrow$ depth-aware bilateral reconstruction with silhouette edge fallback $\rightarrow$ independent god-ray emphasis $\rightarrow$ haze $\rightarrow$ meter $\rightarrow$ tonemap.
 ```
 GBuffer / Lit
-   │
-   ▼
-Volume raymarch      (half-res, world-space density, sun scattering + irMap ambient)
-   ▼
-Reconstruction        (depth-aware upsample/denoise — the AO discipline)
-   ▼
-God-ray emphasis      (separate low-res shaft pass, own A/B)
-   ▼
-Haze
-   ▼
-Exposure meter        (pre-meter: storms read correctly)
-   ▼
-Tonemap
+│
+▼
+Volume raymarch      (half-res, world-space density, LOD 0.0 depth, sun scattering + irMap)
+│
+▼
+Reconstruction       (full-res, depth-aware 3x3 gather, LOD 0.0 depth, center-tap edge fallback)
+│
+▼
+God-ray emphasis     (separate low-res shaft pass, own A/B)
+│
+▼
+Haze ──► Exposure meter ──► Tonemap
 ```
 
-**Conceptual dataflow (what feeds what):**
+**Medium equation:**
 
-```
-Nebula generator
-   ├── envMap    → sky            (unchanged; the volume does NOT sample this for radiance)
-   ├── irMap     → ambient medium illumination   (sample as base light)
-   └── palette   → medium albedo                (generator ramp, seeded, art-directable)
-Anchors/cells → density field
-LightningEvent → bolt + volume lighting + exposure + bloom + audio
-```
+$$\rho(p) = \text{mediumDensity}(p) + \text{anchorEnvelope}(p)$$
 
-**Medium equation (the contract — put on the wall):**
+$$T *= \exp(-\sigma_t \cdot \rho \cdot ds)$$
 
-```
-ρ(p)  = sectorMedium(worldPos) * noise(worldPos * scale + drift)      // + modulations from anchors
-T     += -sigma_t * ρ * ds           (accumulate transmittance; T starts at 1)
-inscatter += T * sigma_s * ρ * light * ds
-out.rgb = scene.rgb * T + inscatter
-sigma_t = absorption + scattering      // separate from sigma_s = scattering
-sunLight = irMap_ambient + sunColor * Phase(g, sunDir·viewDir) * sunTrans  // sunTrans ≈ fixed-cost (no nested ray)
-```
+$$\text{inscatter} += T \cdot \left(1 - \exp(-\sigma_t \cdot \rho \cdot ds)\right) \cdot \frac{\sigma_s}{\sigma_t} \cdot \left(\text{sunColor} \cdot P(g, \theta) + \text{irMap}\right) \cdot \text{albedo}$$
 
-**Termination:** `tEnd = min(sceneDepth, volumeDist, volumeIntersectionEnd)` and
-`tStart = volumeIntersectionStart` (skip empty space before anchors). Sky gate reuses the haze
-lesson: `zBufferL >= 950000` = sky — the volume can still *occlude* it via `T` (that's the whole
-point of star occlusion), but must not double-integrate past it.
+$$\text{out.rgb} = \text{scene.rgb} \cdot T + \text{inscatter}$$
 
-**Density field:** animated off a *snapped* world cell (large-scale grid under the camera) so cloud
-drift is deterministic (`seedGlobal`-seeded, minutes-long phase — no per-frame `timeSeed`, the
-GTAO lesson), coverage simply follows the player with no swimming.
+**Termination & Sky Gate:** $t_{\text{cap}} = (d_{\text{depth}} \ge 900000) ? v_{\text{dist}} : \min(d_{\text{depth}}, v_{\text{dist}})$. Sky pixels ($d \ge 900000$) do not truncate rays early, allowing clouds to occlude stars while preventing double-integration past infinity.
 
-**Anchors:** per-frame CPU cull → compact `NebulaVolume` list upload; shader evaluates that
-bounded list only. Streaming (#13) later just means feeding the culler from the streaming system.
+---
 
-**Post-pass discipline (regenerate from the AGENTS gotchas):** autovars (`envMap`/`irMap`/`starDir`
-`/sunColor`) are popped at `System:endRender`; every binding is explicit
-(`Shader.SetTexCube`/`SetFloat3`) or `ShaderVar.Push`. Matrix re-push around the pass (`mViewInv`/
-`mProjInv`) exactly as the haze pass already does. Reject `#autovar` additions for this pass.
+## 4. Phases & Status
 
-## 4. Phases (each = validator + boot + A/B, self-contained)
+### Phase 0 — Renderer seam + debug views
+- Stub `Renderer:volume()`: half-res RT, LOD 0.0 depth, identity march, depth-aware upsample.
+- `nebula.debug` view enum: `off | density | transmittance | lighting | steps | anchors`.
 
-### Phase 0 — renderer seam + debug views
-- Stub `Renderer:volume()`: half-res RT, read depth, identity march, depth-aware upsample.
-  Confirm matrix re-push, explicit env/ir/star uniforms, blue-noise jitter here, profiler
-  `Render.Volume`, `nebula.*` settings + `Config.gpu` seeds, and the debug-view enum
-  (density/transmittance/lighting/steps/anchors) end-to-end.
-- Acceptance: pass runs at both reses; `enable=false` is a true no-op (§2.13); validator green;
-  boot clean; A/B toggles.
-- Deliverables: `filter/volume.glsl` stub, `nebula.debug` views, settings chassis, profiler label.
+### Phase 1 — Low-frequency participating medium & anisotropic scattering
+- World-space snapped cell density, 2 value-noise evals, time drift, exact star transmittance $X \cdot T$.
+- Anisotropic Henyey-Greenstein phase $P(g, \theta)$ with $g \approx 0.758$ plus `irMap` ambient.
 
-### Phase 1 — low-frequency participating medium with correct transmittance
-- World-space density (snapped cell), **2 noise evals** (low-freq coherent + one modulation),
-  time-drift, correct `scene*T + inscatter` (star occlusion visible), half-res + blue noise +
-  upsample/denoise. **Fixed-cost sunTrans only** (§2.4).
-- Tuning: `nebula.{enable,density,color,tint,steps,radius,g; sunShadowDistance}`.
-- Acceptance: flying banks through patches with parallax (no swimming); **Fixture B** — starfield
-  reads `X*T` behind a dense bank; **Fixture A** lit. Gate ≤0.65 ms; off = no-op.
+### Phase 2 — Anchor volumes & spatial culling
+- `NebulaVolumes.lua` cell-lattice generator ($CELL = 12000$, 32-bit integer PRNG, $\le 16$ nearest volumes uploaded to `texAnchors` RGBA32F).
+- Euclidean spherical plume density with smoothstep falloffs.
 
-### Phase 1.5 — anisotropic sun scattering
-- Add `Phase(g, θ)` forward-scatter term + `irMap` ambient base light; `g ≈ 0.758` (matches the
-  planet atmosphere's `g`, `ltheory-planet-research.md`).
-- Acceptance: sun-side cloud self-glow warm; changing `g` 0 → 0.9 is visibly "rock → jewel".
-  Fixture A.
+### Phase 3 — God-rays (independent product)
+- Standalone low-res shaft pass from `starDir`; own A/B on/off controls.
 
-### Phase 2 — anchor volumes + spatial culling
-- `NebulaVolume` records (center/extent/seed/density/tint/noiseScale) from a per-sector structure;
-  CPU cull to the active list; parallax-correct orbit around plumes; color descends from the same
-  `Gen('Nebula')` palette (*albedo*, not envMap sampling — §2.7); `tStart/tEnd` skip-empty-space
-  optimization.
-- Acceptance: orbiting a plume reads layered parallax vs the fixed sky; overlapping plumes
-  composite; culled outside `volumeDist`. Debug anchors overlay + steps view.
+### Phase 4 — LightningEvent & local volumetric flash
+- Consume `{position, color, energy, radius, falloff}` as a local light source inside `volume.glsl`.
 
-### Phase 3 — god-rays (independent product)
-- Standalone low-res shaft pass (from `starDir`, `sunTrans`-derived emphasis OR its own shaft
-  integral — still no nested full raymarch of the volume); own `scan.show`, `intensity`, `width`,
-  `quality`; own A/B on/off without touching the volume.
-- Acceptance: sun-in-dust = money shot, not noise; Fixture A with shafts; ≤0.30 ms.
+### Phase 5 — Polish & performance validation
+- Worst-case budget audit, quality matrix verification, documentation closure.
 
-### Phase 4 — LightningEvent + local volumetric flash
-- One event record (§2.8). The volume pass consumes `{position,color,energy,radius,falloff}` as a
-  **local light** — distance/phase-dependent illumination of the cloud (the "cloud lights up
-  *around* the bolt" shot), plus authored flash light (150–300 ms decay) with exposure merely
-  responsive, plus optional bloom reach and an `audio` slot.
-- Acceptance: Fixture C (dense volume + strike → local glow, decay, no residual bloom level);
-  clears fault-free; ≤0.10 ms strike overhead.
+---
 
-### Phase 4.5 — bolt rendering
-- Procedural camera-facing ribbon mesh, deterministic from the storm seed (recursion-branch
-  topology, stable endpoints, controllable silhouette, variable branch width). GPUParticles later
-  for sparks/secondary arcs/storm particulate.
-- Acceptance: strikes vary by seed; never overlap-steal; look stable across camera motion.
+## 5. Status Log
 
-### Phase 5 — performance/equivalence/polish, docs close
-- Worst-case budget audit (§2.14), quality-matrix defaults locked, numeric A/B screenshots,
-  `ssao-gtao`-style close entry here, AGENTS.md + ROADMAP.md updated, user sign-off, merge to
-  `main`.
-
-### Later (candidate backlog, not committed)
-- Temporal reprojection (half-res accumulation) — only after the static volume is stable.
-- Richer FBM/octaves, planet-haze/engine-smoke on the same medium, streaming-fed anchors (#13),
-  storm weather per sector.
-
-## 5. Tuning contract & quality ladder
-
-Public enum `nebula.quality` (advance to `render.nebula.quality` if the family grows);
-internally a **resource matrix** so implementation can change without contract churn:
-
-```
-Q0  disabled / legacy Dust billboards
-Q1  half-res | 8 steps  | 2 noise evals | no shafts
-Q2  half-res | 16 steps | 2–3 evals    | optional shafts
-Q3  half-res | 24 steps | 3–4 evals    | shafts + better reconstruction
-```
-
-Debug views: `nebula.debug = off | density | transmittance | lighting | steps | anchors`.
-Enum-index seeding contract applies (`Settings.addEnum` → index, `sunShadowIdx` lesson).
-
-## 6. LightningEvent (the first-class record)
-
-```
-LightningEvent
-  position, color, energy, radius, falloff
-  startTime, duration, seed
-  ├─ emissive bolt        (ribbon mesh, §4.5)
-  ├─ local volumetric light  (volume pass consumes it — distance/phase falloff)
-  ├─ exposure contribution (emergent — meter just responds)
-  ├─ bloom reach           (optional)
-  └─ audio event            (Config.audio.sfx.lightning — behind the visual gate)
-```
-
-## 7. Verification & the equivalence contract
-
-- **Off = renderer-disabled** (no alloc/pass/uniform/shader/state), tested via
-  `Config.gpu.nebula = 0` and `nebula.enable = false` — *not* `density = 0`.
-- Validator (`python3 configure.py test`, 0 FAIL) on every shader change; Luajit `SYNTAX-OK`;
-  clean boots.
-- Budget per piece (§2.14) measured at worst-case density / max anchors / max lightning,
-  **1024×768 @2×SS** on RX 7900 XTX (GTAO bench methodology).
-- **Fixtures** (§2.17): A white sun/black sky · B stars behind dense volume (star occlusion is a
-  validator fixture — `stars = X*T`, and the failure mode `scene + additive fog` is forbidden) ·
-  C lightning in dense volume. Phase screenshots go to `/screenshot` with a purpose, not vibes.
-- User is the visual instrument (model cannot view images); numeric checks on saved frames.
-
-## 8. Risks / gates
-
-- Nested sun raymarch creeping in (§2.4) — prohibited in the ADR.
-- Camera-anchored swimming (§2.1) — world-space snapped cell required.
-- envMap self-influence (§2.7) — palette vs illumination split is mandatory.
-- Scene+additive instead of scene*T+inscatter — Fixture B catches it in CI-style A/B.
-- Half-res silhouette artifacts — AO's depth-aware upsample/denoise discipline, not bilinear.
-- Storms eating the budget via boom-glow — LightningEvent radius clamped by `nebula.quality`.
-- Settings contract — enum index seeding, `Config.gpu` defaults must seed Settings exactly.
-
-## 9. Dependencies / ordering
-
-Pure post-chain work on committed infrastructure (worldray posts, `envMap`, GPUParticles, panel
-contract). Independent of #13 streaming/LOD (anchors are authored; streaming later only feeds the
-culler). Audio (zipper + rapid-SFX) is orthogonal and may light up the storm sound after the
-visual gate is committed.
-
-## 10. Status log
-
-- **2026-09-10** — plan opened on branch `fog-nebula` (from `main`). External renderer-engineer
-  review same day; §2 corrections folded in (world-cell density, transfer-equation contract,
-  fixed-cost sun shadow, bounded anchor list, palette/illumination split, LightningEvent,
-  per-piece budget, fixtures, debug views, no-op-commit contract). Phase 0 next.
+- **2026-09-10** — Plan opened on branch `fog-nebula`. External review incorporated.
+- **2026-09-11** — **Phases 0, 1, and 2 shipped.** Initial user testing revealed two visual artifacts:
+  1. *Black line around planet radius*: Caused by bilateral upsample division-by-zero on sharp depth discontinuities in `volblur.glsl`, combined with depth mip linear filtering in `volume.glsl`.
+  2. *Floating cube faces & grid lines*: Caused by $L_\infty$ Chebyshev box metrics in `anchorEnvelope`, sign loss in `cloudSection` via `abs(rd)`, and floating-point `math.sin` hash precision loss in `NebulaVolumes.lua`.
+- **2026-09-11** — **Artifact Root Causes Resolved & Validated**:
+  - `NebulaVolumes.lua`: Switched to integer cell coordinate hashing via 32-bit bitwise operations (`hash32`).
+  - `medium.glsl`: Replaced Chebyshev box metric with Euclidean spherical distance (`length(p - c.xyz) / r`) and $C^1$ smoothstep falloff. Fixed signed ray inverse calculation in `cloudSection`.
+  - `volume.glsl`: Standardized depth sampling to LOD `0.0`. Corrected step transmittance integration order.
+  - `volblur.glsl`: Standardized depth sampling to LOD `0.0`. Normalized sky depth comparisons ($d \ge 900000 \rightarrow 1000000$). Added edge fallback (`wsum < 1e-4`) to center tap `texelFetch(texVol, pH, 0)`, eliminating black silhouette artifacts.
+  - `Renderer.lua`: Cached persistent `self.anchorBytes` memory buffer to eliminate per-frame C-FFI heap allocations inside `Renderer:volume()`.
+  - Validator 130/0 @ 460 Core; boot and frame presentation clean across all debug modes.

@@ -1,19 +1,24 @@
 local istype = ffi.istype
 local GenUtil = {}
 
--- Find a suitable point on the given mesh for mounting a module.
--- Normal gives the module's desired surface normal direction, while facing
--- gives the direction in which the module should be free of obstruction
+--[[----------------------------------------------------------------------------
+  Finds an unobstructed surface mount point on a mesh using raycasting.
+  - `normal`: Desired surface normal direction for the mounted object.
+  - `facing`: Required clearance direction out from the surface.
+  - Returns Vec3f position or `nil` if no valid mount point is found in `maxTries`.
+----------------------------------------------------------------------------]]--
 function GenUtil.FindMountPoint (mesh, bsp, rng, normal, facing, maxTries)
   local radius = mesh:getRadius()
   local center = mesh:getCenter()
   local e2, e3 = Math.OrthoBasis(normal)
   local t = ffi.new('float[1]')
+
   for i = 1, maxTries do
     local ortho = rng:getDisc():scale(radius)
     local p1 = center + normal:scale(radius) + e2:scale(ortho.x) + e3:scale(ortho.y)
     local p2 = p1 - normal:scale(2.0 * radius)
     local ray = Ray(p1.x, p1.y, p1.z, p2.x - p1.x, p2.y - p1.y, p2.z - p1.z, 0, 1)
+
     if bsp:intersectRay(ray, t) then
       local p3 = ray:getPoint(t[0])
       local p4 = p3 + facing:scale(0.01)
@@ -27,6 +32,10 @@ function GenUtil.FindMountPoint (mesh, bsp, rng, normal, facing, maxTries)
   return nil
 end
 
+--[[----------------------------------------------------------------------------
+  Bakes a 3D procedural density volume (Tex3D) slice-by-slice using a fragment
+  shader. Used by SDF procedural mesh generators like `sdf/asteroid.glsl`.
+----------------------------------------------------------------------------]]--
 function GenUtil.ShaderToTex3D (shaderState, res, fmt)
   local self = Tex3D.Create(res, res, res, fmt)
   RenderState.PushAllDefaults()
@@ -48,10 +57,15 @@ function GenUtil.ShaderToTex3D (shaderState, res, fmt)
   return self
 end
 
+--[[----------------------------------------------------------------------------
+  Generates a 6-face cubemap texture (TexCube) from a fragment shader and argument
+  table. Automatically builds mipmaps and sets linear filtering.
+----------------------------------------------------------------------------]]--
 function GenUtil.ShaderToTexCube (res, fmt, fragShader, args)
   Profiler.Begin('Gen.ShaderToTexCube')
   local shader = Cache.Shader('ui', fragShader)
   local state = ShaderState.Create(shader)
+
   for k, v in pairs(args) do
     local t = type(v)
     if t == 'number' then
@@ -86,6 +100,5 @@ function GenUtil.ShaderToTexCube (res, fmt, fragShader, args)
   Profiler.End()
   return self
 end
-
 
 return GenUtil

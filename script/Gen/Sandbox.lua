@@ -1,6 +1,7 @@
-local Sandbox  = {}
-local sqrt     = sqrt
+local Sandbox = {}
+local sqrt, abs, exp = math.sqrt, math.abs, math.exp
 
+-- Primitive PolyMesh Box
 local function box ()
   return PolyMesh()
     :addVertex( 1, 1, 1)
@@ -19,6 +20,7 @@ local function box ()
     :addQuad(1, 5, 7, 3)
 end
 
+-- Primitive PolyMesh Tetrahedron
 local function tet ()
   return PolyMesh()
     :addVertex( sqrt(8/9), -1/3,          0)
@@ -28,6 +30,7 @@ local function tet ()
     :addTri(0, 1, 2) :addTri(0, 2, 3) :addTri(1, 3, 2) :addTri(0, 3, 1)
 end
 
+-- Primitive PolyMesh Icosahedron
 local function ico ()
   local p = (1.0 + sqrt(5)) / 2.0
   return PolyMesh()
@@ -40,6 +43,7 @@ local function ico ()
     :addTri(4, 3, 10) :addTri(4, 10, 8) :addTri(8, 10, 6) :addTri(0, 8, 6)  :addTri(0, 6, 7)
 end
 
+-- Prototype station mesh builder using CSG extrusion and vertex warping
 local function station1 (rng)
   local self = ico()
   self:selectAll()
@@ -68,30 +72,15 @@ local function station1 (rng)
   return self
 end
 
+-- Procedural bevelled station box generator
 function Sandbox.Station (seed)
   local rng = RNG.Create(seed + 0x58023)
   local self = box()
   self:selectAll()
-  for i = 1, 0 do
-    self:extrude( 0.0, 0.7)
-    self:extrude(-0.2, 1.0)
-    self:extrude( 0.0, 0.5)
-    self:extrude( 0.3, 0.5)
-    -- self:extrude( 1.0, 0.8)
-    -- self:extrude( 0.0, 0.5)
-    -- self:extrude(-0.5, 0.9)
-    -- self:extrude( 0.0, 0.50)
-    -- self:extrude( 1.0, 1.0)
-  end
-  -- self:extrude( 0.0, 0.75)
-  -- self:extrude(-0.2, 0.10)
 
-  -- self:triangulateCentroid()
   self = self:bevel(0.10)
   self = self:bevel(0.20)
   self = self:bevel(0.40)
-  -- self = self:bevel(0.25)
-  -- self = self:bevel(0.2)
   self:refine()
   return self:finalize(0.3)
 end

@@ -2,36 +2,26 @@ local DebugWindow = {}
 DebugWindow.__index = DebugWindow
 setmetatable(DebugWindow, UI.Window)
 
-local MemPool    = require('ffi.MemPool')   -- binds libphx.MemPool_GetSize
+local MemPool   = require('ffi.MemPool')   -- binds libphx.MemPool_GetSize
 local Container = require('UI.Container')
 
 DebugWindow.name = 'Debug Window'
 
 function DebugWindow:onEnable ()
-  -- Panel is interactive via the OS cursor: show it so widgets can be hovered
-  -- and clicked while the panel is open.
   Input.SetMouseVisible(true)
 end
 
 function DebugWindow:onDisable ()
-  -- Restore hidden cursor for normal play (the game reticle is the aim cursor).
   Input.SetMouseVisible(false)
 end
 
 function DebugWindow:input (state)
-  -- The panel is an overlay on the game: only route keyboard/nav/wheel into it
-  -- while the OS cursor is actually over it. With the cursor in the game view
-  -- the panel must not steal W/S/A/D (flight keys), space (fire/select) or the
-  -- scroll wheel (sliders/nav focus) from the ship.
   if not self:containsPoint(state.mousePosX, state.mousePosY) then return end
   Container.input(self, state)
 end
 
 function DebugWindow:onLayoutSize ()
   UI.Window.onLayoutSize(self)
-  -- Keep the panel proportional to the window so it reads the same on any
-  -- monitor and leaves room for the larger scaled fonts: ~34% of the width,
-  -- clamped to stay usable on narrow and ultra-wide displays.
   local w = self.ltheory and self.ltheory.resX or 1920
   local width = Math.Clamp(Math.Round(0.34 * w), 460, 820)
   self.desiredSX = max(self.desiredSX, width)
@@ -53,7 +43,6 @@ local sessionMinDt = nil
 local function getAllocationRate (dt)
   local alloc = GC.GetMemory()
   local freq = alloc - lastAlloc
-  -- Only update the EMA if the GC is inactive (freq < 0 -> GC is running)
   if freq >= 0 then emaAlloc = Math.EMA(emaAlloc, freq, dt, 1.0) end
   lastAlloc = alloc
   return emaAlloc
@@ -76,10 +65,6 @@ function DebugWindow:createProfilingText ()
           :add(UI.Label('FPS'))
           :add(UI.Label():setMinWidth(60):setFormat('%.0f')
             :setPollFn(function ()
-              -- Rolling average over the same 120-frame window as the 1% low
-              -- readout below (not the instantaneous EMA), so the 1% low can
-              -- never appear higher than the average FPS. Read-only here; the
-              -- 1% low poll owns appending to frameHist.
               local sum = 0
               for i = 1, #frameHist do sum = sum + frameHist[i] end
               local n = math.max(1, #frameHist)
@@ -222,9 +207,6 @@ function DebugWindow:createUISection ()
         :add(UI.Button('Toggle Grid Layout', function (button, state)
           if uiDebugGrid.fixedRows then uiDebugGrid:setCols(2) else uiDebugGrid:setRows(2) end end))
         :add(uiDebugGrid:setPadCellX(8)
-          --:add(UI.Label('Input Time'))
-          --:add(UI.Label():setFormat('%.3f ms')
-          --  :setPollFn(function () return 1000 * canvas.inputTime end))
           :add(UI.Label('Update Time'))
           :add(UI.Label():setFormat('%.3f ms')
             :setPollFn(function () return 1000 * canvas.updateTime end))
@@ -234,12 +216,6 @@ function DebugWindow:createUISection ()
           :add(UI.Label('Draw Time'))
           :add(UI.Label():setFormat('%.3f ms')
             :setPollFn(function () return 1000 * self.drawTime end))
-          --:add(UI.Label('Total Time'))
-          --:add(UI.Label():setFormat('%.3f ms')
-          --  :setPollFn(function () return 1000 * (canvas.inputTime + canvas.updateTime + canvas.layoutTime + self.drawTime) end))
-          -- TODO : Fix this
-          --:add(UI.Label('Input Events'))
-          --:add(UI.Label():setPollFn(function () return self.ltheory.eventCount end))
           :add(UI.Label('Focus'))
           :add(UI.Label():setMinWidth(160):setPollFn(function ()
             return state.focus and state.focus.name or 'nil' end))
@@ -268,8 +244,6 @@ function DebugWindow:createUISection ()
             function (enabled) canvas.drawFocus = enabled end))
           :add(UI.Label('Mouse Position'))
           :add(UI.Label():setPollFn(function () return (Vec2i(state.mousePosX, state.mousePosY)) end))
-          --:add(UI.Label('Active Device'))
-          --:add(UI.Label():setPollFn(function () local d = ffi.new('Device') Input.GetActiveDevice(d) return d end))
           :add(UI.Label('Active Device Type'))
           :add(UI.Label():setPollFn(Input.GetActiveDeviceType))
           :add(UI.Label('Active Device ID'))
@@ -347,9 +321,6 @@ end
 function DebugWindow:getSection (name)
   local section = self.sections[name]
   if section then return section end
-  -- Settings section: one full-width row per setting. Each setting is added as
-  -- a single nested row-grid child (see createSettingsSections), so the outer
-  -- grid must be single-column to stop two settings sharing a row.
   section = UI.Grid():setCols(1):setPadCellX(8):setPad(2, 12, 2, 2)
   self.contents
     :add(UI.NavGroup()
@@ -364,7 +335,6 @@ function DebugWindow:getSection (name)
   return section
 end
 
--- TODO JP : Temporary hack to avoid Debug wrapper
 local instance
 
 function DebugWindow.SetValue (section, name, value)
@@ -383,10 +353,6 @@ function DebugWindow.SetValue (section, name, value)
   w:setText(value)
 end
 
--- Dump every live debug setting (plus a little runtime state) to the console
--- and log/settings_dump.txt, so the exact tuning state can be pasted to an
--- assistant when troubleshooting. Triggered by the "Dump Settings" button in
--- the Profiling section.
 function DebugWindow.DumpSettings ()
   local self = instance
   local lt = self and self.ltheory
@@ -399,7 +365,7 @@ function DebugWindow.DumpSettings ()
     local dt = lt.dt or 0
     table.insert(lines, string.format('window:  %dx%d', lt.resX or 0, lt.resY or 0))
 
-    do -- Runtime / profiling readouts (mirrors the Profiling section)
+    do
       local rt    = lt.gameView and lt.gameView.renderTimes or {}
       local sys   = lt.system
       local objs, rigs = 0, 0
@@ -428,7 +394,7 @@ function DebugWindow.DumpSettings ()
         GC.GetMemory() / 1024, emaAlloc, GC.GetPasses(), GC.GetFrequency()))
     end
 
-    do -- HDR exposure meter readout (lit buffer, pre-tonemap)
+    do
       local r = lt.gameView and lt.gameView.renderer
       if r and r.exposure then
         table.insert(lines, string.format('hdr:     avg %s max %s over1 %.2f%% lit %s autoEV %+.2f',
@@ -491,12 +457,22 @@ function DebugWindow.Create (ltheory)
   end
 
   self.draggable = false
+
+  -- ScrollView configured with faster mouse wheel scroll speed
+  local scrollView = UI.ScrollView()
+    :setPadUniform(2)
+    :setScrollable(false, true)
+    :add(self.contents)
+
+  if scrollView.setScrollSpeed then
+    scrollView:setScrollSpeed(36)
+  elseif scrollView.scrollSpeed then
+    scrollView.scrollSpeed = 36
+  end
+
   self
     :setStretchY(1)
-    :add(UI.ScrollView()
-      :setPadUniform(2)
-      :setScrollable(false, true)
-      :add(self.contents))
+    :add(scrollView)
 
   instance = self
   return self
