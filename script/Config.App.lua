@@ -174,6 +174,20 @@ Config.gpu = {
   radialblurStrength = 1,      --   (0..1)
   radialblurScanlines = 1,     --   (0..1)
 
+  -- Distance haze (postfx.fog.*). Opt-in; first pass at roadmap #13's fog (no
+  -- streaming). Aerial perspective: haze blends toward the nebula color behind
+  -- each pixel (envMap sampled along the view ray), tinted toward the user
+  -- color by `tint`, clamped at `maxHaze` so you're never fully blind. Skybox
+  -- pixels are exempt (safe beyond 950k of the 1e6 farPlane) so the starfield
+  -- stays crisp.
+  fogEnable  = false,
+  fogDensity = 0.000005, -- exponential depth haze (0..0.0005)
+  fogTint    = 0.15,     -- blend env-matched haze toward user color (0..1)
+  fogMaxHaze = 0.95,     -- cap the haze factor so silhouettes stay visible
+  fogR       = 0.04,     -- haze tint color
+  fogG       = 0.06,
+  fogB       = 0.13,
+
   -- Sun: the warm directional light + ambient fill that makes asteroid fields /
   -- dust lanes read as "lit by the system's star" (System.starDir). Matches the
   -- hardcoded starColor (1, 0.5, 0.1) used by planet atmospheric scattering.
@@ -185,6 +199,7 @@ Config.gpu = {
   sunWarmth       = 1,     --   1 = warm orange (matching starColor), 0 = white
   sunShadows      = true,  -- directional shadow map from the sun
   sunShadowRange  = 8000,  --   half-size of the ortho shadow box (world units)
+  sunShadowSize   = '2048',--   shadow map resolution (256/512/1024/2048)
 
   -- PBR finishing: dielectric specular intensity (0..1) and IBL intensity
   -- (scales the irMap/envMap ambient in light/global).
@@ -198,6 +213,8 @@ Config.gpu = {
   aoQuality     = 'Half',-- Off | Half | Quarter AO resolution
   aoRadius      = 500,   -- world-space occlusion radius (0.1..4000)
   aoIntensity   = 1.5,   -- AO power curve / strength (0..3); user-approved default (Phase C close 2026-09-10)
+  fillOcclude   = 1,     -- 1 = occlude the sun hemisphere fill like the IBL (Phase-C look);
+                         -- 0 = "correct" ambient-only (fill stays warm in shadow) — §9.2 storytelling knob
   aoDirections  = 4,     -- GTAO slices (2/4/6/8)
   aoSteps       = 3,     -- taps per slice (2/3/4/6)
   aoThickness   = 0.25,  -- silhouette bias (0..1) — keeps rims lit, not black

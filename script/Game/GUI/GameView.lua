@@ -216,17 +216,24 @@ end
 -- the camera-centered radial distance; only the direct (non-ambient) sun term
 -- is killed. Higher resolution than the point lights since it is shared by ALL
 -- pixels rather than one light's neighborhood.
-local function sunShadowSize (sx, sy)
-  local scale = math.min(2048 / sx, 2048 / sy)
+local function sunShadowSize (sx, sy, target)
+  local scale = math.min(target / sx, target / sy)
   return math.max(256, math.floor(sx * scale)), math.max(256, math.floor(sy * scale))
 end
 
 function GameView:renderSunShadow (world)
-  if not self.sunShadowTex then
-    local sw, sh = sunShadowSize(self.sx, self.sy)
+  -- Enum value is an index into the settings elems; map back to a pixel size.
+  local sizes = { '256', '512', '1024', '2048' }
+  local target = tonumber(sizes[Settings.get('render.sun.shadowSize') or 4]) or 2048
+  -- Recreate the Depth32F map on resolution or size-enum toggle.
+  local key = target .. 'x' .. self.sx .. 'x' .. self.sy
+  if key ~= self.sunShadowSizeKey then
+    if self.sunShadowTex then self.sunShadowTex:free() end
+    local sw, sh = sunShadowSize(self.sx, self.sy, target)
     self.sunShadowTex = Tex2D.Create(sw, sh, TexFormat.Depth32F)
     self.sunShadowTex:setMinFilter(TexFilter.Linear)
     self.sunShadowTex:genMipmap()
+    self.sunShadowSizeKey = key
   end
 
   -- Box half-size covers the visible field; centered on the camera so the
@@ -469,13 +476,32 @@ function GameView:draw (focus, active)
   if GameView.__dumpGBuffer then GameView.__dumpGBuffer() end
 
   do -- Lighting
-    -- Gather light sources (entity, world pos, final lit pos incl. +5 lift, color)
-    local lights = {}
+    -- Gather light sources (entity, world pos, final lit pos incl. +5 lift,
+    -- color). Entries are pooled across frames — the table and entry objects are
+    -- reused, entries past `n` are cleared — so the hot path allocates only the
+    -- per-light lp Vec3f that the +5 lift inherently needs.
+    local lights = self.lights
+    if not lights then
+      lights = {}
+      self.lights = lights
+    end
+    local n = 0
     for i, v in world:iterChildren() do
       if v:hasLight() then
-        insert(lights, { entity = v, pos = v:getPos(), lp = Vec3f(v:getPos().x, v:getPos().y + 5, v:getPos().z), color = v:getLight() })
+        n = n + 1
+        local e = lights[n]
+        if not e then
+          e = { entity = nil, pos = nil, lp = nil, color = nil }
+          lights[n] = e
+        end
+        local p = v:getPos()
+        e.entity = v
+        e.pos = p
+        e.lp = Vec3f(p.x, p.y + 5, p.z)
+        e.color = v:getLight()
       end
     end
+    for j = n + 1, #lights do lights[j] = nil end
 
     do -- GTAO: screen-space ambient occlusion (ambient-only, before the global pass)
       if Settings.get('ssao.enable') then
@@ -496,11 +522,13 @@ function GameView:draw (focus, active)
           Shader.SetTex2D('texAO', self.aoFull)
           Shader.SetFloat('aoStrength', Settings.get('ssao.intensity') or 1)
           Shader.SetFloat('aoShow', Settings.get('ssao.show') and 1 or 0)
+          Shader.SetFloat('fillOcclude', Settings.get('ssao.fillOcclude') or 1)
         else
           -- AO off: bind the white fallback (or any texture — aoStrength 0 kills it)
           Shader.SetTex2D('texAO', self.aoWhite or self.renderer.zBufferL)
           Shader.SetFloat('aoStrength', 0)
           Shader.SetFloat('aoShow', 0)
+          Shader.SetFloat('fillOcclude', 1)
         end
         Draw.Rect(-1, -1, 2, 2)
         shader:stop()
@@ -684,6 +712,21 @@ function GameView:draw (focus, active)
   else
     self.renderer:startPostEffects()
     if Settings.get('postfx.bloom.enable') then self.renderer:bloom(Settings.get('postfx.bloom.radius')) end
+    -- Distance haze (opt-in): pre-tonemap so it tonemaps with the scene and the
+    -- exposure meter reflects whatever the haze does to luminance. Aerial
+    -- perspective needs the nebula envMap + camera inverse matrices (popped at
+    -- camera:endDraw above the post chain) for a per-pixel world view ray.
+    if Settings.get('postfx.fog.enable') then
+      local sys = self.ltheory and self.ltheory.system
+      local neb = sys and sys.nebula
+      if neb and neb.envMap then
+        ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
+        ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
+        self.renderer:fog(neb.envMap)
+        ShaderVar.Pop('mProjInv')
+        ShaderVar.Pop('mViewInv')
+      end
+    end
     -- HDR exposure meter: reads the pre-tonemap scene into a 1x1 texel for the
     -- debug-panel readout and auto-exposure. Must run before tonemap's swap.
     self.renderer:meter()

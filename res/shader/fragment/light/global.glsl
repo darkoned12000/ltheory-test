@@ -36,6 +36,13 @@ uniform sampler2D texAO;
 uniform float aoStrength;
 uniform float aoShow;
 
+/* fillOcclude (0..1) splits the AO factor applied to the sun hemisphere fill
+ * from the IBL term: 1 (default, the Phase-C-signed-off look) darkens the fill
+ * exactly like the envMap ambient; 0 is the "correct" ambient-only variant
+ * where only the IBL term is occluded and shadowed sides keep their warm
+ * sun-facing fill. `ssao.fillOcclude` — the storytelling knob (see §9.2). */
+uniform float fillOcclude;
+
 float roughnessToLOD (float r) {
   return 8.0 * (pow(2.0, r) - 1.0);
 }
@@ -58,6 +65,7 @@ void main () {
 
   float ao = texture(texAO, uv).r;
   float aoF = mix(1.0, ao, aoStrength);
+  float aoFill = mix(1.0, ao, aoStrength * fillOcclude);
 
   if (aoShow > 0.5) {
     /* Preview: the ambient contribution AO modulates, in isolation — crevice/
@@ -68,12 +76,12 @@ void main () {
     if (mat == Material_NoShade)
       fragData0 = vec4(vec3(1.0), 1.0);
     else
-      fragData0 = vec4((linear(textureLod(irMap, N, 8.0).xyz) * envScale + fill) * aoF, 1.0);
+      fragData0 = vec4((linear(textureLod(irMap, N, 8.0).xyz) * envScale) * aoF + fill * aoFill, 1.0);
     return;
   }
 
   if (mat == Material_Diffuse || mat == Material_Ice) {
-    light += (linear(textureLod(irMap, N, 8.0).xyz) * envScale + fill) * aoF;
+    light += (linear(textureLod(irMap, N, 8.0).xyz) * envScale) * aoF + fill * aoFill;
   }
 
   else if (mat == Material_Metal) {

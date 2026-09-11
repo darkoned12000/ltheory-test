@@ -505,19 +505,32 @@ branch is open — every one is data-driven + debug-panel-presented:
 
 **Visual pops**
 1. **Distance haze / heat-layer fog (`postfx.fog.*`, off by default)** — the
-   single biggest "space vastness" win after the sun: exponential depth haze toward
-   a deep bluish-neutral `fogColor`, folded into the composite (uses `texDepth`
-   linear distance, no extra render). Opt-in `fog.enable/density/color` so the
-   branch stays focused; a first pass at roadmap #13's fog item (#13's streaming is
-   out of scope here).
-2. **Star disc occlusion garnish — the "mood" knob** — with ambient-out-of-GTAO we
-   can optionally modulate `sunColor`'s hemisphere fill by AO too (a *second*,
-   user-visible knob `ssao.fillOcclude`, default **off**) so huge structures cast
-   soft "ambient shadow" inside caves under the sun. (Correct AO is ambient-only;
-   this is the stylized, game-y variant — hence opt-in.) Reframed by the 2026-09-09
-   design review: this is the deliberate **storytelling** lever — a canyon that goes
-   truly dark reads mysterious, not photometric. When tuning with `fillOcclude` on,
-   bias toward cliff-darkness over accuracy.
+   single biggest "space vastness" win after the sun. Implemented (uncommitted)
+   as a `worldray` post pass `filter/fogw.glsl` ran between bloom and the meter
+   (pre-tonemap), exponential depth haze off `zBufferL`'s linear distance.
+   **Aerial perspective:** each pixel blends toward the nebula color actually
+   behind it — the fog pass re-derives a per-pixel world view ray from `uv` +
+   the camera's `mViewInv`/`mProjInv` (re-pushed around the pass; `Camera:endDraw`
+   pops them before the post chain) and samples the nebula `envMap` along it.
+   `postfx.fog.tint` (0..1) then leans the env-matched color toward `postfx.fog.r/
+   g/b`, and `postfx.fog.maxHaze` clamps the haze factor so distant silhouettes
+   stay readable (never fully blind). **Sky exemption gate:** the skybox *does*
+   write `zBufferL` via `setDepth()` (`length(farPlane*vertPos-eye)`, farPlane=1e6,
+   common.glsl) — only `gl_FragDepth` is masked — so sky pixels read `dist >= ~1e6`;
+   the gate `dist >= 950000` keeps the starfield crisp, corrected 2026-09-10 after
+   an initial `dist < 1e-4` sentinel fogged the whole sky. Opt-in
+   `fog.enable/density/tint/maxHaze/color`; a first pass at roadmap #13's fog item
+   (#13's streaming is out of scope). Dust/volume (3D billboard `dustcloud` etc.)
+   is a separate stack — fog is the camera-attached depth cue; lightning-style
+   nebula effects would spawn *inside* the dust volume, not the fog pass.
+2. **Star disc occlusion garnish — the "mood" knob — DONE (default 1, §9)** —
+   implemented as `ssao.fillOcclude` (0..1) in `light/global.glsl`: 1 (default,
+   preserving the Phase-C-signed-off look) occludes the sun hemisphere fill exactly
+   like the IBL term; 0 is the "correct" ambient-only variant where only the
+   envMap ambient is occluded and shadowed sides keep their warm sun-facing fill.
+   Sold as the deliberate **storytelling** lever (canyon goes truly dark = mystery,
+   not photometry); applied identically in the `aoShow` preview branch and pushed
+   from `GameView`'s global pass (both `aoFull` and AO-off paths).
 3. **Bloom default nudge + sun-scale knee**: current defaults are already
    sign-off'd; leave unless the planet-atmosphere rim starts clipping.
 4. **Ship/planet specular falloff tweak**: `lighting.specular` roughness remap
@@ -525,12 +538,21 @@ branch is open — every one is data-driven + debug-panel-presented:
    than plastic — half-day, contained to `pbr.glsl` + a knob.
 
 **CPU / memory / FPS**
-5. **Pool the per-frame `lights` table** (existing TODO in `GameView.lua:draw`) —
-   no more per-frame table + closures; micro but free.
-6. **Sun shadow map is the current second-most-expensive pass** — add a
-   `render.sun.shadowSize` (256/512/1024/2048) enum; 1024 is ~indistinguishable at
-   gameplay distances for a third of the fill+filter cost. Debounce/convert on
-   toggle.
+5. **Pool the per-frame `lights` table — DONE (§9)** — `GameView.lua:draw`
+   reuses `self.lights` and its entry tables across frames (entries past the
+   live count are cleared), so the lighting hot path allocates only the per-light
+   `lp` `Vec3f` that the +5 lift inherently needs. `renderShadows` and the point
+   loop read `entity`/`lp`/`color` via `ipairs` unchanged.
+6. **Sun shadow map is the current second-most-expensive pass — DONE (§9)** —
+   `render.sun.shadowSize` (256/512/1024/2048) enum wired: GameView recreates
+   `sunShadowTex` (Depth32F + mip chain) when the enum or window resolution
+   changes (cached `sunShadowSizeKey`), and `sunShadowSize(sx,sy,target)` clamps
+   the max dimension. 1024 is ~indistinguishable at gameplay distances for a
+   third of the fill+filter cost. **Contract gotcha:** enum settings store an
+   *index* into their `elems` (see `Settings.addEnum`), so the seed maps the
+   config string via `sunShadowIdx` and GameView maps the index back via the
+   elems table — seeding the raw string crashed the debug-panel `OptionSlider`
+   (`Font:getSize(nil)` segfault).
 7. **Reuse for AO**: `zBufferL` mips (no new depth buffer), half-res R8 AO buffers,
    single blue-noise LUT reused across all three passes and the existing grain pass
    (already has a hash — leave).
