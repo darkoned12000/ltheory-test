@@ -10,6 +10,120 @@ local Batcher = require('Game.Batcher')
 -- Set PHX_DEBUG_DUMP=120 to snapshot ~2s after boot.
 local dumpTargetFrame = tonumber(os.getenv('PHX_DEBUG_DUMP') or '')
 
+-- AO render targets: color-only buffers (no depth attachment), clamped + linear,
+-- cleared once so the FBO is complete. Half-res R8/16F for passes 1-2, full-res
+-- R8 for the final depth-aware upsample.
+local function aoTarget (w, h, format)
+  local t = Tex2D.Create(w, h, format)
+  t:setMagFilter(TexFilter.Linear)
+  t:setMinFilter(TexFilter.Linear)
+  t:setWrapMode(TexWrapMode.Clamp)
+  t:push()
+  Draw.Clear(0, 0, 0, 0)
+  t:pop()
+  return t
+end
+
+-- Blue-noise 64x64 slice-rotation LUT (Phase B). Frequency-domain-ranked blue
+-- noise: forward-FFT a deterministic white field, high-pass the low-frequency
+-- band, inverse-FFT, then assign ranks so the marginal distribution stays
+-- uniform on [0,1). Determinism comes from a Park-Miller LCG (exact in double).
+-- Low-frequency suppression is what keeps the half-res AO stable under the 3x3
+-- denoise + 2x SS; a white-noise rotation would crawl. Build once (~2ms) at
+-- first use, cache on self.aoNoise (R8, point, repeat).
+local function fft1D (re, im, base, stride, n, inverse)
+  local j = 0
+  for i = 0, n - 1 do
+    if i < j then
+      local ri, gi = re[base+i*stride], im[base+i*stride]
+      re[base+i*stride], im[base+i*stride] = re[base+j*stride], im[base+j*stride]
+      re[base+j*stride], im[base+j*stride] = ri, gi
+    end
+    local m = n >> 1
+    while m >= 1 and j >= m do j = j - m; m = m >> 1 end
+    j = j + m
+  end
+  local len = 2
+  while len <= n do
+    local ang = (inverse and 1 or -1) * (2 * math.pi) / len
+    local wdRe, wdIm = math.cos(ang), math.sin(ang)
+    local half = len >> 1
+    for k = 0, n - 1, len do
+      local wRe, wIm = 1.0, 0.0
+      for x = 0, half - 1 do
+        local i0, i1 = base + (k+x)*stride, base + (k+x+half)*stride
+        local vRe = re[i1]*wRe - im[i1]*wIm
+        local vIm = re[i1]*wIm + im[i1]*wRe
+        local uRe, uIm = re[i0], im[i0]
+        re[i0], im[i0] = uRe + vRe, uIm + vIm
+        re[i1], im[i1] = uRe - vRe, uIm - vIm
+        wRe, wIm = wRe*wdRe - wIm*wdIm, wRe*wdIm + wIm*wdRe
+      end
+    end
+    len = len * 2
+  end
+  if inverse then
+    for i = 0, n - 1 do
+      re[base+i*stride] = re[base+i*stride] / n
+      im[base+i*stride] = im[base+i*stride] / n
+    end
+  end
+end
+
+local function smoothstep (a, b, x)
+  x = math.min(1, math.max(0, (x - a) / (b - a)))
+  return x * x * (3 - 2 * x)
+end
+
+local function buildBlueNoise (n)
+  local total = n * n
+  local re, im = {}, {}
+  local x = 123457 -- Park-Miller seed; values in [0,1)
+  local function rng ()
+    x = (x * 16807) % 2147483647
+    return (x - 1) / 2147483646
+  end
+  for i = 0, total - 1 do re[i] = rng(); im[i] = 0.0 end
+  for r = 0, n - 1 do fft1D(re, im, r*n, 1, n, false) end
+  for c = 0, n - 1 do fft1D(re, im, c, n, n, false) end
+  local half = n / 2
+  for v = 0, n - 1 do
+    local dv = v
+    if dv > half then dv = dv - n end
+    for u = 0, n - 1 do
+      local du = u
+      if du > half then du = du - n end
+      local rho = math.sqrt(du*du + dv*dv) / half
+      local w = (du == 0 and dv == 0) and 0.0 or smoothstep(0.10, 0.90, rho)
+      local i = v*n + u
+      re[i] = re[i] * w
+      im[i] = im[i] * w
+    end
+  end
+  for r = 0, n - 1 do fft1D(re, im, r*n, 1, n, true) end
+  for c = 0, n - 1 do fft1D(re, im, c, n, n, true) end
+  local ord = {}
+  for i = 0, total - 1 do ord[i+1] = { re[i], i } end
+  table.sort(ord, function (a, b) return a[1] < b[1] end)
+  local out = {}
+  for k, e in ipairs(ord) do out[e[2]] = (k - 0.5) / total end
+  return out
+end
+
+local function buildBlueNoiseTex (n)
+  local vals = buildBlueNoise(n)
+  local total = n * n
+  local bytes = Bytes.Create(total)
+  local p = ffi.cast('uint8_t*', bytes:getData())
+  for i = 0, total - 1 do p[i] = math.floor(vals[i] * 256 + 0.5) % 256 end
+  local tex = Tex2D.Create(n, n, TexFormat.R8)
+  tex:setDataBytes(bytes, PixelFormat.Red, DataFormat.U8)
+  tex:setMagFilter(TexFilter.Point)
+  tex:setMinFilter(TexFilter.Point)
+  tex:setWrapMode(TexWrapMode.Repeat)
+  return tex
+end
+
 
 -- Point-light shadow maps (item #3). For each light we render the opaque world
 -- into a Depth32F texture using an ortho frustum centered on the light and
@@ -102,17 +216,24 @@ end
 -- the camera-centered radial distance; only the direct (non-ambient) sun term
 -- is killed. Higher resolution than the point lights since it is shared by ALL
 -- pixels rather than one light's neighborhood.
-local function sunShadowSize (sx, sy)
-  local scale = math.min(2048 / sx, 2048 / sy)
+local function sunShadowSize (sx, sy, target)
+  local scale = math.min(target / sx, target / sy)
   return math.max(256, math.floor(sx * scale)), math.max(256, math.floor(sy * scale))
 end
 
 function GameView:renderSunShadow (world)
-  if not self.sunShadowTex then
-    local sw, sh = sunShadowSize(self.sx, self.sy)
+  -- Enum value is an index into the settings elems; map back to a pixel size.
+  local sizes = { '256', '512', '1024', '2048' }
+  local target = tonumber(sizes[Settings.get('render.sun.shadowSize') or 4]) or 2048
+  -- Recreate the Depth32F map on resolution or size-enum toggle.
+  local key = target .. 'x' .. self.sx .. 'x' .. self.sy
+  if key ~= self.sunShadowSizeKey then
+    if self.sunShadowTex then self.sunShadowTex:free() end
+    local sw, sh = sunShadowSize(self.sx, self.sy, target)
     self.sunShadowTex = Tex2D.Create(sw, sh, TexFormat.Depth32F)
     self.sunShadowTex:setMinFilter(TexFilter.Linear)
     self.sunShadowTex:genMipmap()
+    self.sunShadowSizeKey = key
   end
 
   -- Box half-size covers the visible field; centered on the camera so the
@@ -150,6 +271,112 @@ function GameView:renderSunShadow (world)
   RenderTarget.Pop()
 end
 
+
+-- GTAO chain: aoview (half-res view rays + NdotV) -> ao (naive horizon
+-- integral, half-res) -> aoblur (full-res depth-aware upsample + denoise).
+-- Ambient-only by construction: only light/global.glsl consumes texAO, so the
+-- sun and point lights are untouched. See ssao-gtao-implementation.md.
+function GameView:renderAO ()
+  local r = self.renderer
+  local sx, sy = r.sx, r.sy
+
+  local q = Settings.get('ssao.quality') or 2
+  local k = (q <= 1) and 1 or ((q == 2) and 2 or 4)
+  local aoW = math.max(1, math.floor(sx / k))
+  local aoH = math.max(1, math.floor(sy / k))
+  local aoMip = math.log(math.max(1, sx / aoW)) / math.log(2)
+
+  -- (Re)create the half-res targets on resolution/quality change.
+  if not self.aoView or self.aoView:getSize().x ~= aoW then
+    if self.aoView then
+      self.aoView:free()
+      self.aoRaw:free()
+    end
+    self.aoView = aoTarget(aoW, aoH, TexFormat.RGBA16F)
+    self.aoRaw  = aoTarget(aoW, aoH, TexFormat.R8)
+  end
+  -- Full-res composite texture (what global.glsl samples).
+  if not self.aoFull or self.aoFull:getSize().x ~= sx then
+    if self.aoFull then self.aoFull:free() end
+    self.aoFull = aoTarget(sx, sy, TexFormat.R8)
+  end
+  -- 1x1 white fallback bound whenever the AO chain is off.
+  if not self.aoWhite then
+    self.aoWhite = aoTarget(1, 1, TexFormat.R8)
+    self.aoWhite:push()
+    Draw.Color(1, 1, 1, 1)
+    Draw.Rect(0, 0, 1, 1)
+    self.aoWhite:pop()
+  end
+
+  -- Blue-noise 64x64 slice-rotation LUT (built once, resolution-independent).
+  if not self.aoNoise then
+    self.aoNoise = buildBlueNoiseTex(64)
+  end
+
+  Profiler.Begin('Render.AO')
+
+  do -- Pass 1: per-pixel view ray + NdotV (half-res)
+    local shader = Cache.Shader('worldray', 'filter/aoview')
+    if shader then
+      RenderTarget.Push(aoW, aoH)
+      RenderTarget.BindTex2D(self.aoView)
+      shader:start()
+      Shader.SetTex2D('texDepth', r.zBufferL)
+      Shader.SetTex2D('texNormalMat', r.buffer1)
+      Shader.SetFloat('aoMip', aoMip)
+      Draw.Rect(-1, -1, 2, 2)
+      shader:stop()
+      RenderTarget.Pop()
+    end
+  end
+
+  do -- Pass 2: horizon integral -> aoRaw (half-res). Fullscreen vertex (ui):
+    -- this pass needs only uv + its own mView/mProj uniforms — no world rays.
+    local shader = Cache.Shader('ui', 'filter/ao')
+    if shader then
+      local dirs  = { 2, 4, 6, 8 }
+      local steps = { 2, 3, 4, 6 }
+      RenderTarget.Push(aoW, aoH)
+      RenderTarget.BindTex2D(self.aoRaw)
+      shader:start()
+      Shader.SetTex2D('texView', self.aoView)
+      Shader.SetTex2D('texNormalMat', r.buffer1)
+      Shader.SetTex2D('texDepth', r.zBufferL)
+      Shader.SetTex2D('texNoise', self.aoNoise)
+      Shader.SetFloat('aoRadius',   Settings.get('ssao.radius') or 500)
+      Shader.SetFloat('aoIntensity', Settings.get('ssao.intensity') or 1)
+      Shader.SetFloat('aoMip',      aoMip)
+      Shader.SetFloat('aoSpacing',  1.0 / 3.0)
+      Shader.SetFloat('aoNoiseSize', 64.0)
+      Shader.SetFloat('thickness',  Settings.get('ssao.thickness') or 0.25)
+      Shader.SetInt  ('dirCount',   dirs[Settings.get('ssao.directions')] or 4)
+      Shader.SetInt  ('stepCount',  steps[Settings.get('ssao.steps')] or 3)
+      Draw.Rect(0, 0, aoW, aoH)
+      shader:stop()
+      RenderTarget.Pop()
+    end
+  end
+
+  do -- Pass 3: full-res depth-aware upsample + denoise -> aoFull
+    local shader = Cache.Shader('ui', 'filter/aoblur')
+    if shader then
+      local rad = Settings.get('ssao.radius') or 500
+      RenderTarget.Push(sx, sy)
+      RenderTarget.BindTex2D(self.aoFull)
+      shader:start()
+      Shader.SetTex2D('texAO', self.aoRaw)
+      Shader.SetTex2D('texDepth', r.zBufferL)
+      Shader.SetFloat('aoMip', aoMip)
+      Shader.SetFloat('aoBlurScale', 8.0 / math.max(1e-3, rad * rad))
+      Draw.Rect(0, 0, sx, sy)
+      shader:stop()
+      RenderTarget.Pop()
+    end
+  end
+
+Profiler.End()
+end
 
 function GameView:draw (focus, active)
   if dumpTargetFrame then
@@ -249,11 +476,36 @@ function GameView:draw (focus, active)
   if GameView.__dumpGBuffer then GameView.__dumpGBuffer() end
 
   do -- Lighting
-    -- Gather light sources (entity, world pos, final lit pos incl. +5 lift, color)
-    local lights = {}
+    -- Gather light sources (entity, world pos, final lit pos incl. +5 lift,
+    -- color). Entries are pooled across frames — the table and entry objects are
+    -- reused, entries past `n` are cleared — so the hot path allocates only the
+    -- per-light lp Vec3f that the +5 lift inherently needs.
+    local lights = self.lights
+    if not lights then
+      lights = {}
+      self.lights = lights
+    end
+    local n = 0
     for i, v in world:iterChildren() do
       if v:hasLight() then
-        insert(lights, { entity = v, pos = v:getPos(), lp = Vec3f(v:getPos().x, v:getPos().y + 5, v:getPos().z), color = v:getLight() })
+        n = n + 1
+        local e = lights[n]
+        if not e then
+          e = { entity = nil, pos = nil, lp = nil, color = nil }
+          lights[n] = e
+        end
+        local p = v:getPos()
+        e.entity = v
+        e.pos = p
+        e.lp = Vec3f(p.x, p.y + 5, p.z)
+        e.color = v:getLight()
+      end
+    end
+    for j = n + 1, #lights do lights[j] = nil end
+
+    do -- GTAO: screen-space ambient occlusion (ambient-only, before the global pass)
+      if Settings.get('ssao.enable') then
+        self:renderAO(world)
       end
     end
 
@@ -266,6 +518,18 @@ function GameView:draw (focus, active)
         Shader.SetTex2D('texDepth', self.renderer.zBufferL)
         Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
         Shader.SetFloat('envScale', Settings.get('lighting.ambientEnv') or 1)
+        if self.aoFull then
+          Shader.SetTex2D('texAO', self.aoFull)
+          Shader.SetFloat('aoStrength', Settings.get('ssao.intensity') or 1)
+          Shader.SetFloat('aoShow', Settings.get('ssao.show') and 1 or 0)
+          Shader.SetFloat('fillOcclude', Settings.get('ssao.fillOcclude') or 1)
+        else
+          -- AO off: bind the white fallback (or any texture — aoStrength 0 kills it)
+          Shader.SetTex2D('texAO', self.aoWhite or self.renderer.zBufferL)
+          Shader.SetFloat('aoStrength', 0)
+          Shader.SetFloat('aoShow', 0)
+          Shader.SetFloat('fillOcclude', 1)
+        end
         Draw.Rect(-1, -1, 2, 2)
         shader:stop()
         self.renderer.buffer2:pop()
@@ -448,6 +712,21 @@ function GameView:draw (focus, active)
   else
     self.renderer:startPostEffects()
     if Settings.get('postfx.bloom.enable') then self.renderer:bloom(Settings.get('postfx.bloom.radius')) end
+    -- Distance haze (opt-in): pre-tonemap so it tonemaps with the scene and the
+    -- exposure meter reflects whatever the haze does to luminance. Aerial
+    -- perspective needs the nebula envMap + camera inverse matrices (popped at
+    -- camera:endDraw above the post chain) for a per-pixel world view ray.
+    if Settings.get('postfx.fog.enable') then
+      local sys = self.ltheory and self.ltheory.system
+      local neb = sys and sys.nebula
+      if neb and neb.envMap then
+        ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
+        ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
+        self.renderer:fog(neb.envMap)
+        ShaderVar.Pop('mProjInv')
+        ShaderVar.Pop('mViewInv')
+      end
+    end
     -- HDR exposure meter: reads the pre-tonemap scene into a 1x1 texel for the
     -- debug-panel readout and auto-exposure. Must run before tonemap's swap.
     self.renderer:meter()

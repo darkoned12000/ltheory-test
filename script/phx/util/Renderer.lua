@@ -40,6 +40,13 @@ local Renderer = class(function (self)
   seed('postfx.radialblur.enable',   gpu.radialblur)
   seed('postfx.radialblur.strength', gpu.radialblurStrength)
   seed('postfx.radialblur.scanlines', gpu.radialblurScanlines)
+  seed('postfx.fog.enable',          gpu.fogEnable)
+  seed('postfx.fog.density',         gpu.fogDensity)
+  seed('postfx.fog.tint',            gpu.fogTint)
+  seed('postfx.fog.maxHaze',         gpu.fogMaxHaze)
+  seed('postfx.fog.r',               gpu.fogR)
+  seed('postfx.fog.g',               gpu.fogG)
+  seed('postfx.fog.b',               gpu.fogB)
 
   seed('render.sun.enable',    gpu.sunLight)
   seed('render.sun.intensity', gpu.sunIntensity)
@@ -47,9 +54,25 @@ local Renderer = class(function (self)
   seed('render.sun.warmth',    gpu.sunWarmth)
   seed('render.sun.shadows',   gpu.sunShadows)
   seed('render.sun.shadowRange', gpu.sunShadowRange)
+  local sunShadowIdx = { ['256'] = 1, ['512'] = 2, ['1024'] = 3, ['2048'] = 4 }
+  seed('render.sun.shadowSize', sunShadowIdx[gpu.sunShadowSize])
 
   seed('lighting.specular',  gpu.dielectricSpec)
   seed('lighting.ambientEnv', gpu.ambientEnv)
+
+  local aoQIdx    = { Off = 1, Half = 2, Quarter = 3 }
+  local aoDirIdx  = { ['2'] = 1, ['4'] = 2, ['6'] = 3, ['8'] = 4 }
+  local aoStepIdx = { ['2'] = 1, ['3'] = 2, ['4'] = 3, ['6'] = 4 }
+  local aoBlurIdx = { ['0'] = 1, ['1'] = 2, ['2'] = 3 }
+  seed('ssao.enable',    gpu.aoEnabled)
+  seed('ssao.quality',   aoQIdx[gpu.aoQuality])
+  seed('ssao.radius',    gpu.aoRadius)
+  seed('ssao.intensity', gpu.aoIntensity)
+  seed('ssao.fillOcclude', gpu.fillOcclude)
+  seed('ssao.directions', aoDirIdx[gpu.aoDirections])
+  seed('ssao.steps',     aoStepIdx[gpu.aoSteps])
+  seed('ssao.thickness', gpu.aoThickness)
+  seed('ssao.blur',      aoBlurIdx[gpu.aoBlur])
 
   local filterIdx = { Bilinear = 1, Trilinear = 2, Aniso = 3, Anisotropic = 3 }
   seed('render.textureFilter', filterIdx[gpu.filtering])
@@ -99,6 +122,13 @@ Settings.addFloat ('postfx.vignette.strength',   ' - Strength', 0.25, 0, 1)
 Settings.addFloat ('postfx.vignette.hardness',   ' - Hardness', 20.0, 2, 32)
 Settings.addBool  ('postfx.grain.enable',        'Film Grain',  false)
 Settings.addFloat ('postfx.grain.strength',      ' - Amount',   1, 0, 4)
+Settings.addBool  ('postfx.fog.enable',   'Distance Haze',   false)
+Settings.addFloat ('postfx.fog.density',  ' - Density',    0.000005, 0, 0.0005)
+Settings.addFloat ('postfx.fog.tint',     ' - Tint',       0.15, 0, 1)
+Settings.addFloat ('postfx.fog.maxHaze',  ' - Max Haze',   0.95, 0, 1)
+Settings.addFloat ('postfx.fog.r',        ' - Color R',    0.04, 0, 1)
+Settings.addFloat ('postfx.fog.g',        ' - Color G',    0.06, 0, 1)
+Settings.addFloat ('postfx.fog.b',        ' - Color B',    0.13, 0, 1)
 
 Settings.addFloat ('render.fovY',        'FOV',                   70, 50, 100)
 Settings.addEnum  ('render.superSample', 'SuperSampling',         2, { 'Off', '2x', '4x' })
@@ -111,14 +141,29 @@ Settings.addFloat ('render.shadow.bias',   'Shadow Bias',           0.001, -0.01
 Settings.addFloat ('render.shadow.scale',  'Shadow Dist Scale',     0.0005, 0, 0.01)
 Settings.addBool  ('render.sun.enable',    'Sun Light',             true)
 Settings.addFloat ('render.sun.intensity', ' - Intensity',          1, 0, 6)
-Settings.addFloat ('render.sun.fill',      ' - Ambient Fill',       0.12, 0, 1)
+Settings.addFloat ('render.sun.fill',      ' - Ambient Fill',       0.30, 0, 1)
 Settings.addFloat ('render.sun.warmth',    ' - Warmth',             1, 0, 1)
 Settings.addBool  ('render.sun.shadows',   ' - Shadows',            true)
 Settings.addFloat ('render.sun.shadowRange', ' - Shadow Range',     8000, 500, 20000)
+Settings.addEnum  ('render.sun.shadowSize', ' - Shadow Res',        4, { '256', '512', '1024', '2048' })
 Settings.addBool  ('render.vsync',       'VSync',                 true)
 
-Settings.addFloat ('lighting.ambientEnv', 'Environment Light',     1, 0, 3)
+Settings.addFloat ('lighting.ambientEnv', 'Environment Light',     1.35, 0, 3)
 Settings.addFloat ('lighting.specular',   'Dielectric Specular',   0.35, 0, 1)
+
+-- Screen-space ambient occlusion (GTAO). Default OFF until the mid-tier perf
+-- gate in ssao-gtao-implementation.md is measured; the debug section is
+-- auto-built from the 'ssao' prefix (first key segment) by DebugWindow.
+Settings.addBool  ('ssao.enable',      'Ambient Occlusion',  false)
+Settings.addEnum  ('ssao.quality',     ' - Resolution',      2, { 'Off', 'Half', 'Quarter' })
+Settings.addFloat ('ssao.radius',      ' - Radius',          500, 0.1, 4000)
+Settings.addFloat ('ssao.intensity',   ' - Intensity',       1.5, 0, 3)
+Settings.addFloat ('ssao.fillOcclude', ' - Fill Occlude',    1, 0, 1)
+Settings.addEnum  ('ssao.directions',  ' - Directions',      2, { '2', '4', '6', '8' })
+Settings.addEnum  ('ssao.steps',       ' - Steps',           2, { '2', '3', '4', '6' })
+Settings.addFloat ('ssao.thickness',   ' - Thickness',       0.25, 0, 1)
+Settings.addEnum  ('ssao.blur',        ' - Denoise',         2, { '0', '1', '2' })
+Settings.addBool  ('ssao.show',        ' - Show',            false)
 
 local function createBuffer (sx, sy, format)
   local self = Tex2D.Create(sx, sy, format)
@@ -674,6 +719,35 @@ function Renderer:grain (strength)
     Shader.SetTex2D('src', self.buffer0)
     Draw.Color(1, 1, 1, 1)
     Draw.Rect(0, 0, self.sx, self.sy)
+  shader:stop()
+  self.buffer1:pop()
+  self:swap()
+end
+
+function Renderer:fog (envTex)
+  -- Exponential depth haze with aerial perspective: a `worldray` pass so each
+  -- pixel reconstructs the world view ray and blends toward the nebula color
+  -- sampled from the envMap behind it (tinted toward `postfx.fog.color`).
+  -- Uses zBufferL's linear eye distance; sky pixels (dist >= ~1e6 = the 1e6
+  -- farPlane the skybox writes via setDepth, see common.glsl) are exempt so
+  -- the starfield/nebula stay crisp and only real geometry hazes. envMap is
+  -- bound directly (System pops it from the var stack before the post chain).
+  local shader = Cache.Shader('worldray', 'filter/fogw')
+  if not shader then return end
+  self.buffer1:pushLevel(self.level)
+  shader:start()
+    Shader.SetFloat('fogDensity', Settings.get('postfx.fog.density') or 0.000005)
+    Shader.SetFloat('fogTint', Settings.get('postfx.fog.tint') or 0.15)
+    Shader.SetFloat('fogMax', Settings.get('postfx.fog.maxHaze') or 0.95)
+    Shader.SetFloat3('fogColor',
+      Settings.get('postfx.fog.r') or 0.04,
+      Settings.get('postfx.fog.g') or 0.06,
+      Settings.get('postfx.fog.b') or 0.13)
+    Shader.SetTex2D('src', self.buffer0)
+    Shader.SetTex2D('texDepth', self.zBufferL)
+    Shader.SetTexCube('envMap', envTex)
+    Draw.Color(1, 1, 1, 1)
+    Draw.Rect(-1, -1, 2, 2)
   shader:stop()
   self.buffer1:pop()
   self:swap()
