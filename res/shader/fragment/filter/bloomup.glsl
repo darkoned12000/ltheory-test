@@ -8,5 +8,5 @@ uniform float scatter;
 void main() {
   vec3 high = texture(src, uv).xyz;
   vec3 low = texture(srcLow, uv).xyz;
-  fragColor = vec4(mix(high, low, scatter), 1.0);
+  fragColor = vec4(mix(high, low, clamp(scatter, 0.0, 1.0)), 1.0);
 }

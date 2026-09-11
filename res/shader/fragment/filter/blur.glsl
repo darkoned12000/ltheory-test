@@ -1,9 +1,8 @@
-layout(location = 0) out vec4 fragColor;
-in vec2 uv;
+#include filter
 
-uniform sampler2D src;
+layout(location = 0) out vec4 fragColor;
+
 uniform vec2 dir;
-uniform vec2 size;
 uniform int radius;
 uniform float variance;
 
@@ -19,7 +18,7 @@ uniform float variance;
  * branch notes; gather becomes interesting for future depth/shadow passes. */
 
 void main() {
-  float v = variance * variance;
+  float v = max(variance * variance, 1e-5);
   vec2 stepPx = dir / size;
   vec4 total = texture(src, uv);
   float tw = 1.0;
@@ -31,7 +30,8 @@ void main() {
       float fj = fi + 1.0;
       float w2 = exp(-(fj * fj) / v);
       float s = w1 + w2;
-      vec2 off = (fi + w2 / s) * stepPx;
+      float sSafe = max(s, 1e-8);
+      vec2 off = (fi + w2 / sSafe) * stepPx;
       total += s * texture(src, uv + off);
       total += s * texture(src, uv - off);
       tw += 2.0 * s;
@@ -43,5 +43,5 @@ void main() {
     }
   }
 
-  fragColor = total / tw;
+  fragColor = total / max(tw, 1e-5);
 }

@@ -2,14 +2,15 @@
 #include color
 #include math
 
-
 layout(location = 0) out vec4 fragColor;
+
 uniform sampler2D src;
 uniform sampler1D curve1;
 uniform sampler1D curve2;
-const vec2 rDir = vec2(1, 0);
-const vec2 gDir = vec2(0, 1);
-const vec2 bDir = vec2(1, 0);
+
+const vec2 rDir = vec2(1.0, 0.0);
+const vec2 gDir = vec2(0.0, 1.0);
+const vec2 bDir = vec2(1.0, 0.0);
 
 const float colorPoints = 256.0;
 const float kVariation = 1.0;
@@ -34,6 +35,9 @@ void main() {
     texture(curve2, c.z).z,
     kVariation * dot(uv, bDir));
 
-  c *= avg(original) / max(0.00001, avg(c));
-  fragColor = vec4(c, 1.0);
+  float avgOrig = avg(original);
+  float avgC = avg(c);
+  c *= avgOrig / max(1e-5, avgC);
+
+  fragColor = vec4(saturate(c), 1.0);
 }

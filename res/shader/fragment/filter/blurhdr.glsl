@@ -1,10 +1,8 @@
+#include filter
 
 layout(location = 0) out vec4 fragColor;
-in vec2 uv;
 
-uniform sampler2D src;
 uniform vec2 dir;
-uniform vec2 size;
 uniform int radius;
 uniform float variance;
 
@@ -13,7 +11,7 @@ void main() {
   vec4 center = texture(src, uv);
   total += center.xyz * center.w;
   float tw = center.w;
-  float v = variance * variance;
+  float v = max(variance * variance, 1e-5);
 
   for (int i = 1; i <= radius; ++i) {
     float fi = float(i);
@@ -28,5 +26,5 @@ void main() {
     tw += w0 + w1;
   }
 
-  fragColor = vec4(total / tw, tw);
+  fragColor = vec4(total / max(tw, 1e-5), tw);
 }

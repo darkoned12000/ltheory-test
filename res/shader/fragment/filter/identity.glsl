@@ -1,9 +1,7 @@
-#include fragment
+#include filter
 
-
-layout(location = 0) out vec4 outColor;
-uniform sampler2D src;
+layout(location = 0) out vec4 fragColor;
 
 void main() {
-  outColor = texture(src, uv);
+  fragColor = texture(src, uv);
 }

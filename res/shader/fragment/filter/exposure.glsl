@@ -9,7 +9,7 @@ float lum (vec3 c) {
   return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
 
-/* Cheap reversible integer hash (PCG-ish low bit-quality; plenty for scatter). */
+/* Reversible integer hash for pseudo-random distribution */
 uint Hash (uint x) {
   x ^= x >> 16;
   x *= 0x7feb352du;
@@ -42,13 +42,13 @@ void main() {
 
   for (int i = 0; i < N; ++i) {
     uint h = Hash(uint(i) * 2654435761u + seed);
-    vec2 uv = vec2(
+    vec2 sampleUV = vec2(
       float(h & 0xFFFFu),
       float((h >> 16) & 0xFFFFu)) * (1.0 / 65535.0);
-    ivec2 px = ivec2(clamp(uv * size, vec2(0.0), vec2(size) - vec2(1.0)));
+    ivec2 px = ivec2(clamp(sampleUV * size, vec2(0.0), vec2(size) - vec2(1.0)));
     float L = lum(max(texelFetch(src, px, 0).xyz, vec3(0.0)));
 
-    vec2 d = uv - 0.5;
+    vec2 d = sampleUV - 0.5;
     float w = exp(-6.0 * dot(d, d));
     wSum += w;
     wAvg += w * L;

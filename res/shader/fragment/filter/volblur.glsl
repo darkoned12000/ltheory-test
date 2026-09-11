@@ -67,7 +67,9 @@ void main () {
     }
 
     vec3 scene = texture(texScene, uv).xyz;
-    fragData0 = vec4(scene * vol.a + vol.rgb, 1.0);
+    float trans = clamp(vol.a, 0.0, 1.0);
+    vec3 inscatter = max(vol.rgb, vec3(0.0));
+    fragData0 = vec4(scene * trans + inscatter, 1.0);
     return;
   }
 
@@ -79,11 +81,11 @@ void main () {
     return;
   }
   if (volMode == 2) { /* transmittance */
-    fragData0 = vec4(vec3(texelFetch(texVol, pH, 0).a), 1.0);
+    fragData0 = vec4(vec3(clamp(texelFetch(texVol, pH, 0).a, 0.0, 1.0)), 1.0);
     return;
   }
   if (volMode == 3) { /* lighting / inscatter */
-    fragData0 = vec4(texelFetch(texVol, pH, 0).rgb, 1.0);
+    fragData0 = vec4(max(texelFetch(texVol, pH, 0).rgb, vec3(0.0)), 1.0);
     return;
   }
   if (volMode == 4) { /* steps */

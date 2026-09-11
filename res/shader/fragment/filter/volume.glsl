@@ -19,10 +19,11 @@ uniform sampler2D texNoise;  /* 64x64 blue-noise LUT */
 uniform vec3      sunColor;  /* sun radiance */
 uniform float     volAniso;  /* Henyey-Greenstein g (-1..1) */
 
-/* Henyey-Greenstein phase (g -> 0 isotropic 1/4pi). */
+/* Henyey-Greenstein phase (g -> 0 isotropic 1/4pi). Safe against division-by-zero. */
 float hgPhase (float c) {
   float g2 = volAniso * volAniso;
-  return (1.0 - g2) / (4.0 * 3.141592653589793 * pow(1.0 + g2 - 2.0 * volAniso * c, 1.5));
+  float denom = pow(max(1e-5, 1.0 + g2 - 2.0 * volAniso * c), 1.5);
+  return (1.0 - g2) / (4.0 * 3.141592653589793 * denom);
 }
 
 void main () {
@@ -65,5 +66,5 @@ void main () {
     }
   }
 
-  fragData0 = vec4(inscatter, tr);
+  fragData0 = vec4(max(inscatter, vec3(0.0)), clamp(tr, 0.0, 1.0));
 }
