@@ -3,7 +3,6 @@
 #include math
 #include noise
 
-
 layout(location = 0) out vec4 fragColor;
 uniform float alpha;
 uniform float time;
@@ -18,7 +17,6 @@ void main() {
   a *= 1.0 + 4.0 * exp(-12.0 * v);
   float variation = pow2(fSmoothNoise(vec2(uv.x, 20.0 * v - 10.0 * time), 2, 1.6));
   a *= mix(1.0, 1.5, variation);
-  // a *= 1.0 - getFoginess(length(position - eye));
   a *= 2.0;
   fragColor = vec4(alpha * a * color, 1.0);
   FRAGMENT_CORRECT_DEPTH;

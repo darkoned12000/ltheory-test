@@ -1,6 +1,6 @@
 #include fragment
+#include color
 #include math
-
 
 layout(location = 0) out vec4 fragColor;
 uniform vec3 axis;
@@ -21,7 +21,7 @@ void main() {
   a *= 1.0 - exp(-pow2(32.0 * iv));
   a *= 4.0;
   vec3 c = color;
-  c *= c / avg(c);
+  c *= c / max(avg(c), 1e-5);
   fragColor = vec4(a * alpha * c, 1.0);
   FRAGMENT_CORRECT_DEPTH;
 }

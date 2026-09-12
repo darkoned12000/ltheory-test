@@ -15,11 +15,13 @@ void main () {
    * the same shape and still read as soft discs. */
   float ax = abs(uv.x * 2.0 - 1.0);
   float ay = abs(uv.y * 2.0 - 1.0);
-  /* NOTE : smoothstep(1,0,r) would be edge0>edge1 (undefined per spec). */
   float aY = 1.0 - smoothstep(0.0, 1.0, ay);
   float aX = 1.0 - smoothstep(0.0, 1.0, ax);
   aY = aY * aY * aY;        /* steep side falloff -> visually thin core */
   float a = aY * (aX * 0.85 + 0.15) * 0.5; /* soft caps + global dim */
-  fragColor = vec4(pCol.rgb * (a * pFade), 1.0);
+
+  vec3 col = max(pCol.rgb, vec3(0.0));
+  float fade = clamp(pFade, 0.0, 1.0);
+  fragColor = vec4(col * (a * fade), 1.0);
   FRAGMENT_CORRECT_DEPTH;
 }

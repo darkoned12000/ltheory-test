@@ -207,7 +207,6 @@ function Shape:getFaceNormal (poly)
     local p2 = self:getVertex(poly[2 + i])
 
     if p0 == nil or p1 == nil or p2 == nil then
-      --assert(p0, p1, p2)
       return nil
     end
 
@@ -222,7 +221,6 @@ function Shape:getFaceNormal (poly)
       print("Bad normal at poly:")
       self:printPoly(poly)
     end
-    --assert(n:length() > 1e-6)
   end
   return nil
 end
@@ -283,7 +281,6 @@ function Shape:getRandomPolyWithNormalList(nl, rng, margin)
       polys[#polys+1] = newPolys[j]
     end
   end
-  --print("poly list size:", #polys)
 
   if #polys == 0 then print("No polys found with normal from list ", nl) end
   local poly = rng:choose(polys)
@@ -318,9 +315,6 @@ function Shape:clone ()
   return clone
 end
 
--- TODO LR : In the rest of the engine, we use 'bound' instead of AABB, please
---           change to :getBound for uniformity (this performs the same
---           operation as the engine's Mesh_GetBound function)
 -- GetAABB ()
 -- Returns {Vec3d min, Vec3d max}
 function Shape:getAABB ()
@@ -382,7 +376,6 @@ function Shape:getTopology ()
         end
       end
       if not foundFace then
-        --assert(foundFace, 'Topological Error: Failed to find adjacent face')
         return nil
       end
       fi = faces[j]
@@ -433,11 +426,10 @@ end
 -- Direction defaults to surface normal
 -- Deletes original poly unless specified otherwise in preserveOriginal
 function Shape:extrudePoly (pi, length, scale, dir, preserveOriginal)
-  -- default vals
   length = length or 0.5
   scale = scale or Vec3d(1,1,1)
   preserveOriginal = preserveOriginal or false
-  -- bad input protection
+
   local poly = self.polys[pi]
   if not self:polyValid(poly) then
     return self
@@ -467,8 +459,6 @@ function Shape:extrudePoly (pi, length, scale, dir, preserveOriginal)
   end
 
   -- Stitch extrusion sides with quads
-  -- NOTE : Winding order on the sides must be *opposite* that of the base
-  --        poly order! (Picture it ...)
   for j0 = 1, #poly do
     local j1 = j0 % #poly + 1
     self:addQuad(
@@ -479,25 +469,19 @@ function Shape:extrudePoly (pi, length, scale, dir, preserveOriginal)
   end
 
   if not preserveOriginal then
-    -- Move existing face to extruded verticies
     for j = 1, #poly do self.polys[pi][j] = newPoly[j] end
   else
-    -- add new face
     local npi = #self.polys + 1
     self.polys[npi] = newPoly
-    -- invert original face
     self:invertPoly(pi)
   end
 end
 
 -- TriangulatePolyCentroid (int[] poly, float length)
--- Adds a new vertex in the center of poly & creates tris connecting
---   that center to the existing verticies of the poly
--- Extrudes the new vertex by length
 function Shape:triangulatePolyCentroid (pi, length, dir)
   local poly = self.polys[pi]
   if not self:polyValid(poly) then
-    return -- skip operation
+    return
   end
   length = length or 0
 
@@ -514,14 +498,10 @@ function Shape:triangulatePolyCentroid (pi, length, dir)
 end
 
 -- TriangulateTriEven (int pi, int[] edgeMap)
--- Splits a single tri into 4 tris (imagine the triforce symbol)
--- Is useful for applying warps after using,
---   because preserves tri angles
--- Adds new verts; uses edgeMap to avoid creating duplicate verts
 function Shape:triangulateTriEven (pi, edgeMap, vc)
   local poly = self.polys[pi]
   if not self:polyValid(poly) then
-    return -- skip operation
+    return
   end
 
   local verts = {}
@@ -584,21 +564,17 @@ function Shape:roofQuad(pi, h, preserveOriginal)
 end
 
 -- TessellateQuad (int pi, int[] edgeMap)
--- Splits a single quad into 4 quads
--- Adds new verts; uses edgeMap to avoid creating duplicate verts
 function Shape:tessellateQuad (pi, edgeMap, vc)
   local quad = self.polys[pi]
   if #quad ~= 4 or not self:polyValid(quad) then
     return
   end
 
-  -- new vertex in center of quad
   local verts = {}
   verts[1] = self:getVertexCount()
   local c = self:getFaceCentroid(quad)
   self:addVertex(c.x, c.y, c.z)
 
-  -- new verticies on edges of quad
   for j1 = 1, #quad do
     local j2 = j1 % #quad + 1
     local i1 = quad[j1]
@@ -612,7 +588,6 @@ function Shape:tessellateQuad (pi, edgeMap, vc)
     verts[#verts + 1] = edgeMap[ei]
   end
 
-  -- new quads
   self:addQuad(verts[2], quad[2], verts[3], verts[1])
   self:addQuad(verts[1], verts[3], quad[3], verts[4])
   self:addQuad(verts[5], verts[1], verts[4], quad[4])
@@ -633,15 +608,9 @@ function Shape:addAtIntersection(rayOrigin, rayDir, shape)
 end
 
 -- tests for intersection with ray
--- returns intersection point, if found; null otherwise
--- WARNING: fan triangulates the mesh
--- TODO : Don't triangulate
 function Shape:intersectRay (rayOrigin, rayDir)
-  -- local tBegin = TimeStamp.Get()
-  -- triangulate
   self:triangulateFan()
 
-  -- check every poly in the mesh for an intersection
   local tMin = math.huge
   local intersection = nil
 
@@ -655,7 +624,6 @@ function Shape:intersectRay (rayOrigin, rayDir)
     end
   end
 
-  -- printf('Raycast took %.2f ms', TimeStamp.GetElapsedMs(tBegin))
   return intersection
 end
 
@@ -664,7 +632,6 @@ function Shape:checkRayIntersectTri(rayOrigin, rayDir, tri, oldT)
   local p1 = self.verts[tri[2]+1]
   local p2 = self.verts[tri[3]+1]
 
-  -- 1) check if ray intersects plane
   local n = self:getFaceNormal(tri)
   local dot = n:dot(rayDir)
 
@@ -678,7 +645,6 @@ function Shape:checkRayIntersectTri(rayOrigin, rayDir, tri, oldT)
     return nil
   end
 
-  -- 2) compute parametric point of intersection with plane
   t = t / dot
   local p = rayOrigin + Vec3d(rayDir.x*t, rayDir.y*t, rayDir.z*t)
 
@@ -739,12 +705,9 @@ function Shape:checkRayIntersectTri(rayOrigin, rayDir, tri, oldT)
     return nil
   end
 
-  -- intersection found
   return t
 end
 
--- Valid ()
--- Checks that all polys can be operated on.
 function Shape:checkValid ()
   for i = 1, #self.polys do
     if not self:polyValid(self.polys[i]) then
@@ -754,10 +717,6 @@ function Shape:checkValid ()
   return true
 end
 
--- PolyValid (int[] poly)
--- A poly is invalid if it has:
---   < 3 indicies
---   OR normal length < 1e-6
 function Shape:polyValid (poly)
   if poly == nil then
     assert(poly ~= nil)
@@ -766,27 +725,16 @@ function Shape:polyValid (poly)
     assert(#poly >= 3)
     return false
   elseif self:getFaceNormal(poly) == nil then
-    -- getFaceNormal asserts
     return false
   end
   for i = 1, #poly do if poly[i] == nil then error("Poly contains nil") end end
   return true
 end
 
--- Cleanup (number eps)
--- Reduces the common sources of degenerate geometry produced by the
--- procedural generator (extrude/bevel/warp/tessellate/add) before the shape
--- is baked into a mesh:
---   1. Welds coincident / near-coincident vertices (within eps) so the C-side
---      Mesh_Validate no longer reports 'Vertex Position Degenerate'.
---   2. Drops polys whose vertices collapse to fewer than 3 unique points, or
---      whose face normal is degenerate (area ~ 0), which is what triggers the
---      'Bad normal at poly' path in getFaceNormal.
--- polys store 0-based indices into self.verts (see getVertex).
 function Shape:cleanup (eps)
   eps = eps or 1e-3
 
-  -- 1. Weld vertices
+  -- 1. Weld vertices and sanitize floating point micro-underflows / NaNs
   local newVerts   = {}
   local keyToIndex = {}
   local map        = {}
@@ -799,6 +747,15 @@ function Shape:cleanup (eps)
 
   for i = 0, #self.verts - 1 do
     local v = self.verts[i + 1]
+    -- Guard against NaN or Inf vertex positions
+    if v.x ~= v.x or v.y ~= v.y or v.z ~= v.z then
+      v = Vec3d(0, 0, 0)
+    end
+    -- Snap near-zero coordinates to prevent BSP plane underflow
+    if math.abs(v.x) < 1e-7 then v.x = 0.0 end
+    if math.abs(v.y) < 1e-7 then v.y = 0.0 end
+    if math.abs(v.z) < 1e-7 then v.z = 0.0 end
+
     local k = key(v)
     local ni = keyToIndex[k]
     if not ni then
@@ -839,11 +796,11 @@ function Shape:cleanup (eps)
   return self
 end
 
--- Convert shape into native triangle mesh for external use
 function Shape:finalize ()
   local mesh = Mesh.Create()
-  self:cleanup()
+  -- Triangulate fan FIRST so generated fan triangles are validated by cleanup
   self:triangulateFan()
+  self:cleanup(1e-3)
 
   -- Copy vertices
   for i = 1, #self.verts do
@@ -854,7 +811,9 @@ function Shape:finalize ()
   -- Copy tris
   for i = 1, #self.polys do
     local tri = self.polys[i]
-    mesh:addTri(tri[1], tri[2], tri[3])
+    if #tri >= 3 then
+      mesh:addTri(tri[1], tri[2], tri[3])
+    end
   end
 
   mesh:center()
@@ -867,17 +826,15 @@ function Shape:finalize ()
   else
     mesh:computeAO(0.6 * mesh:getRadius())
   end
-  return mesh--, BSP.Create(mesh)
+  return mesh
 end
 
--- PrintPoly ()
 function Shape:printPoly(poly)
   for i = 1, #poly do
     print(i, " = ", poly[i], " = ", self.verts[poly[i]])
   end
 end
 
--- ToString ()
 function Shape:__tostring ()
   return format('Shape(%d verts, %d polys)',
     #self.verts,

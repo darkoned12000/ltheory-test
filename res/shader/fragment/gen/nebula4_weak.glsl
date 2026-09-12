@@ -8,8 +8,7 @@
 
 #define ENABLE_HORIZON 0
 
-
-layout(location = 0) out vec4 outColor;
+layout(location = 0) out vec4 fragColor;
 uniform vec3 color;
 uniform sampler1D lutR;
 uniform sampler1D lutG;
@@ -18,8 +17,8 @@ uniform float roughness;
 uniform float seed;
 
 const float kScale      = 0.040;
-const float kSamples    = 128.00;
-const int kIterations   = 30;
+const float kSamples    = 48.00;
+const int kIterations   = 16;
 
 const float kBrightConstant = 0.001;
 const float kBrightCell     = 0.0005;
@@ -30,9 +29,9 @@ float magic(vec3 p) {
   float a = 0.0, l = 0.0, tw = 0.0, w = 1.0;
   vec4 c = vec4(0.5, 0.55, 0.45, 0.6);
   for (int i = 0; i < kIterations; ++i) {
-    float m = dot(z, z);
+    float m = max(dot(z, z), 1e-5);
     z = abs(z) / m - c;
-    z += 0.02 * log(1.e-10 + noise4(float(i) + seed));
+    z += 0.02 * log(max(1.e-10 + noise4(float(i) + seed), vec4(1e-6)));
     z += 0.25 * sin(z);
     a += w * exp(-2.0 * pow2(l - m));
     tw += w;
@@ -40,11 +39,11 @@ float magic(vec3 p) {
     l = m;
     c = c.yzwx;
   }
-  return 0.5 + 0.5 * min(cos(30.0 * a / tw), sin(40.0 * a / tw));
+  return 0.5 + 0.5 * min(cos(30.0 * a / max(tw, 1e-5)), sin(40.0 * a / max(tw, 1e-5)));
 }
 
 float bgDensity(vec3 p) {
-  return kBrightConstant + kBrightCell * fSmoothNoise(p * 4.0 + seed, 8, 2.0);
+  return kBrightConstant + kBrightCell * fSmoothNoise(p * 4.0 + seed, 4, 2.0);
 }
 
 vec4 generate(vec3 dir) {
@@ -58,7 +57,6 @@ vec4 generate(vec3 dir) {
   float w = 1.0 / float(kSamples);
 
   /* Central Star. */ {
-    /* Dots between normalized Vec3fs may still be > 1 due to fp precision! */
     float d = max(0.0, 1.0 - dot(dir, starDir));
     float dd = 0.0;
     dd += 8.0 * exp(-sqrt(4096.0 * d));
@@ -80,36 +78,26 @@ vec4 generate(vec3 dir) {
         texture(lutR, t).x,
         texture(lutG, t).x,
         texture(lutB, t).x);
-      wave *= sqrt(wave);
+      wave *= sqrt(max(wave, vec3(0.0)));
 
       const float k = 6.0;
       const float q = 1.2;
       vec3 vs = exp(-q * wave * t);
-      vs -= 1.25 *         exp(-pow( 8.0 * abs(t - 0.90), 0.75));
+      vs -= 1.25 *         exp(-pow(8.0 * abs(t - 0.90), 0.75));
       vs += 0.50 * cEmit * exp(-pow(10.0 * abs(t - 0.90), 0.50));
       c *= exp(-k * w * vs);
-      // c = mix(c, vec3(avg(c)), 1.0 - exp(-w));
       opacity *= exp(-k * w * avg(vs));
     }
   }
 
-  #if 0
-  /* Normalization. */ {
-    float l = lum(c);
-    if (l > 1.0) {
-      const float limit = 2.0;
-      const float k = 1.0 / (limit - 1.0);
-      c /= l;
-      l = 1.0 - (1.0 / k) * (exp(-k*(l - 1.0)) - 1.0);
-      c *= l;
-    }
-  }
-  #endif
-
-  return vec4(c, opacity);
+  return vec4(max(c, vec3(0.0)), clamp(opacity, 0.0, 1.0));
 }
 
 void main() {
   vec3 dir = cubeMapDir(uv);
-  outColor = generate(dir);
+  vec4 c = generate(dir);
+  if (isnan(c.r) || isnan(c.g) || isnan(c.b) || isnan(c.a)) {
+    c = vec4(0.0, 0.0, 0.0, 1.0);
+  }
+  fragColor = clamp(c, vec4(0.0), vec4(10.0));
 }

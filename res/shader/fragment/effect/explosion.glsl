@@ -2,7 +2,6 @@
 #include math
 #include noise
 
-
 layout(location = 0) out vec4 fragColor;
 uniform float age;
 uniform float seed;
@@ -10,12 +9,13 @@ const float animSpeed = 0.4;
 
 void main() {
   float t = animSpeed * age;
-  float r = sqrt(length(uv));
+  vec2 uvc = 2.0 * uv - 1.0;
+  float r = sqrt(length(uvc));
   float rd = 0.3 * (2.0 * fSmoothNoise(2.0 * uv + 1337.0 * seed + 39.0, 6, 1.5) - 1.0);
   r = pow2(max(0.0, r + rd - (1.0 - exp(-t))));
   float a =
     10.0 * exp(-abs(128.0 * r)) +
-     2.0 * exp(-abs(64.0 * r)) + 
+     2.0 * exp(-abs(64.0 * r)) +
      0.2 * exp(-sqrt(16.0 * r));
   a *= 2.0 * fSmoothNoise(2.0 * uv + 33.0, 4, 2.0);
   a *= exp(-5.0 * max(0.0, t));
