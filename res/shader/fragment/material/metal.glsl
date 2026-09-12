@@ -12,9 +12,6 @@ uniform float scale;
 uniform vec4 paintAttrib;
 uniform vec4 paintColor;
 
-// const vec4 paintAttrib = vec4(0.01, 2.0, 0.5, 0.0);
-// const vec4 paintColor = vec4(3.0 * 0.1, 3.0 * 0.6, 3.0 * 1.0, 1.0);
-
 uniform sampler2D texDiffuse;
 uniform sampler2D texNormal;
 uniform sampler2D texSpec;
@@ -24,7 +21,7 @@ uniform sampler2D texSpec;
 
 void main() {
   vec3 N = normalize(normal);
-  vec3 uvw = sqrt(scale / 16.0) * abs(vertPos.xyz);
+  vec3 uvw = sqrt(max(0.0, scale) / 16.0) * abs(vertPos.xyz);
   vec3 diff = linear(sampleTriplanar(texDiffuse, uvw).xyz);
   float gloss = 1.0 - sampleTriplanar(texSpec, uvw).x;
 
@@ -33,7 +30,7 @@ void main() {
     vec3 vn = normalize(vertNormal);
     vec3 blend = vn * vn;
     vec2 uvt =
-      blend.x * uvw.yz + 
+      blend.x * uvw.yz +
       blend.y * uvw.zx +
       blend.z * uvw.xy;
 
@@ -53,7 +50,7 @@ void main() {
 #if ENABLE_PAINT
   {
     float paintGloss = paintAttrib.x;
-    float paintScale = paintAttrib.y;
+    float paintScale = max(1e-4, paintAttrib.y);
     float paintShape = paintAttrib.z;
     float paintPhase = paintAttrib.w;
     float freq = 1.0 / paintScale;
@@ -64,13 +61,17 @@ void main() {
       + 0.75 * exp(-256.0 * max(0.0, abs(2.0 * fract(x) - 1.0) - 0.25));
     alpha *= paintColor.w;
     gloss = mix(gloss, paintGloss, alpha);
-    diff = mix(diff, sqrt(diff) * paintColor.xyz, alpha);
+    diff = mix(diff, sqrt(max(vec3(0.0), diff)) * paintColor.xyz, alpha);
   }
 #endif
 
   vec3 c = diff;
-  c *= 3.0 * radians(360.0);
   c *= uv.x;
+  c = clamp(c, vec3(0.0), vec3(1.0));
+
+  if (isnan(c.r) || isnan(c.g) || isnan(c.b)) {
+    c = vec3(0.0);
+  }
 
   FRAGMENT_CORRECT_DEPTH;
 
@@ -78,6 +79,6 @@ void main() {
   setAlpha(1.0);
   setDepth();
   setNormal(N);
-  setRoughness(gloss);
+  setRoughness(clamp(gloss, 0.0, 1.0));
   setMaterial(Material_Metal);
 }

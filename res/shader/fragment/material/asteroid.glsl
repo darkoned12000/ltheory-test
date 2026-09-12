@@ -14,12 +14,13 @@ uniform float scale;
 void main() {
   vec3 N = normalize(normal);
   vec3 V = normalize(pos - eye);
-  vec3 c = linear(sampleFDM(texDiffuse, scale * vertPos.xyz).xyz);
-  c *= radians(360.0);
-  c *= uv.x;
-  c *= c;
-  // c *= textureLod(envMap, N, 9.0).xyz;
-  // c = applyFog(c, V);
+
+  float safeScale = max(1e-4, scale);
+  vec3 c = linear(sampleFDM(texDiffuse, safeScale * vertPos.xyz).xyz);
+
+  float safeUV = max(0.0, uv.x);
+  c *= safeUV;
+  c = clamp(c, vec3(0.0), vec3(1.0));
 
   FRAGMENT_CORRECT_DEPTH;
 

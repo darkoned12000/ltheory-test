@@ -11,12 +11,12 @@ uniform sampler2D texAlbedo;
 uniform sampler2D texDepth;
 uniform sampler2D texLighting;
 
-const float ambientLightingScale = 1;
+const float ambientLightingScale = 1.0;
 
 void main() {
   vec3 albedo = texture(texAlbedo, uv).xyz;
   vec3 light = texture(texLighting, uv).xyz;
-  float depth = texture(texDepth, uv).x;
+  float depth = max(0.0, texture(texDepth, uv).x);
 
   vec3 c = albedo * light;
 
@@ -26,12 +26,17 @@ void main() {
   float fog = 1.0 - exp(-depth / 7000.0);
   float fogScale = 0.0675;
 
-  fog *= fogScale;
+  fog = clamp(fog * fogScale, 0.0, 1.0);
 
-  vec3 bg = linear(textureLod(irMap, worldDir, 3.0 + 6.0 * (1.0 - fog)).xyz);
+  vec3 wDir = normalize(worldDir);
+  vec3 bg = linear(textureLod(irMap, wDir, 3.0 + 6.0 * (1.0 - fog)).xyz);
   c = mix(c, bg, fog);
 
   c += ambientLighting;
 
-  fragData0 = vec4(c, 1.0);
+  if (isnan(c.r) || isnan(c.g) || isnan(c.b)) {
+    c = vec3(0.0);
+  }
+
+  fragData0 = vec4(max(vec3(0.0), c), 1.0);
 }

@@ -7,58 +7,44 @@
 #autovar samplerCube irMap
 #autovar vec3 eye
 #autovar vec3 starDir
-#autovar vec3 sunColor
-#autovar float sunFill
 
 in vec3 worldOrigin;
 in vec3 worldDir;
 
 uniform vec3 lightColor;
 uniform vec3 lightPos;
-
-/* Warm hemisphere fill from the sun, so shadowed sides of asteroids/ships/
- * planets read as dim sun-facing rather than pure black. `starDir` is the
- * autovar the System pushes each frame. */
 uniform vec3 sunColor;
 uniform float sunFill;
-
-/* IBL intensity: scales the irMap/envMap ambient so the dark side of a ring
- * can be lifted without touching the sun fill. Set from `lighting.ambientEnv`. */
 uniform float envScale;
 
 uniform sampler2D texNormalMat;
 uniform sampler2D texDepth;
-
-/* Screen-space ambient occlusion (GTAO). texAO is the full-res aoFull when the
- * AO chain ran, or a 1x1 white fallback; aoStrength (0 = off) scales the effect
- * so the off-frame is bit-identical. aoShow forces pure AO for preview/tuning. */
 uniform sampler2D texAO;
 uniform float aoStrength;
 uniform float aoShow;
-
-/* fillOcclude (0..1) splits the AO factor applied to the sun hemisphere fill
- * from the IBL term: 1 (default, the Phase-C-signed-off look) darkens the fill
- * exactly like the envMap ambient; 0 is the "correct" ambient-only variant
- * where only the IBL term is occluded and shadowed sides keep their warm
- * sun-facing fill. `ssao.fillOcclude` — the storytelling knob (see §9.2). */
 uniform float fillOcclude;
 
 float roughnessToLOD (float r) {
-  return 8.0 * (pow(2.0, r) - 1.0);
+  float safeR = clamp(r, 0.0, 1.0);
+  return 8.0 * (pow(2.0, safeR) - 1.0);
 }
 
 void main () {
   vec4 normalMat = texture(texNormalMat, uv);
-  float depth = texture(texDepth, uv).x;
+  float depth = max(0.0, texture(texDepth, uv).x);
   vec3 N = decodeNormal(normalMat.xy);
-  float rough = normalMat.z;
+  float rough = clamp(normalMat.z, 0.0, 1.0);
   float mat = normalMat.w;
-  vec3 pos = worldOrigin + depth * normalize(worldDir);
+
+  vec3 wDir = normalize(worldDir);
+  vec3 pos = worldOrigin + depth * wDir;
   vec3 V = normalize(pos - eye);
   vec3 R = normalize(reflect(V, N));
 
-  /* Cosine-weighted hemisphere toward the sun (0.5 at grazing, 1.0 facing). */
-  float NdL = 0.5 + 0.5 * max(dot(N, normalize(starDir)), 0.0);
+  float starLen = length(starDir);
+  vec3 Ls = (starLen > 1e-6) ? starDir / starLen : vec3(0.0, 1.0, 0.0);
+
+  float NdL = 0.5 + 0.5 * max(dot(N, Ls), 0.0);
   vec3 fill = sunColor * (sunFill * NdL);
 
   vec3 light = vec3(0.0);
@@ -68,11 +54,6 @@ void main () {
   float aoFill = mix(1.0, ao, aoStrength * fillOcclude);
 
   if (aoShow > 0.5) {
-    /* Preview: the ambient contribution AO modulates, in isolation — crevice/
-     * rim darkening reads clearly without sun/specular climbing on top.
-     * Farplane NoShade pixels (skybox) stay 1.0 so the preview never blanks
-     * the background; the additive passes (sun glints, point lights, stars)
-     * still add on top. */
     if (mat == Material_NoShade)
       fragData0 = vec4(vec3(1.0), 1.0);
     else
@@ -91,14 +72,20 @@ void main () {
       light += linear(texture(envMap, R).xyz) * envScale;
     #endif
     light += fill * 0.6;
-    /* Env reflection on plating already carries its own occlusion cues —
-     * metal takes only 15% of the AO factor so hulls don't muddy. */
-    light *= mix(1.0, ao, 0.15 * aoStrength);
+
+    // Decoupled Specular Occlusion calculation
+    float NdV = max(0.0, dot(N, -V));
+    float specAO = clamp(pow2(NdV + ao) - 1.0 + NdV, 0.0, 1.0);
+    light *= mix(1.0, specAO, 0.15 * aoStrength);
   }
 
   else if (mat == Material_NoShade) {
     light += vec3(1.0);
   }
 
-  fragData0 = vec4(light, 1.0);
+  if (isnan(light.r) || isnan(light.g) || isnan(light.b)) {
+    light = vec3(0.0);
+  }
+
+  fragData0 = vec4(max(vec3(0.0), light), 1.0);
 }

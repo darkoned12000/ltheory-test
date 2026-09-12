@@ -6,10 +6,11 @@
 #autovar samplerCube irMap
 #autovar vec3 eye
 
-
 layout(location = 0) out vec4 fragColor;
+
 float glossToLOD(float gloss) {
-  return 8.0 * (pow(2.0, gloss) - 1.0);
+  float safeGloss = clamp(gloss, 0.0, 1.0);
+  return 8.0 * (pow(2.0, safeGloss) - 1.0);
 }
 
 void main() {
@@ -22,19 +23,23 @@ void main() {
 
   vec3 V = normalize(pos - eye);
   vec3 R = normalize(reflect(V, N));
-  float x = abs(0.2 * mod(vertPos.z, sqrt(abs(vertPos.x))));
+
+  float xDivisor = max(1e-4, sqrt(abs(vertPos.x)));
+  float x = abs(0.2 * mod(vertPos.z, xDivisor));
   float alpha =
       0.1 * exp(-32.0 * max(0.0, abs(2.0 * fract(x) - 1.0) - 0.75))
     + 0.9 * exp(-32.0 * max(0.0, abs(2.0 * fract(x) - 1.0) - 0.25));
   float gloss = 0.5 + 0.5 * alpha;
-  c = mix(c, sqrt(c) * vec3(1.0, 1.5, 2.0), alpha);
+  c = mix(c, sqrt(max(vec3(0.0), c)) * vec3(1.0, 1.5, 2.0), alpha);
 
   c *= 3.0 * textureLod(irMap, R, glossToLOD(gloss)).xyz;
-  c *= uv.x;
+  c *= max(0.0, uv.x);
 
-  float f = 0.2;
+  c = max(c, vec3(0.0));
+  if (isnan(c.r) || isnan(c.g) || isnan(c.b)) {
+    c = vec3(0.0);
+  }
 
-  c = max(c, vec3(0.0, 0.0, 0.0));
   fragColor = vec4(c, 1.0);
   FRAGMENT_CORRECT_DEPTH;
 }
