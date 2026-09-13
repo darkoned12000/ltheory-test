@@ -108,6 +108,78 @@ $$\text{out.rgb} = \text{scene.rgb} \cdot T + \text{inscatter}$$
 ### Phase 4 — LightningEvent & local volumetric flash
 - Consume `{position, color, energy, radius, falloff}` as a local light source inside `volume.glsl`.
 
+**Design spec (2026-09-13, pre-implementation):**
+
+A lightning storm is a *weather event*: a storm window (bolts firing over several seconds) that only exists where real cloud is present, is only visible near the player, and decays on its own. The bolt is a `LightningEvent` record consumed by the marching volume pass; the branching bolt itself is a thin life-limited procedural ribbon entity. Nothing in this phase is a texture — the flash is light hitting density.
+
+**Pipeline integration**
+
+```
+volume.glsl pass A  ──►  per-step light = sun + irMap + Σ_events LightningEvent(d)
+                              ↘
+(LightningController.lua: schedule / nucleus / cull)  ──►  GameView renderer:volume({lightning=...})
+                              ↘
+bolt entity (procedural ribbon, additive) rendered in System:render
+```
+
+The flash is a *third light term* inside the half-res march: `light += Σ_event` with the contract from §1.4,
+`le = event.color * event.energy / (d² + 1) * exp(-d * σt)`, gated by a soft `clamp(1 - d/event.radius, 0, 1)` hard cutoff so distant events cost nothing. It feeds the **same** `inscatter += tr * (1-stepTr) * σs/σt * light * albedo` accumulation and the **same** plume palette (`mc.yzw`) — so a strike makes the surrounding gas glow — but it must **not touch `tr`**: inscatter is additive; `scene*T + inscatter` ordering is preserved, so a bolt still cannot un-occlude stars behind cloud.
+
+**Shader contract (bounded, mirrors `texAnchors`)**
+
+One persistent 3-column RGBA32F `texLightning` (≤4 rows) re-uploaded only when the active set changes (compare a Lua-built signature to avoid per-frame upload). Row layout:
+- col0 = `(pos.xyz, radius)`
+- col1 = `(color.rgb, energy)`
+- col2 = `(spawnTime, duration, attack, 0)` — the fourth slot is the telegraph ramp baked into the curve (see below)
+
+`volTime` (already uploaded) gives the age: `age = volTime - spawnTime`. The flash envelope is a **rise** then a **decay** — it must be 0 at spawn, peak at `attack`, then fall off — so the telegraph ramp lives *in the curve*, not in per-frame energy re-uploads (which would contradict the "re-upload only on change" optimization):
+
+`flash = smoothstep(0.0, attack, age) * pow(clamp(1.0 - age / duration, 0.0, 1.0), 2.0)`
+
+with `attack ≈ 0.15` for the first bolt of a window (so a bolt never materializes at full energy) and `attack ≈ 0.02` for later strikes (an honest snap). Both rise and decay are pure shader math against constant per-event data; no extra uploads. The loop is `for i < 4` with `if float(i)+0.5 >= lightningCount break` — same early-out pattern as `anchorEnvelope`. A `d > radius` reject precedes the `exp` so idle/distant rows are near-free. Per-step added cost ≈ `count × (length + exp)`, i.e. ≤ 4 × per-step cost of one anchor — expected well inside the **≤ 0.10 ms** budget at half-res; measure with the Profiler before/after and validate in Phase 5.
+
+**The bolt visual (optional-but-specified)**
+
+`LightningBolt.lua`, a non-colliding life-limited Entity (no rigid body, no damage — a storm is weather, not a weapon; killing the player with lightning is out of scope). A jagged polyline from the nucleus toward a 1–2 step random target inside the plume: 12–16 segments, endpoint jitter seeded from the sector seed + strike ordinal (deterministic), additive ribbon ~2–4 units wide, white-hot core fading to `event.color` at the tips, life = event.duration. Drawn in `System:render`, swept by the existing `sweepDestroyed`. Camera exposure and bloom need **no new code** — the meter already adapts to high-luminance pixels and Karis bloom picks up the flash ("lens glare"), which §1.4 explicitly wants.
+
+**Gating — *when you will see one* (answering the review question)**
+
+1. **Vapor gate (prerequisite: real cloud).** Storms never spawn in empty space. The nucleus must be an existing anchor plume from the current `NebulaVolumes.build` cell (one of the same ≤16 anchors already uploaded to `texAnchors`), and its `density × extent` must clear a threshold. No populated plume near the camera ⇒ the controller idles. You see lightning **only when flying through nebula banks** — the same condition that lights the base volume.
+2. **Spatial gate.** Events are culled past `strike.radius + margin` from the camera and only ≤4 nearest are uploaded. A storm 20k out is neither lit nor heard; storms are a local, camera-relative phenomenon.
+3. **Temporal gate (a window, not a loop).** Deterministic cadence from `hash32(stormSeed, ...)` where **`stormSeed` is the same `self.ltheory.seed` already passed to `NebulaVolumes.build`** — one seed drives both the plume field and the storm schedule, so the "A/B-safe replay" claim is directly verifiable from the sector seed. Clear cooldown 45–120 s between windows; each window lasts 6–14 s and fires 3–12 bolts at 0.4–0.9 s ragged intervals; a single `LightningEvent` lives 0.3–0.5 s; **one storm window active at a time.** Note strikes *can* legitimately overlap — interval (0.4–0.9 s) is shorter than two bolts' combined life — so **2 concurrent events are the normal case, not a corner case**; quality low caps at 2, high at 4, and the budget anchor is the 2-concurrent case (see Testing).
+4. **Opt-out + Perf-gating.** Master `Config.gpu.lightningEnable = false` (off = bit-identical frame, renderer-disabled + controller no-op → no audio triggers either) seeded into the renderer's **SETTINGS table as a normal row** — not a one-off boolean — alongside `lightningEnergy`, `lightningRadius`, `lightningQuality` (the same per-field seeding pattern every other feature in `Renderer.lua` uses). Runtime settings live under **`lightning.*` (top-level, matching `nebula.*` / `ssao.*`, NOT `postfx.*`)** so `DebugWindow` auto-builds a dedicated collapsible section: `lightning.enable`, `lightning.energy`, `lightning.radius`, `lightning.quality` (enum, low = 2 / high = 4 concurrent events), `lightning.debug` (enum `off | region | energy` — region draws the storm AABB, energy overlays per-event energy, matching the Phase 0 debug-view discipline).
+
+**Audio hook (data-driven, behind the visual gate)**
+
+One entry in `Config.audio.sfx` — `thunder = { sound = 'thunder', volume = X, minDist = large }` — played as a 3D one-shot at the nucleus on each strike (same pattern as `Turret:fire`), so it attenuates with distance naturally. No thunder asset exists in LFS yet ⇒ the entry is inert-but-valid (missing asset logs and skips, per the engine's resilience convention); hooking gameplay code now means adding the asset later is a pure data change. Storms further than ~minDist are already silent via 3D attenuation — matching the spatial gate.
+
+**Config & state summary**
+
+```
+Config.gpu SetSettings row  -- lightningEnable=false, lightningEnergy=1,
+                              lightningRadius=3500, lightningQuality=low
+lightning.enable   (bool, default false)         -- runtime knob
+lightning.energy   (multiplier, default 1)
+lightning.radius   (world units, default ~3500)
+lightning.quality  (enum, low=2 concurrent / high=4)
+lightning.debug    (enum, off|region|energy)
+Config.audio.sfx.thunder  (data-driven; missing asset = silent)
+```
+
+**Testing**
+
+- Determinism: fixed sector seed → controller replays identical schedule (stormSeed ≡ NebulaVolumes seed); add a `Config.Local.lua` test override (e.g. force one strike at t=1 s) for reproducible screenshots.
+- Same-frame A/B: `lightning.debug='energy'` + the banded-split technique used for godrays; off-equivalence via `lightning.enable=false` (frame delta ~0).
+- **Budget — combined, not per-pass, and on two tiers.** GTAO (~0.6–1.2 ms) + volume march (two passes, up to 24 steps) + lightning all run simultaneously exactly when this feature matters (flying through a nebula bank during a storm). Measure the *sum* `Render.GTAO + Render.Volume` at the storm trigger moment at low and high quality, on the dev card **and** a mid/low-tier reference (e.g. Mesa llvmpipe / a laptop iGPU) before deciding any of these default on. Anchor the lightning addition on the **2-concurrent** case (the normal overlap, not 1 vs 4 vs 0); Phase 5 gate: combined AO+volume+lightning ≤ 0.95 ms @ 1024×768 2xSS on the low tier, or cut quality.
+- **Auto-exposure must be an explicit decision, not a surprise**: the meter's avg/max readout will see a sudden bright flash frame. Check it at both default `postfx.autoexposure.speed` and a fast setting — a post-flash dimming pump is acceptable (real eye adaptation does this and §1.4 wants the glare) but only once we've confirmed it's subtle and tunable.
+
+**Milestones**
+
+1. Volume-pass flash: `texLightning` upload + point-light term with baked rise/decay curve (`attack`/`duration`) + `energy`/`region` debug views + `lightning.*` settings rows.
+2. Storm controller: deterministic windows (stormSeed ≡ sector seed), nucleus pick + vapor gate, spatial cull, 2-concurrent overlap math, audio hook.
+3. Bolt entity (ribbon + life, additive) + exposure/bloom confirmation — **explicitly at default and fast `postfx.autoexposure.speed`, both tiers**.
+4. Validation (validator @ 460, off-equivalence), combined AO+volume+lightning perf audit, docs, status-log close.
+
 ### Phase 5 — Polish & performance validation
 - Worst-case budget audit, quality matrix verification, documentation closure.
 
@@ -134,3 +206,9 @@ $$\text{out.rgb} = \text{scene.rgb} \cdot T + \text{inscatter}$$
   - `GameView.lua` call site between reconstruction and haze: sun uv from `camera:worldToNDC(camera.pos + starDir·1e5)`, mirrored behind camera, rim-clamped; `'Shaft'` debug bypasses the on/off gate.
   - Validation: **135/0 @ 460 Core**; clean boots; same-frame strength A/B (temp 3-band split) showed scene+shaft ×8 → +18.7 luma, ×1 → +9.6, ×0 → 0 — shaft live, strength knob lands.
   - Debugging note: the shaft read back all zeros for two sessions — the root cause was a **missing `volDensity` uniform in pass A** (`mediumDensity()` returns `volDensity * d`; default 0 ⇒ the whole medium disappears). The march samples the density field only under that gate. When probing a like this, check the medium's own gain uniforms first before suspecting marching or readback.
+  - **Post-review hardening (peer shader review, same day):**
+    - `godrays.glsl` alpha contract corrected: `a = T` is already folded into `shaft.rgb` via `tr *= stepTr`; the composite must NOT re-apply it (double-occlusion). Header comment no longer claims "composite mask"; alpha stays as a volView-parity/informational slot.
+    - `godblur.glsl`: tap count 16 → **8** (weights `exp2(-2i)` are < 0.4% combined past tap 6 — surf of the budget was wasted) and a **blue-noise sub-tap dither** (`t0 = texNoise(uv).x / N`) on the crawl start, reusing the GTAO `texNoise` (bound in pass B) to kill fixed-radial-path stepping/banding.
+    - `Renderer:godrays` pass A adds `volMip = 1.0` (declared-by-`medium.glsl` but unread there; kept for full uniform-set parity with the nebula pass).
+    - `GameView.lua` sun-gate: new **frustum-edge fade** — `sunFade = clamp(1 - (len - rim)/rim, 0, 1)` eases shafts to zero one rim-depth past the frame edge (behind-camera case included) instead of clamping-and-popping at the rim; the whole pass is **skipped when `sunFade ≤ 1e-3` and debug is off** (`godDbg` gate), so sun-off-screen costs nothing. `godblur` `godStrength` is modulated by `sunFade` (`strength * sunFade`).
+    - Verified the `mediumCloud` uniform set is complete in pass A (volDensity/volTime/volFlow/volEvals/volCount/texAnchors/volTint/volTintAmt/starDir/sunColor/σt/σs) — only light is sun+σs·P(godA), no irMap by design. Validator 135/0; boot + frame clean at strength 2.

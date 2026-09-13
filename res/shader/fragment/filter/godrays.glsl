@@ -8,7 +8,13 @@
  * bright anisotropic shafts bloom around the star while the base Nebula
  * layer keeps its own tuning. Outputs:
  *   rgb = shaft radiance   (sunColor * P(godA) * albedo, integrated *T)
- *   a   = transmittance T  (medium blocking, for the composite mask)
+ *   a   = transmittance T along the shaft ray (informational).
+ *
+ * NOTE on the alpha: the same T is ALREADY folded into `shaft.rgb` by the
+ * `tr *= stepTr` accumulation before each sample, so the composite must NOT
+ * multiply by it again (that would double-occlude). It is written for parity
+ * with volume.glsl's volView layout and reserved as the host of a future
+ * 'transmittance' debug view; it is not consumed by godblur's composite.
  *
  * Sky gate and depth behaviour mirror volume.glsl so geometry occludes
  * shafts naturally (tCap stops at the first surface).

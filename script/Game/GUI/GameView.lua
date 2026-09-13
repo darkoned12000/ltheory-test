@@ -681,7 +681,8 @@ function GameView:draw (focus, active)
       end
     end
 
-    if Settings.get('postfx.godrays.enable') or (Settings.get('postfx.godrays.debug') or 0) > 0 then
+    local godDbg = Settings.get('postfx.godrays.debug') or 0
+    if Settings.get('postfx.godrays.enable') or godDbg > 0 then
       local sys = self.ltheory and self.ltheory.system
       local neb = sys and sys.nebula
       if neb and neb.starDir then
@@ -693,18 +694,25 @@ function GameView:draw (focus, active)
         local dx = ((ndc.x + 1.0) * 0.5 * self.sx) - cx
         local dy = ((1.0 - ndc.y) * 0.5 * self.sy) - cy
         local len = math.max(1e-4, math.sqrt(dx * dx + dy * dy))
-        local k = math.min(1.0, math.min(cx, cy) * 0.98 / len)
+        -- Fade to exactly 0 once the sun goes one rim-depth past the edge of the
+        -- frame, so shafts ease in/out at the frustum edge instead of popping.
+        local rim = math.min(cx, cy) * 0.98
+        local sunFade = math.max(0.0, 1.0 - (len - rim) / rim)
+        local k = math.min(1.0, rim / len)
         local sunUv = { x = (cx + dx * k) / self.sx, y = (cy + dy * k) / self.sy }
-        ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
-        ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
-        self.renderer:godrays({
-          starDir  = neb.starDir,
-          sunColor = sunCol,
-          sunUv    = sunUv,
-          anchors  = self.volumes,
-        })
-        ShaderVar.Pop('mProjInv')
-        ShaderVar.Pop('mViewInv')
+        if sunFade > 1e-3 or godDbg > 0 then
+          ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
+          ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
+          self.renderer:godrays({
+            starDir  = neb.starDir,
+            sunColor = sunCol,
+            sunUv    = sunUv,
+            sunFade  = sunFade,
+            anchors  = self.volumes,
+          })
+          ShaderVar.Pop('mProjInv')
+          ShaderVar.Pop('mViewInv')
+        end
       end
     end
 

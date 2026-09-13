@@ -884,6 +884,7 @@ local volCount = med.anchors and #med.anchors or 0
       Shader.SetFloat('volTintAmt', tintAmt)
       Shader.SetFloat('godA', godA)
       Shader.SetFloat('volDensity', dens)
+      Shader.SetFloat('volMip',     1.0)
       Draw.Color(1, 1, 1, 1)
       Draw.Rect(-1, -1, 2, 2)
     shaderH:stop()
@@ -898,8 +899,9 @@ local volCount = med.anchors and #med.anchors or 0
       Shader.SetInt('godMode', godMode)
       Shader.SetTex2D('texVol',   self.godView)
       Shader.SetTex2D('texScene', self.buffer0)
+      if med.noise then Shader.SetTex2D('texNoise', med.noise) end
       Shader.SetFloat2('sunUV', med.sunUv.x, med.sunUv.y)
-      Shader.SetFloat('godStrength', strength)
+      Shader.SetFloat('godStrength', strength * (med.sunFade or 1.0))
       Draw.Color(1, 1, 1, 1)
       Draw.Rect(0, 0, self.sx, self.sy)
     shaderF:stop()
