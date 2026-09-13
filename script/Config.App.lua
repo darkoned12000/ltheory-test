@@ -204,6 +204,14 @@ Config.gpu = {
   nebulaTintG    = 1.0,
   nebulaTintB    = 1.0,
 
+  -- God-rays (postfx.godrays.*, fog-nebula Phase 3). Independent low-res shaft
+  -- pass from starDir: its own on/off + strength, forward-scatter lobe + A/B
+  -- debug view. Off = renderer never invoked.
+  godraysEnabled  = false,
+  godraysStrength = 1,          -- additive shaft gain (0..4)
+  godraysG        = 0.92,       --   shaft HG phase g (tight forward lobe)
+  godraysDebug    = 'Off',      --   Off | Shaft
+
   -- Sun: the warm directional light + ambient fill that makes asteroid fields /
   -- dust lanes read as "lit by the system's star" (System.starDir). Matches the
   -- hardcoded starColor (1, 0.5, 0.1) used by planet atmospheric scattering.

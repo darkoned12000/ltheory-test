@@ -97,6 +97,13 @@ local SETTINGS = {
   { kind = 'float', key = 'nebula.tintG',   label = '   Color G',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintG' },
   { kind = 'float', key = 'nebula.tintB',   label = '   Color B',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintB' },
 
+  -- God-rays (fog-nebula Phase 3, independent A/B product) ---------------
+  { kind = 'bool',  key = 'postfx.godrays.enable',   label = 'God Rays',      default = false, gpu = 'godraysEnabled' },
+  { kind = 'float', key = 'postfx.godrays.strength', label = ' - Strength',   default = 1, min = 0, max = 4, gpu = 'godraysStrength' },
+  { kind = 'float', key = 'postfx.godrays.g',        label = ' - Anisotropy', default = 0.92, min = 0, max = 0.98, gpu = 'godraysG' },
+  { kind = 'enum',  key = 'postfx.godrays.debug',    label = ' - Debug View', default = 1,
+    options = { 'Off', 'Shaft' }, gpu = 'godraysDebug' },
+
   -- Core render -----------------------------------------------------------
   { kind = 'float', key = 'render.fovY',        label = 'FOV',           default = 70, min = 50, max = 100 },
   { kind = 'enum',  key = 'render.superSample', label = 'SuperSampling', default = 2,
@@ -457,6 +464,14 @@ function Renderer:free ()
     self.anchorBytes:free()
     self.anchorBytes = nil
   end
+  if self.volView then
+    self.volView:free()
+    self.volView = nil
+  end
+  if self.godView then
+    self.godView:free()
+    self.godView = nil
+  end
 end
 
 function Renderer:present (x, y, sx, sy, useMips)
@@ -799,6 +814,94 @@ function Renderer:volume (med)
       Shader.SetFloat3('volTint', tintR, tintG, tintB)
       Draw.Color(1, 1, 1, 1)
       Draw.Rect(-1, -1, 2, 2)
+    shaderF:stop()
+    RenderState.PopDepthTest()
+    self.buffer1:pop()
+    self:swap()
+  end
+
+  Profiler.End()
+end
+
+function Renderer:godrays (med)
+  if not (Settings.get('postfx.godrays.enable') or (Settings.get('postfx.godrays.debug') or 0) > 0) then return end
+  local shaderH = Cache.Shader('worldray', 'filter/godrays')
+  local shaderF = Cache.Shader('ui', 'filter/godblur')
+  if not (shaderH and shaderF) then return end
+
+  local gW = math.max(1, math.floor(self.sx / 4))
+  local gH = math.max(1, math.floor(self.sy / 4))
+  if not self.godView or self.godView:getSize().x ~= gW then
+    if self.godView then self.godView:free() end
+    self.godView = Tex2D.Create(gW, gH, TexFormat.RGBA16F)
+    self.godView:setMagFilter(TexFilter.Linear)
+    self.godView:setMinFilter(TexFilter.Linear)
+    self.godView:setWrapMode(TexWrapMode.Clamp)
+  end
+
+  local dens = Settings.get('nebula.density') or 1
+  local sigT = dens * 0.00005
+  local sigS = dens * 0.0000375
+  local volDist = Settings.get('nebula.radius') or 12000
+  local q = Settings.get('nebula.quality') or 1
+  if q <= 1 then q = 2 end
+  local steps = { 8, 16, 24 }
+  local evals = { 2, 2, 3 }
+  local stepF = steps[q - 1] or 8
+  local evalF = evals[q - 1] or 2
+  local fx, fy, fz, fsp = 0.4, 0.2, 0.8, 40
+  local fl = math.sqrt(fx * fx + fy * fy + fz * fz)
+  local volTime = (tonumber(Time.GetRaw()) or 0) * 0.001
+  local tintAmt = Settings.get('nebula.tint') or 0.0
+  local tintR, tintG, tintB = Settings.get('nebula.tintR') or 1,
+                              Settings.get('nebula.tintG') or 1,
+                              Settings.get('nebula.tintB') or 1
+local volCount = med.anchors and #med.anchors or 0
+  local godA = Settings.get('postfx.godrays.g') or 0.92
+  local strength = Settings.get('postfx.godrays.strength') or 1
+  local godMode = (Settings.get('postfx.godrays.debug') or 1) - 1
+
+  Profiler.Begin('Render.GodRays')
+
+  do -- Pass A: quarter-res shaft march
+    RenderTarget.Push(gW, gH)
+    RenderTarget.BindTex2D(self.godView)
+    RenderState.PushDepthTest(false)
+    shaderH:start()
+      Shader.SetTex2D('texDepth', self.zBufferL)
+      Shader.SetFloat3('starDir',  med.starDir.x, med.starDir.y, med.starDir.z)
+      Shader.SetFloat3('sunColor', med.sunColor.x, med.sunColor.y, med.sunColor.z)
+      Shader.SetFloat('volSigmaT',  sigT)
+      Shader.SetFloat('volSigmaS',  sigS)
+      Shader.SetFloat('volSteps',   stepF)
+      Shader.SetFloat('volDist',    volDist)
+      Shader.SetFloat('volEvals',   evalF)
+      Shader.SetFloat3('volFlow', 40 * fx / fl, 40 * fy / fl, 40 * fz / fl)
+      Shader.SetFloat('volTime',    volTime)
+      Shader.SetFloat('volCount',   volCount)
+      if volCount > 0 then Shader.SetTex2D('texAnchors', self.texAnchors) end
+      Shader.SetFloat3('volTint', tintR, tintG, tintB)
+      Shader.SetFloat('volTintAmt', tintAmt)
+      Shader.SetFloat('godA', godA)
+      Shader.SetFloat('volDensity', dens)
+      Draw.Color(1, 1, 1, 1)
+      Draw.Rect(-1, -1, 2, 2)
+    shaderH:stop()
+    RenderState.PopDepthTest()
+    RenderTarget.Pop()
+  end
+
+  do -- Pass B: radial integrate + composite
+    self.buffer1:pushLevel(self.level)
+    RenderState.PushDepthTest(false)
+    shaderF:start()
+      Shader.SetInt('godMode', godMode)
+      Shader.SetTex2D('texVol',   self.godView)
+      Shader.SetTex2D('texScene', self.buffer0)
+      Shader.SetFloat2('sunUV', med.sunUv.x, med.sunUv.y)
+      Shader.SetFloat('godStrength', strength)
+      Draw.Color(1, 1, 1, 1)
+      Draw.Rect(0, 0, self.sx, self.sy)
     shaderF:stop()
     RenderState.PopDepthTest()
     self.buffer1:pop()

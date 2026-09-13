@@ -52,7 +52,7 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue)
       local ccy = icy * CELL
       for oz = -1, 1 do
         local icz = cz + oz
-        local ccz = icy * CELL
+        local ccz = icz * CELL
 
         local h = hash32(icx, icy, icz, s, 0)
         local n = h < 0.55 and 1 or (h < 0.85 and 2 or 0)

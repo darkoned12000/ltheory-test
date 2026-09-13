@@ -126,3 +126,11 @@ $$\text{out.rgb} = \text{scene.rgb} \cdot T + \text{inscatter}$$
   - `volblur.glsl`: Standardized depth sampling to LOD `0.0`. Normalized sky depth comparisons ($d \ge 900000 \rightarrow 1000000$). Added edge fallback (`wsum < 1e-4`) to center tap `texelFetch(texVol, pH, 0)`, eliminating black silhouette artifacts.
   - `Renderer.lua`: Cached persistent `self.anchorBytes` memory buffer to eliminate per-frame C-FFI heap allocations inside `Renderer:volume()`.
   - Validator 130/0 @ 460 Core; boot and frame presentation clean across all debug modes.
+- **2026-09-13** — **Phase 3 (God-rays) shipped + review fix**:
+  - **Review found + fixed a Phase 2 bug**: `NebulaVolumes.lua` stored `local ccz = icy * CELL` (y-cell for z), collapsing every plume's z-position onto a y gridline and killing z-parallax; corrected to `icz * CELL`.
+  - `filter/godrays.glsl` (new): independent quarter-res worldray march accumulating only the sun's forward scatter (`hgPhase(godA ≈ 0.92)`), depth/sky-gated exactly like `volume.glsl`; outputs `(shaft, T)`.
+  - `filter/godblur.glsl` (new): 16-tap radial crawl toward the sun uv (`exp2(-2i)` weights), composite `scene + acc * godStrength` (mode 0) or raw shaft ×8 debug (mode 1).
+  - `Renderer:godrays(med)` two-pass (quarter-res `godView` RGBA16F march → full-res integrate/composite into `buffer1`, `self:swap()`), settings `postfx.godrays.{enable,strength,g,debug}` (debug is a 1-based Settings enum — `(idx-1)` maps to the shader mode, mirroring `volMode`), `godView`/`volView` tied into the renderer release path.
+  - `GameView.lua` call site between reconstruction and haze: sun uv from `camera:worldToNDC(camera.pos + starDir·1e5)`, mirrored behind camera, rim-clamped; `'Shaft'` debug bypasses the on/off gate.
+  - Validation: **135/0 @ 460 Core**; clean boots; same-frame strength A/B (temp 3-band split) showed scene+shaft ×8 → +18.7 luma, ×1 → +9.6, ×0 → 0 — shaft live, strength knob lands.
+  - Debugging note: the shaft read back all zeros for two sessions — the root cause was a **missing `volDensity` uniform in pass A** (`mediumDensity()` returns `volDensity * d`; default 0 ⇒ the whole medium disappears). The march samples the density field only under that gate. When probing a like this, check the medium's own gain uniforms first before suspecting marching or readback.
