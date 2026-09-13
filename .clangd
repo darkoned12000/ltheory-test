@@ -1,0 +1,9 @@
+CompileFlags:
+  Add: [
+    "-Ilibphx/include",
+    "-DDEBUG=0",
+    "-DCHECK_LEVEL=0",
+    "-Wno-unused-includes"
+  ]
+Diagnostics:
+  UnusedIncludes: Strict

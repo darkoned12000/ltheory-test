@@ -1,7 +1,6 @@
 #include fragment
 #include math
 
-
 layout(location = 0) out vec4 fragColor;
 flat in vec4 color;
 flat in vec4 widget_a;
@@ -31,8 +30,14 @@ void main() {
   float t = saturate(1.0 - projLength / l);
   float alpha = 0.0;
   alpha += 0.8 * exp(-2.0 * max(0.0, d - 0.5));
-  alpha += 0.2 * exp(-pow(0.2 * d, 0.75));
+  alpha += 0.2 * exp(-pow(max(1e-5, 0.2 * d), 0.75));
 
   alpha *= exp(-2.0 * (1.0 - t));
-  fragColor = alpha * color.w * vec4(c, 1.0);
+  vec4 outCol = alpha * color.w * vec4(c, 1.0);
+
+  if (isnan(outCol.r) || isnan(outCol.g) || isnan(outCol.b) || isnan(outCol.a)) {
+    outCol = vec4(0.0);
+  }
+
+  fragColor = outCol;
 }

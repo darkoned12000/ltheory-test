@@ -1,7 +1,6 @@
 #include fragment
 #include math
 
-
 layout(location = 0) out vec4 fragColor;
 uniform vec4 color;
 
@@ -12,7 +11,13 @@ void main() {
   float r = scale * length(uvp);
   float alpha = 0.0;
   alpha += exp(-258.0 * max(0.0, r - 0.01));
-  alpha += 0.1 * exp(-pow(8.0 * r, 0.75));
+  alpha += 0.1 * exp(-pow(max(1e-5, 8.0 * r), 0.75));
   vec3 c = 2.0 * color.xyz;
-  fragColor = alpha * color.w * vec4(c, 1.0);
+  vec4 outCol = alpha * color.w * vec4(c, 1.0);
+
+  if (isnan(outCol.r) || isnan(outCol.g) || isnan(outCol.b) || isnan(outCol.a)) {
+    outCol = vec4(0.0);
+  }
+
+  fragColor = max(vec4(0.0), outCol);
 }

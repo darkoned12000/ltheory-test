@@ -1,6 +1,5 @@
 #include fragment
 
-
 layout(location = 0) out vec4 fragColor;
 uniform vec4 color;
 uniform vec2 size;
@@ -8,7 +7,8 @@ uniform vec2 size;
 const float scale = 1.0;
 
 float dfield(float d) {
-  return exp(-2.0 * d * d) + 0.2 * exp(-pow(0.2 * d, 0.75));
+  float safeD = max(0.0, d);
+  return exp(-2.0 * safeD * safeD) + 0.2 * exp(-pow(max(1e-5, 0.2 * safeD), 0.75));
 }
 
 void main() {
@@ -41,12 +41,10 @@ void main() {
 
   mult *= 2.0 * exp(-2.0 * uv.y);
 
-#if 0
-  mult += 1.0 * exp(-sqrt(max(0.0, scale1.x * abs(uvp.x - 1.0) - 1.00)));
-  mult += 1.0 * exp(-sqrt(max(0.0, scale1.x * abs(uvp.x + 1.0) - 1.00)));
-  mult += 1.0 * exp(-sqrt(max(0.0, scale1.y * abs(uvp.y - 1.0) - 1.00)));
-  mult += 1.0 * exp(-sqrt(max(0.0, scale1.y * abs(uvp.y + 1.0) - 1.00)));
-#endif
+  vec4 outCol = c * mult;
+  if (isnan(outCol.r) || isnan(outCol.g) || isnan(outCol.b) || isnan(outCol.a)) {
+    outCol = vec4(0.0);
+  }
 
-  fragColor = c * mult;
+  fragColor = outCol;
 }

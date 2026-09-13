@@ -1,7 +1,6 @@
 #include fragment
 #include math
 
-
 layout(location = 0) out vec4 fragColor;
 flat in vec4 color;
 flat in vec4 widget_a;
@@ -13,7 +12,7 @@ float dbox(vec2 p, vec2 s, float b) {
 
 void main() {
   float padding = widget_a.x;
-  vec2 size = widget_a.yz;
+  vec2 size = max(vec2(1e-4), widget_a.yz);
   float innerAlpha = widget_a.w;
   float bevel = widget_b.x;
   vec3 c;
@@ -22,7 +21,8 @@ void main() {
   float y = size.y * (2.0 * uv.y - 1.0);
 
   float d = dbox(vec2(x, y), size + bevel - 2.0 * padding, bevel);
-  float k = exp(-max(0.0, d));
+  float safeD = max(0.0, d);
+  float k = exp(-safeD);
   float mult = 0.0;
 
   /* Inner opacity. */ {
@@ -30,7 +30,7 @@ void main() {
   }
 
   /* Shadow. */ {
-    mult += 0.75 * saturate(exp(-pow(0.2 * max(0.0, d), 0.75)) - k);
+    mult += 0.75 * saturate(exp(-pow(max(1e-5, 0.2 * safeD), 0.75)) - k);
   }
 
   mult *= color.w;
@@ -41,7 +41,12 @@ void main() {
   }
 
   c += 0.3 * vec3(0.1, 0.5, 1.0) * exp(-8.0 * length(uv - vec2(0.5, 0.0)));
-  c = mix(c, vec3(0.005, 0.005, 0.005), 1.0 - exp(-2.0 * max(0.0, d)));
+  c = mix(c, vec3(0.005, 0.005, 0.005), 1.0 - exp(-2.0 * safeD));
 
-  fragColor = vec4(c, mult);
+  vec4 outCol = vec4(c, mult);
+  if (isnan(outCol.r) || isnan(outCol.g) || isnan(outCol.b) || isnan(outCol.a)) {
+    outCol = vec4(0.0);
+  }
+
+  fragColor = max(vec4(0.0), outCol);
 }
