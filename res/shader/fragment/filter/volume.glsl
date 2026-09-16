@@ -19,6 +19,19 @@ uniform sampler2D texNoise;  /* 64x64 blue-noise LUT */
 uniform vec3      sunColor;  /* sun radiance */
 uniform float     volAniso;  /* Henyey-Greenstein g (-1..1) */
 
+/* Lightning storm flash sources (fog-nebula Phase 4). Bounded 2D float table
+ * mirroring texAnchors, ≤ lightningCount rows:
+ *   col0 = (pos.xyz, radius)
+ *   col1 = (color.rgb, energy)
+ *   col2 = (spawnTime, duration, attack, 0)
+ * Envelope: rise via smoothstep over `attack` then pow-decay over `duration`,
+ * all against volTime (same clock the controller writes spawnTime in). The
+ * flash adds a localized point-light inside the march; it never modifies T
+ * (scene*T + inscatter ordering preserved, so a bolt lights gas but cannot
+ * un-occlude stars). */
+uniform int       lightningCount;
+uniform sampler2D texLightning;
+
 /* Henyey-Greenstein phase (g -> 0 isotropic 1/4pi). Safe against division-by-zero. */
 float hgPhase (float c) {
   float g2 = volAniso * volAniso;
@@ -59,6 +72,22 @@ void main () {
 
       // Illumination = (Sun Radiance + Ambient Skybox Starlight) * Plume Palette * Tint Filter
       vec3 light = (sunColor * hgPhase(ndl) + texture(irMap, rd).xyz) * mc.yzw * tintFilter;
+
+      /* Lightning storm flash — bounded point-light loop (≤4, no branch on count) */
+      for (int L = 0; L < 4; ++L) {
+        if (float(L) + 0.5 >= float(lightningCount)) break;
+        vec4 lp = texelFetch(texLightning, ivec2(0, L), 0); /* pos.xyz, radius */
+        float dL = length(p - lp.xyz);
+        if (dL >= lp.w) continue;                            /* radius cull */
+        vec4 lc = texelFetch(texLightning, ivec2(1, L), 0); /* color, energy */
+        vec4 lt = texelFetch(texLightning, ivec2(2, L), 0); /* spawnTime, duration, attack */
+        float age = volTime - lt.x;
+        if (age < 0.0 || age > lt.y) continue;
+        float flash = smoothstep(0.0, max(1e-4, lt.z), age)
+                    * pow(clamp(1.0 - age / lt.y, 0.0, 1.0), 2.0);
+        float att = (lc.w * flash) / (dL * dL + 1.0) * exp(-dL * volSigmaT);
+        light += lc.rgb * att;
+      }
 
       float stepTr = exp(-volSigmaT * rho * step);
       inscatter += tr * (1.0 - stepTr) * (volSigmaS / max(1e-6, volSigmaT)) * light;

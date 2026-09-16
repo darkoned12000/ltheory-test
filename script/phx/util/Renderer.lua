@@ -104,6 +104,15 @@ local SETTINGS = {
   { kind = 'enum',  key = 'postfx.godrays.debug',    label = ' - Debug View', default = 1,
     options = { 'Off', 'Shaft' }, gpu = 'godraysDebug' },
 
+  -- Lightning storm flash (fog-nebula Phase 4, local volumetric point-light) ----
+  { kind = 'bool',  key = 'lightning.enable',        label = 'Lightning',    default = false, gpu = 'lightningEnable' },
+  { kind = 'enum',  key = 'lightning.quality',       label = ' - Quality',   default = 1,
+    options = { 'Low', 'High' }, gpu = 'lightningQuality' },
+  { kind = 'float', key = 'lightning.energy',        label = ' - Energy',    default = 15, min = 0, max = 40, gpu = 'lightningEnergy' },
+  { kind = 'float', key = 'lightning.radius',        label = ' - Radius',    default = 3500, min = 100, max = 12000, gpu = 'lightningRadius' },
+  { kind = 'enum',  key = 'lightning.debug',         label = ' - Debug View', default = 1,
+    options = { 'Off', 'Region', 'Energy' }, gpu = 'lightningDebug' },
+
   -- Core render -----------------------------------------------------------
   { kind = 'float', key = 'render.fovY',        label = 'FOV',           default = 70, min = 50, max = 100 },
   { kind = 'enum',  key = 'render.superSample', label = 'SuperSampling', default = 2,
@@ -472,6 +481,15 @@ function Renderer:free ()
     self.godView:free()
     self.godView = nil
   end
+  if self.texLightning then
+    self.texLightning:free()
+    self.texLightning = nil
+  end
+  if self.lightningBytes then
+    self.lightningBytes:free()
+    self.lightningBytes = nil
+  end
+  self.lightningStamp = nil
 end
 
 function Renderer:present (x, y, sx, sy, useMips)
@@ -743,6 +761,37 @@ function Renderer:volume (med)
     self.texAnchors:setDataBytes(bytes, PixelFormat.RGBA, DataFormat.Float)
   end
 
+  -- Lightning storm flash sources (bounded ≤4 rows, re-upload only on change).
+  -- Off = never uploaded and count forced to 0, so the shader loop is zero-cost.
+  local flashes = med.lightning
+  local lCount = 0
+  if flashes and #flashes > 0 and Settings.get('lightning.enable') then
+    lCount = math.min(#flashes, 4)
+    if not self.texLightning then
+      self.texLightning = Tex2D.Create(3, 4, TexFormat.RGBA32F)
+      self.texLightning:setMagFilter(TexFilter.Linear)
+      self.texLightning:setMinFilter(TexFilter.Linear)
+      self.texLightning:setWrapMode(TexWrapMode.Clamp)
+    end
+    if not self.lightningBytes then
+      self.lightningBytes = Bytes.Create(48 * 4)
+    end
+    if (med.lightningStamp or 0) ~= (self.lightningStamp or -1) then
+      local bytes = self.lightningBytes
+      local p = ffi.cast('float*', bytes:getData())
+      for i = 1, lCount do
+        local f = flashes[i]
+        local o = (i - 1) * 12
+        p[o + 0], p[o + 1], p[o + 2], p[o + 3] = f.pos.x, f.pos.y, f.pos.z, f.radius
+        p[o + 4], p[o + 5], p[o + 6], p[o + 7] = f.color.x, f.color.y, f.color.z, f.energy
+        p[o + 8], p[o + 9], p[o + 10], p[o + 11] = f.spawnTime, f.duration, f.attack, 0
+      end
+      self.texLightning:setDataBytes(bytes, PixelFormat.RGBA, DataFormat.Float)
+      self.lightningStamp = med.lightningStamp or 0
+      print('[lt] volume lightning upload rows=' .. lCount)
+    end
+  end
+
   local dens = Settings.get('nebula.density') or 1
   local sigT = dens * 0.00005
   local sigS = dens * 0.0000375
@@ -784,6 +833,8 @@ function Renderer:volume (med)
       Shader.SetFloat('volAniso',   volAniso)
       Shader.SetFloat3('volTint', tintR, tintG, tintB)
       Shader.SetFloat('volTintAmt', tintAmt)
+      Shader.SetInt('lightningCount', lCount)
+      if lCount > 0 then Shader.SetTex2D('texLightning', self.texLightning) end
       Draw.Color(1, 1, 1, 1)
       Draw.Rect(-1, -1, 2, 2)
     shaderH:stop()
