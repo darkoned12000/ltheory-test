@@ -6,6 +6,7 @@ GameView.name = 'Game View'
 local ssTable = { 1, 2, 4 }
 local Batcher = require('Game.Batcher')
 local NebulaVolumes = require('Game.NebulaVolumes')
+local LightningStorm = require('Game.LightningStorm')
 
 -- PHX_DEBUG_DUMP=<frame> : save pipeline checkpoints to PNGs once, at that frame.
 -- Set PHX_DEBUG_DUMP=120 to snapshot ~2s after boot.
@@ -637,6 +638,7 @@ function GameView:draw (focus, active)
   for i = 1, #self.children do self.children[i]:draw(focus, active) end
   ShaderVar.Pop('mViewUI')
   uiScale:free()
+  self:drawLightningUI()
   ClipRect.PopTransform()
   Viewport.Pop()
   self.renderer:endUI()
@@ -668,6 +670,12 @@ function GameView:draw (focus, active)
         end
         ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
         ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
+        local flashes, fstamp = nil, 0
+        if self.storm then
+          flashes, fstamp = self.storm:activeEvents(self.camera.pos)
+          print('[lt] gv volume flashes=' .. tostring(flashes and #flashes or nil) ..
+            ' stamp=' .. tostring(fstamp) .. ' rain=' .. tostring(Settings.get('lightning.enable')))
+        end
         self.renderer:volume({
           envMap   = neb.envMap,
           irMap    = neb.irMap,
@@ -675,6 +683,8 @@ function GameView:draw (focus, active)
           sunColor = sunCol,
           noise    = noiseTex,
           anchors  = self.volumes,
+          lightning     = flashes,
+          lightningStamp = fstamp,
         })
         ShaderVar.Pop('mProjInv')
         ShaderVar.Pop('mViewInv')
@@ -771,6 +781,76 @@ function GameView:draw (focus, active)
   self.camera:pop()
 end
 
+-- Decorative storm visuals, drawn in the UI pass (screen-pixel space):
+-- 1) LightningBolt ribbons as projected additive polylines (white-hot core
+--    over a colored halo, both fading with bolt age);
+-- 2) lightning.debug overlays (Region / Energy) via the controller.
+-- Runs inside the composited UI buffer, above the post chain.
+function GameView:drawLightningUI ()
+  local storm = self.storm
+  if not storm then return end
+  if Settings.get('lightning.enable') then
+    local camera = self.camera
+
+    -- Project one control point; nil if behind the near plane or non-finite,
+    -- so a broken projection can never poison the following points.
+    local function screenXY (world)
+      local ndc = camera:worldToNDC(world)
+      if not (ndc and ndc.z and ndc.z > 0) then return nil end
+      local s = camera:ndcToScreen(ndc)
+      local x, y = tonumber(s and s.x), tonumber(s and s.y)
+      if not (x and y and x == x and y == y) then return nil end
+      return x, y
+    end
+
+    local bolts = storm.bolts
+    for i = 1, #bolts do
+      local b = bolts[i]
+      local fade = math.max(0.0, 1.0 - b.age / b.life)
+      if fade > 0.02 then
+        -- Stroke every segment directly; for the halo we run the same polyline
+        -- per offset (emulates a soft wide ribbon; core-GL wide lines bust).
+        local function stroke (ox, oy, cr, cg, cb, ca)
+          Draw.Color(cr, cg, cb, ca)
+          local prevX, prevY = nil, nil
+          for j = 1, #b.points do
+            local x, y = screenXY(b.points[j])
+            local ok = x ~= nil
+            if ok then
+              if prevX then Draw.Line(prevX + ox, prevY + oy, x + ox, y + oy) end
+              prevX, prevY = x, y
+            else
+              -- Drop the broken projection but KEEP drawing the rest: a bolt
+              -- that swings behind the near plane or off-frame must not lose
+              -- its entire tail (the visible remainder snaps back).
+              prevX, prevY = nil, nil
+            end
+          end
+        end
+        for p = 1, 2 do -- halo offsets
+          stroke(p * 1.5, 0, b.color.x, b.color.y, b.color.z, 0.18 * fade)
+        end
+        stroke(0, 0, 1, 1, 1, 0.9 * fade) -- white-hot core
+      end
+    end
+  end
+  storm:debugDraw(self.camera)
+end
+
+-- Vapor-gated thunder: one-shot 3D at the strike point (Turret pattern).
+-- The controller only fires inside a real window, so this is always a valid
+-- nucleus even when the camera is inside the plume.
+function GameView:onLightningStrike (e)
+  local sfx = Config.audio.sfx.thunder
+  if not (sfx and sfx.sound) then return end
+  local sound = Sound.Load(sfx.sound, false, true)
+  sound:set3DPos(e.pos, Vec3f(0, 0, 0))
+  sound:set3DMinMaxDistance(sfx.minDist or 500, 0)
+  sound:setVolume(sfx.volume or 3.5)
+  sound:setFreeOnFinish(true)
+  sound:play()
+end
+
 function GameView:onInputChildren (state)
   self.camera:push()
   for i = 1, #self.children do
@@ -782,6 +862,23 @@ end
 
 function GameView:onUpdate (state)
   self.camera:onUpdate(state.dt)
+
+  do -- Lightning storm schedule (vapor-gated, off = no-op)
+    if self.ltheory then
+      if not self.storm then
+        self.storm = LightningStorm.new(self.ltheory.seed)
+      end
+      if Settings.get('lightning.enable') then
+        local tNow = (tonumber(Time.GetRaw()) or 0) * 0.001
+        self.storm:update(state.dt, tNow, {
+          volumes   = self.volumes,
+          cameraPos = self.camera.pos,
+          system    = self.ltheory.system,
+          onStrike  = function (e) self:onLightningStrike(e) end,
+        })
+      end
+    end
+  end
 
   do -- Compute Eye Velocity EMA
     local eye = self.camera.pos

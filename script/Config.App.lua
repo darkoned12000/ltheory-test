@@ -77,6 +77,7 @@ Config.audio = {
     blaster   = { sound = 'blaster',     volume = 2.2, minDist = 40  },
     explosion = { sound = 'explosion',   volume = 1.0, minDist = 200 },
     engine    = { sound = 'engine_loop', volume = 1.0, minDist = 60  },
+    thunder   = { sound = 'thunder',     volume = 3.5, minDist = 500 },
   },
 }
 
@@ -211,6 +212,15 @@ Config.gpu = {
   godraysStrength = 1,          -- additive shaft gain (0..4)
   godraysG        = 0.92,       --   shaft HG phase g (tight forward lobe)
   godraysDebug    = 'Off',      --   Off | Shaft
+
+  -- Lightning storm flash (lightning.*, fog-nebula Phase 4). Local volumetric
+  -- point-light flash inside the volume march; storm schedule + bolt ribbon
+  -- is LightningStorm.lua. Off = controller no-op, shader loop stays zero-cost.
+  lightningEnable  = false,     -- master switch
+  lightningQuality = 'Low',     -- Low (2 concurrent) | High (4)
+  lightningEnergy  = 15,        -- nominal flash energy at nucleus (attenuated by 1/(d²+1))
+  lightningRadius  = 3500,      -- per-event radius cutoff, world units
+  lightningDebug   = 'Off',     -- Off | Region | Energy
 
   -- Sun: the warm directional light + ambient fill that makes asteroid fields /
   -- dust lanes read as "lit by the system's star" (System.starDir). Matches the
