@@ -7,6 +7,7 @@ uniform vec2 p1;        // A : start of edge segment
 uniform vec2 p2;        // B : end of edge segment
 uniform float width;    // line width (px)
 uniform float dash;     // dash period (px); < 0.5 = solid line
+uniform float flow;     // animation phase (time * speed); dots drift toward B
 uniform vec4 color;
 
 void main() {
@@ -22,8 +23,9 @@ void main() {
   alpha += 0.2 * exp(-pow(max(1e-5, 0.2 * d), 0.75));
 
   // Dash mask (square wave along the segment); solid when dash < 0.5.
+  // flow shifts the pattern toward B (dst) so trade routes read as movement.
   if (dash >= 0.5) {
-    alpha *= step(0.5, fract(u * segLen / dash));
+    alpha *= step(0.5, fract(u * segLen / dash - flow));
   }
 
   float t = 1.0 - u;                              // 1 at A → 0 at B

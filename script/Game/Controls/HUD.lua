@@ -293,16 +293,21 @@ function HUD:onInput (state)
   local debugWindow = self.gameView.debugWindow
   local overPanel = debugWindow and debugWindow:isEnabled()
                     and debugWindow:containsPoint(state.mousePosX, state.mousePosY)
-  if not overPanel then
+  -- Modal map: while the node graph is open it owns the mouse, so the ship
+  -- holds thrust/aim/fire and the camera holds zoom. Same discipline, wider
+  -- gate (open anywhere, not just hovered).
+  local nodeGraph = self.gameView.nodeGraph
+  local mapOpen = nodeGraph and nodeGraph:isEnabled() or false
+  if not overPanel and not mapOpen then
     camera:modRadius(exp(-0.1 * CameraBindings.Zoom:get()))
   end
   -- camera:modYaw(0.005 * CameraBindings.Yaw:get())
   -- camera:modPitch(0.005 * CameraBindings.Pitch:get())
 
   local e = self.player:getControlling()
-  self:controlThrust(e)
+  if not mapOpen then self:controlThrust(e) end
 
-  if not overPanel then self:controlTurrets(e) end
+  if not overPanel and not mapOpen then self:controlTurrets(e) end
 
   self:controlTargetLock(e)
   camera:pop()

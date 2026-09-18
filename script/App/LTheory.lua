@@ -128,6 +128,25 @@ function LTheory:onInit ()
   self.debugWindow = GUI.DebugWindow(self)
   self.gameView.debugWindow = self.debugWindow
   self.gameView:add(self.debugWindow:setStretch(0, 1), Config.debug.window)
+
+  -- Node-graph overlay (§13): hidden until F10. Demo nodes are TEMP scaffolding
+  -- for the overlay shell — Phase 2 replaces them with live system seeding.
+  self.nodeGraph = UI.NodeGraph.Create()
+  self.gameView.nodeGraph = self.nodeGraph
+  do
+    local ng = self.nodeGraph
+    ng:addNode(1, -160, -90, { r = 16, label = 'Hub' })
+    ng:addNode(2,  140, -110, { r = 10, label = 'Mine' })
+    ng:addNode(3,  160, 100, { r = 10, label = 'Trade' })
+    ng:addNode(4, -140, 110, { r = 8 })
+    ng:addNode(5, 0, 200, { r = 12, label = 'Map' })
+    ng:addEdge(1, 2, 'solid')
+    ng:addEdge(1, 3, 'trade')
+    ng:addEdge(1, 4, 'solid')
+    ng:addEdge(1, 5, 'solid')
+    ng.focus = 1
+  end
+  self.gameView:add(self.nodeGraph:setStretch(1, 1), false)
 end
 
 function LTheory:onInput ()

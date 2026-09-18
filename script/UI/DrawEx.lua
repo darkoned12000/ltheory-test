@@ -39,7 +39,7 @@ function DrawEx.Cross (x, y, r, color)
   DrawEx.Line(x - r, y + r, x + r, y - r, color)
 end
 
-function DrawEx.Dash (x1, y1, x2, y2, color, width, dash)
+function DrawEx.Dash (x1, y1, x2, y2, color, width, dash, flow)
   local width = width or 2
   local dash = dash or 0
   local pad = 8 + width + dash
@@ -56,6 +56,7 @@ function DrawEx.Dash (x1, y1, x2, y2, color, width, dash)
     Shader.SetFloat2('p2', x2, y2)
     Shader.SetFloat('width', width)
     Shader.SetFloat('dash', dash)
+    Shader.SetFloat('flow', flow or 0)
     Shader.SetFloat4('color', color.r, color.g, color.b, color.a * alpha)
     Draw.Rect(xMin, yMin, xMax - xMin, yMax - yMin)
   shader:stop()

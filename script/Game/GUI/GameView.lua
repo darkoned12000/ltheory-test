@@ -936,6 +936,14 @@ function GameView:onUpdate (state)
     end
   end
 
+  if Input.GetPressed(Button.Keyboard.F10) then
+    local now = os.clock()
+    if not self.__lastMapToggle or now - self.__lastMapToggle > 0.2 then
+      self.__lastMapToggle = now
+      if self.nodeGraph then self.nodeGraph:toggleEnabled() end
+    end
+  end
+
   local vsync = Settings.get('render.vsync')
   if vsync ~= self.appliedVsync and self.ltheory and self.ltheory.window then
     self.appliedVsync = vsync

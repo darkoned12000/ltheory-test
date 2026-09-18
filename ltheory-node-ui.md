@@ -1,6 +1,6 @@
 # Node-Based UI / Inventory Visualization — Implementation Plan (LTheory)
 
-**Status:** Phase 0 shipped (2026-09-18, dashline + `DrawEx.Dash`, validator 136/0). No further code yet.
+**Status:** Phase 1 shipped (2026-09-18, skeleton + render proof). No further code yet.
 **Inspiration:** ComfyUI-style node graph + inventory/workbench visualization, shown by Josh Parnell in a video; must be **live/auto-populated from real game data**, not hand-authored in an editor.
 
 ---
@@ -366,6 +366,18 @@ Every claim below was checked against the tree (read, not assumed). The doc has 
 
 ### Reference pass (2026-09-18)
 Viewed both Josh screenshots; they override the Bézier premise — see §12. Doc reworked: `dashline.glsl` replaces `wire.glsl` as the Phase 0 primitive (demoted, not deleted from history), edge-kind→style mapping locked (solid hierarchy/mine/sockets, dotted `Jobs.Transport`), node/selection/label language taken from the shots.
+
+### Phase 1 skeleton (2026-09-18)
+`script/UI/NodeGraph.lua`: id-keyed nodes/edges, SystemMap pan/zoom math, drag/select + corner-bracket reticle, translucent overlay canvas. Render-proved headless (temp GameView hook, reverted): hub/trade/dotted all visible on screen, PNG diff vs baseline max 0.98. Lesson recorded: files inside `script/UI/` load before the `UI` global exists — use local `require('UI.*')`, never the `UI.*` global at load time (works in `Game/` only because `UI` loads first).
+
+### Overlay host (2026-09-18)
+`LTheory` adds `UI.NodeGraph` as a hidden GameView child (same pattern as the debug window); **F10** toggles it (debounced, mirrors F9 — M is music-mute, WASD/QE/Space/Esc all bound). Overlay input is arrows + mouse only (no WASD — the ship owns it). Demo nodes seed the canvas until Phase 2 replaces them with live system data; render-proved in-game (overlay-vs-hidden PNG delta mean 0.29). Known limitation: flight is NOT suspended while open yet (ship keeps flying while you browse) — gate `MasterControl` input on map visibility before this leaves dev-preview.
+
+### Dev-preview feedback round (2026-09-18)
+F10/select/drag/dotted-follow all confirmed working in-game. Changes: modal input gating in `HUD:onInput` (extends the existing debug-panel `overPanel` pattern — while the map is open the ship holds thrust/aim/fire and the camera holds zoom; target-lock untouched), trade-route color brightened (`cTrade` → 0.45/0.75/1.0 @ 0.95), demo scaffold gains a `Map` node off the hub. Boot-verified headless, zero errors.
+
+### Edge mechanical difference + flow animation (2026-09-18)
+Dotted vs solid is now functional, not paint: solid edges are structural/static (hierarchy, sockets, mine links — selectable endpoints, no motion); dotted `Jobs.Transport` edges are live flows — dots drift toward the destination (`flow` phase uniform = time × 0.35) and will carry hover data (item/rate) once Phase 2 attaches edge metadata. `dashline.glsl` + `DrawEx.Dash` take an optional `flow` arg (default 0 = static); validator 136/0, full suite green, visible-path proved headless.
 
 ### Scenario pass (2026-09-18)
 New §13, all verified: real-data-from-start (no PoC), F10 overlay host (M is music-mute; WASD/QE/Space/Esc all bound), single-system scope correction (no galaxy exists — top level is the current system, galaxy slots in later as a stack entry), suppressed-layer rule, node identity from real fields only (no description field exists — derive function from capabilities), ship/inventory as same-widget-different-context, modal-ish input (flight suspended, mouse+arrows for the map).
