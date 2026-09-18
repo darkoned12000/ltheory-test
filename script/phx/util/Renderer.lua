@@ -90,6 +90,8 @@ local SETTINGS = {
   { kind = 'enum',  key = 'nebula.debug',   label = ' - Debug View', default = 1,
     options = { 'Off', 'Density', 'Transmittance', 'Lighting', 'Steps', 'Anchors' }, gpu = 'nebulaDebug' },
   { kind = 'float', key = 'nebula.density', label = ' - Density',    default = 1, min = 0, max = 4, gpu = 'nebulaDensity' },
+  { kind = 'float', key = 'nebula.background', label = ' - Background', default = 1, min = 0, max = 1.5, gpu = 'nebulaBackground' },
+  { kind = 'float', key = 'nebula.coverage', label = ' - Coverage',  default = 1, min = 0.25, max = 2.5, gpu = 'nebulaCoverage' },
   { kind = 'float', key = 'nebula.radius',  label = ' - Radius',     default = 12000, min = 500, max = 40000, gpu = 'nebulaRadius' },
   { kind = 'float', key = 'nebula.g',       label = ' - Phase g',    default = 0, min = -1, max = 1, gpu = 'nebulaG' },
   { kind = 'float', key = 'nebula.tint',    label = ' - Glow Tint',  default = 0.0, min = 0, max = 1, gpu = 'nebulaTint' },
@@ -110,6 +112,7 @@ local SETTINGS = {
     options = { 'Low', 'High' }, gpu = 'lightningQuality' },
   { kind = 'float', key = 'lightning.energy',        label = ' - Energy',    default = 15, min = 0, max = 40, gpu = 'lightningEnergy' },
   { kind = 'float', key = 'lightning.radius',        label = ' - Radius',    default = 3500, min = 100, max = 12000, gpu = 'lightningRadius' },
+  { kind = 'float', key = 'lightning.rate',          label = ' - Storm Rate', default = 1, min = 0.25, max = 3, gpu = 'lightningRate' },
   { kind = 'enum',  key = 'lightning.debug',         label = ' - Debug View', default = 1,
     options = { 'Off', 'Region', 'Energy' }, gpu = 'lightningDebug' },
 
@@ -761,20 +764,20 @@ function Renderer:volume (med)
     self.texAnchors:setDataBytes(bytes, PixelFormat.RGBA, DataFormat.Float)
   end
 
-  -- Lightning storm flash sources (bounded ≤4 rows, re-upload only on change).
+  -- Lightning storm flash sources (bounded ≤6 rows, re-upload only on change).
   -- Off = never uploaded and count forced to 0, so the shader loop is zero-cost.
   local flashes = med.lightning
   local lCount = 0
   if flashes and #flashes > 0 and Settings.get('lightning.enable') then
-    lCount = math.min(#flashes, 4)
+    lCount = math.min(#flashes, 6)
     if not self.texLightning then
-      self.texLightning = Tex2D.Create(3, 4, TexFormat.RGBA32F)
+      self.texLightning = Tex2D.Create(3, 6, TexFormat.RGBA32F)
       self.texLightning:setMagFilter(TexFilter.Linear)
       self.texLightning:setMinFilter(TexFilter.Linear)
       self.texLightning:setWrapMode(TexWrapMode.Clamp)
     end
     if not self.lightningBytes then
-      self.lightningBytes = Bytes.Create(48 * 4)
+      self.lightningBytes = Bytes.Create(48 * 6)
     end
     if (med.lightningStamp or 0) ~= (self.lightningStamp or -1) then
       local bytes = self.lightningBytes
@@ -788,7 +791,6 @@ function Renderer:volume (med)
       end
       self.texLightning:setDataBytes(bytes, PixelFormat.RGBA, DataFormat.Float)
       self.lightningStamp = med.lightningStamp or 0
-      print('[lt] volume lightning upload rows=' .. lCount)
     end
   end
 
@@ -821,6 +823,7 @@ function Renderer:volume (med)
       Shader.SetFloat3('sunColor', med.sunColor.x, med.sunColor.y, med.sunColor.z)
       Shader.SetFloat('volMip',    volMip)
       Shader.SetFloat('volDensity', dens)
+      Shader.SetFloat('volBackground', Settings.get('nebula.background') or 1)
       Shader.SetFloat('volSigmaT',  sigT)
       Shader.SetFloat('volSigmaS',  sigS)
       Shader.SetFloat('volSteps',   stepF)
@@ -935,6 +938,7 @@ local volCount = med.anchors and #med.anchors or 0
       Shader.SetFloat('volTintAmt', tintAmt)
       Shader.SetFloat('godA', godA)
       Shader.SetFloat('volDensity', dens)
+      Shader.SetFloat('volBackground', Settings.get('nebula.background') or 1)
       Shader.SetFloat('volMip',     1.0)
       Draw.Color(1, 1, 1, 1)
       Draw.Rect(-1, -1, 2, 2)

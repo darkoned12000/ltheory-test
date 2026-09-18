@@ -34,20 +34,22 @@ case "$OS" in
     # NOTE: Arch has no 'build-essential' package -- use base-devel instead.
     sudo pacman -S --noconfirm \
       base-devel cmake python3 git \
-      sdl3 glew luajit bullet lz4
+      sdl3 glew luajit bullet lz4 lua51-filesystem
     ;;
   debian)
     sudo apt-get update
     sudo apt-get install -y \
       build-essential cmake python3 git \
       libglu1-mesa-dev libglew-dev libsdl3-dev liblz4-dev \
-      libluajit-5.1-dev libbullet-dev
+      libluajit-5.1-dev libbullet-dev lua-filesystem
     ;;
   macos)
     brew update
     brew install \
       build-essential cmake python3 \
-      sdl3 glew luajit bullet
+      sdl3 glew luajit bullet luarocks
+    # LuaFileSystem for the LuaJIT 5.1 runtime (script/env/ext/IOEx.lua):
+    luarocks --lua-version=5.1 install luafilesystem || true
     # FreeType ships with Xcode Command Line Tools; ensure they're present:
     xcode-select --install >/dev/null 2>&1 || true
     ;;

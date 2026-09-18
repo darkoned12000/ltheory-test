@@ -673,8 +673,6 @@ function GameView:draw (focus, active)
         local flashes, fstamp = nil, 0
         if self.storm then
           flashes, fstamp = self.storm:activeEvents(self.camera.pos)
-          print('[lt] gv volume flashes=' .. tostring(flashes and #flashes or nil) ..
-            ' stamp=' .. tostring(fstamp) .. ' rain=' .. tostring(Settings.get('lightning.enable')))
         end
         self.renderer:volume({
           envMap   = neb.envMap,
@@ -808,13 +806,16 @@ function GameView:drawLightningUI ()
       local b = bolts[i]
       local fade = math.max(0.0, 1.0 - b.age / b.life)
       if fade > 0.02 then
+        -- Re-strike flicker: real bolts re-strike instead of fading smoothly.
+        -- Same shimmer as the volume pass so ribbon and cloud glow agree.
+        local flick = 0.72 + 0.28 * math.sin(b.age * 43.0) * math.sin(b.age * 17.0 + 1.3)
         -- Stroke every segment directly; for the halo we run the same polyline
         -- per offset (emulates a soft wide ribbon; core-GL wide lines bust).
-        local function stroke (ox, oy, cr, cg, cb, ca)
+        local function stroke (pts, ox, oy, cr, cg, cb, ca)
           Draw.Color(cr, cg, cb, ca)
           local prevX, prevY = nil, nil
-          for j = 1, #b.points do
-            local x, y = screenXY(b.points[j])
+          for j = 1, #pts do
+            local x, y = screenXY(pts[j])
             local ok = x ~= nil
             if ok then
               if prevX then Draw.Line(prevX + ox, prevY + oy, x + ox, y + oy) end
@@ -827,10 +828,32 @@ function GameView:drawLightningUI ()
             end
           end
         end
-        for p = 1, 2 do -- halo offsets
-          stroke(p * 1.5, 0, b.color.x, b.color.y, b.color.z, 0.18 * fade)
+        for p = 1, 3 do -- halo offsets (wide soft ribbon, reads at range)
+          stroke(b.points, p * 2.0, 0, b.color.x, b.color.y, b.color.z, 0.16 * fade * flick)
         end
-        stroke(0, 0, 1, 1, 1, 0.9 * fade) -- white-hot core
+        stroke(b.points, 0, 0, 1, 1, 1, 0.9 * fade * (0.5 + 0.5 * flick)) -- white-hot core
+        if b.branches then -- side forks, thinner than the parent channel
+          for q = 1, #b.branches do
+            stroke(b.branches[q], 0, 0, b.color.x, b.color.y, b.color.z, 0.5 * fade * flick)
+          end
+        end
+        -- Distance-readable strike glow: nested quads at the strike tip so a
+        -- 10k-out strike still reads as a flash, not a rumor. Size falls with
+        -- range (clamped), alpha follows the same fade+flicker as the ribbon.
+        local tip = b.points[#b.points]
+        local gx, gy = screenXY(tip)
+        if gx then
+          local dCam = math.max(1.0, tip:distance(camera.pos))
+          local gs = math.max(8, math.min(140, 200000 / dCam))
+          local ga = fade * flick
+          Draw.Color(b.color.x, b.color.y, b.color.z, 0.10 * ga)
+          Draw.Rect(gx - gs / 2, gy - gs / 2, gs, gs)
+          Draw.Color(0.9, 0.95, 1.0, 0.22 * ga)
+          Draw.Rect(gx - gs / 4, gy - gs / 4, gs / 2, gs / 2)
+          Draw.Color(1, 1, 1, 0.75 * ga)
+          local cs = math.max(2, gs / 5)
+          Draw.Rect(gx - cs / 2, gy - cs / 2, cs, cs)
+        end
       end
     end
   end
@@ -873,6 +896,8 @@ function GameView:onUpdate (state)
         self.storm:update(state.dt, tNow, {
           volumes   = self.volumes,
           cameraPos = self.camera.pos,
+          camDir    = self.camera.rot:getForward(),
+          fovY      = Settings.get('render.fovY') or 70,
           system    = self.ltheory.system,
           onStrike  = function (e) self:onLightningStrike(e) end,
         })

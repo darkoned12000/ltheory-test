@@ -77,7 +77,7 @@ Config.audio = {
     blaster   = { sound = 'blaster',     volume = 2.2, minDist = 40  },
     explosion = { sound = 'explosion',   volume = 1.0, minDist = 200 },
     engine    = { sound = 'engine_loop', volume = 1.0, minDist = 60  },
-    thunder   = { sound = 'thunder',     volume = 3.5, minDist = 500 },
+    thunder   = { sound = 'thunder',     volume = 3.5, minDist = 4000 },
   },
 }
 
@@ -198,6 +198,8 @@ Config.gpu = {
   nebulaQuality  = 'High',     -- Off | Low | Medium | High (steps 8/16/24, evals 2/2/3)
   nebulaDebug    = 'Composite',      -- Off | Density | Transmittance | Lighting | Steps | Anchors
   nebulaDensity  = 1,          --   medium master gain (0..4)
+  nebulaBackground = 1,        --   everywhere-field presence (0..1.5, anchors unaffected)
+  nebulaCoverage = 1,          --   bank size/density multiplier (0.25..2.5)
   nebulaRadius   = 12000,      --   max march distance, world units
   nebulaG        = 0,          --   Henyey-Greenstein phase (phase 1.5 tune-up)
   nebulaTint     = 0.0,       --   inscatter tint mix (0..1)
@@ -220,6 +222,7 @@ Config.gpu = {
   lightningQuality = 'Low',     -- Low (2 concurrent) | High (4)
   lightningEnergy  = 15,        -- nominal flash energy at nucleus (attenuated by 1/(d²+1))
   lightningRadius  = 3500,      -- per-event radius cutoff, world units
+  lightningRate    = 1,         -- storm rate multiplier (bolt count × rate, intervals ÷ rate)
   lightningDebug   = 'Off',     -- Off | Region | Energy
 
   -- Sun: the warm directional light + ambient fill that makes asteroid fields /

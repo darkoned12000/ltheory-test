@@ -26,9 +26,11 @@ uniform float     volAniso;  /* Henyey-Greenstein g (-1..1) */
  *   col2 = (spawnTime, duration, attack, 0)
  * Envelope: rise via smoothstep over `attack` then pow-decay over `duration`,
  * all against volTime (same clock the controller writes spawnTime in). The
- * flash adds a localized point-light inside the march; it never modifies T
- * (scene*T + inscatter ordering preserved, so a bolt lights gas but cannot
- * un-occlude stars). */
+ * flash is a radius-normalized point light: full `energy` at the strike, half
+ * strength at radius/8, then a soft (1-d/radius)^2 gate to zero at the edge,
+ * so the whole nearby cloud lights up instead of a tight 1/d^2 ball. It never
+ * modifies T (scene*T + inscatter ordering preserved, so a bolt lights gas but
+ * cannot un-occlude stars). */
 uniform int       lightningCount;
 uniform sampler2D texLightning;
 
@@ -54,6 +56,16 @@ void main () {
   float tCap = isSky ? volDist : min(dist, volDist);
   float step = tCap / max(1.0, volSteps);
 
+  /* Blue-noise ray-start jitter. Fixed (i+0.5) sampling builds concentric
+   * band shells around the camera that sweep while flying and read as
+   * crawling waves at high density gain; one static blue-noise offset per
+   * pixel turns the bands into stable fine grain instead. Reuses the GTAO
+   * 64x64 LUT already bound as texNoise (sized via textureSize, no magic). */
+  ivec2 bnSize = textureSize(texNoise, 0);
+  ivec2 bnUV = ivec2(int(mod(gl_FragCoord.x, float(max(bnSize.x, 1)))),
+                     int(mod(gl_FragCoord.y, float(max(bnSize.y, 1)))));
+  float bn = texelFetch(texNoise, bnUV, 0).r;
+
   vec3 inscatter = vec3(0.0);
   float tr = 1.0;
 
@@ -63,7 +75,7 @@ void main () {
   for (int i = 0; i < 24; ++i) {
     if (float(i) + 0.5 >= volSteps) break;
 
-    vec3 p = ro + rd * (float(i) + 0.5) * step;
+    vec3 p = ro + rd * min((float(i) + bn) * step, tCap);
     vec4 mc = mediumCloud(p);
     float rho = mc.x;
 
@@ -73,8 +85,8 @@ void main () {
       // Illumination = (Sun Radiance + Ambient Skybox Starlight) * Plume Palette * Tint Filter
       vec3 light = (sunColor * hgPhase(ndl) + texture(irMap, rd).xyz) * mc.yzw * tintFilter;
 
-      /* Lightning storm flash — bounded point-light loop (≤4, no branch on count) */
-      for (int L = 0; L < 4; ++L) {
+      /* Lightning storm flash — bounded point-light loop (≤6, no branch on count) */
+      for (int L = 0; L < 6; ++L) {
         if (float(L) + 0.5 >= float(lightningCount)) break;
         vec4 lp = texelFetch(texLightning, ivec2(0, L), 0); /* pos.xyz, radius */
         float dL = length(p - lp.xyz);
@@ -85,7 +97,16 @@ void main () {
         if (age < 0.0 || age > lt.y) continue;
         float flash = smoothstep(0.0, max(1e-4, lt.z), age)
                     * pow(clamp(1.0 - age / lt.y, 0.0, 1.0), 2.0);
-        float att = (lc.w * flash) / (dL * dL + 1.0) * exp(-dL * volSigmaT);
+        /* Re-strike shimmer: real bolts re-strike instead of fading smoothly.
+         * Same flicker the UI ribbon/glow use so both halves agree. */
+        flash *= 0.72 + 0.28 * sin(age * 43.0) * sin(age * 17.0 + 1.3);
+        /* Radius-normalized falloff: peak `energy` at the strike, ~half at
+         * radius/8, soft-gated to zero at the edge (cloud-scale glow, no ball
+         * edge pop against the `dL >= radius` reject above). */
+        float norm = dL / max(1.0, lp.w);
+        float soft = clamp(1.0 - norm, 0.0, 1.0);
+        soft *= soft;
+        float att = (lc.w * flash) / (norm * norm * 64.0 + 1.0) * soft * exp(-dL * volSigmaT);
         light += lc.rgb * att;
       }
 

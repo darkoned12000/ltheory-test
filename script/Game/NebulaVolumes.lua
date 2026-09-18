@@ -7,12 +7,27 @@ local NebulaVolumes = {}
 local CELL = 12000      -- world lattice pitch (plume spacing)
 local MAXV = 16         -- bounded uniform list (texAnchors height)
 
--- 32-bit integer hash: deterministic and free from float precision loss
+-- 32-bit integer hash: deterministic and free from float precision loss.
+-- Returns [0,1): LuaJIT bitops are signed, so a raw /2^32 can go negative for
+-- half the inputs (plumes clumping at cell corners) — the mod folds it back.
+-- Must stay in sync with the copies in LightningStorm.lua / LightningBolt.lua.
 local function hash32 (x, y, z, seed, k)
   local h = (x * 374761393 + y * 668265263 + z * 224682251 + seed * 3266489917 + k * 2654435761) & 0xFFFFFFFF
   h = ((h ~ (h >> 13)) * 1274126177) & 0xFFFFFFFF
   h = (h ~ (h >> 16)) & 0xFFFFFFFF
-  return h / 4294967296.0
+  return (h % 4294967296) / 4294967296.0
+end
+
+local function foldSeed (seed)
+  -- Sector seeds are 64-bit ULL, but doubles only hold 53-bit integers: the
+  -- raw value's low bits are mush and seed*K rounds to a quantum that swallows
+  -- every small cell/k term, so hash32 returns ONE constant for all inputs
+  -- (identical plumes on a perfect lattice). XOR both 32-bit halves into 32
+  -- bits. Must match LightningStorm's fold so stormSeed ≡ plume seed replays.
+  local s = math.floor(tonumber(seed) or 0)
+  local lo = s % 4294967296
+  local hi = math.floor(s / 4294967296) % 4294967296
+  return (lo ~ hi) & 0xFFFFFFFF
 end
 
 local function hsl2rgb (h, s, l)
@@ -31,13 +46,18 @@ local function hsl2rgb (h, s, l)
 end
 
 function NebulaVolumes.cellKey (pos)
-  return math.floor(pos.x / CELL) .. '_' .. math.floor(pos.y / CELL) .. '_' .. math.floor(pos.z / CELL)
+  -- Coverage is part of the key so dragging the panel slider rebuilds the
+  -- field on the next frame instead of waiting for a cell crossing.
+  local cover = 1
+  if Settings and Settings.get then cover = Settings.get('nebula.coverage') or 1 end
+  return math.floor(pos.x / CELL) .. '_' .. math.floor(pos.y / CELL) .. '_' .. math.floor(pos.z / CELL) ..
+    '_' .. string.format('%.2f', cover)
 end
 
 -- Accepts an optional sectorHue [0..1] derived from the sector's skybox generator.
 -- If provided, local plume hues shift to match and complement the skybox palette.
 function NebulaVolumes.build (seed, pos, radius, sectorHue)
-  local s = math.floor(tonumber(seed) or 0)
+  local s = foldSeed(seed)
   local cx = math.floor(pos.x / CELL)
   local cy = math.floor(pos.y / CELL)
   local cz = math.floor(pos.z / CELL)
@@ -67,12 +87,18 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue)
           local d2 = dx * dx + dy * dy + dz * dz
 
           if d2 <= r2 then
-            local baseExtent = 1200 + hash32(icx, icy, icz, s, off + 4) * 4800
+            -- Coverage (storm-cloud knob): scales bank extents AND core
+            -- density together, so 1.6 reads as thick storm banks and 0.5 as
+            -- thin wisps. Defaults to 1.0 = the signed-off Phase 2 field.
+            local cover = 1
+            if Settings and Settings.get then cover = Settings.get('nebula.coverage') or 1 end
+            cover = math.max(0.25, math.min(2.5, cover))
+            local baseExtent = (1200 + hash32(icx, icy, icz, s, off + 4) * 4800) * cover
             local extX = baseExtent * (0.6 + hash32(icx, icy, icz, s, off + 10) * 0.8)
             local extY = baseExtent * (0.4 + hash32(icx, icy, icz, s, off + 11) * 0.6)
             local extZ = baseExtent * (0.6 + hash32(icx, icy, icz, s, off + 12) * 0.8)
 
-            local density = 0.8 + hash32(icx, icy, icz, s, off + 5) * 2.2
+            local density = (0.8 + hash32(icx, icy, icz, s, off + 5) * 2.2) * cover
             local scale   = 0.0003 + hash32(icx, icy, icz, s, off + 6) * 0.0012
             local warp    = hash32(icx, icy, icz, s, off + 7) * 450.0
 

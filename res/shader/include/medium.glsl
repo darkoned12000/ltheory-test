@@ -9,6 +9,7 @@
 #include noise
 
 uniform float volDensity;    /* medium master gain                       */
+uniform float volBackground; /* background-bank presence (anchors unaffected) */
 uniform float volSigmaT;     /* extinction per unit optical depth        */
 uniform float volSigmaS;     /* scattering per unit optical depth        */
 uniform float volSteps;      /* raymarch step budget (float, 8/16/24)   */
@@ -22,7 +23,9 @@ uniform vec3  volTint;       /* background albedo                        */
 uniform float volTintAmt;    /* background tint mix                      */
 uniform sampler2D texAnchors;/* RGBA32F rows per anchor                  */
 
-/* Background banks (world-space) */
+/* Background banks (world-space) — the everywhere-field. volBackground scales
+ * presence only (anchors keep their Lua density); without it, a density gain
+ * high enough for thick banks also turns the whole sky into drifting wash. */
 float mediumDensity (vec3 p) {
   p += volFlow * volTime;
   float a = valueNoise(p * 0.0004);
@@ -32,7 +35,7 @@ float mediumDensity (vec3 p) {
     float m = valueNoise(p * 0.0016 + b * 3.0);
     d *= smoothstep(0.35, 0.8, m);
   }
-  return volDensity * d;
+  return volDensity * volBackground * d;
 }
 
 /* Anchor plumes: smooth spherical falloff to prevent box/cube outlines */
