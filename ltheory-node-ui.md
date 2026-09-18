@@ -82,7 +82,7 @@ All of these are already computed at runtime and re-queryable each frame — the
 | `script/UI/DrawEx.lua` | Add `DrawEx.Dash(x1,y1,x2,y2,color,dashPeriod)` following the `Tri` standalone-SDF pattern (explicit min/max bbox, nil-check, PushAdditive, uniforms, `Draw.Rect`, Pop). Solid lines already exist via `DrawEx.Line` (batched path — no change needed). | **Yes** — trade-route edges call the primitive. |
 | `res/shader/fragment/ui/dashline.glsl` *(NEW)* | New standalone dashed-line fragment (see §6): `line.glsl`'s segment-distance math plus a `dashPeriod` uniform (`0` = solid). Reuses shared `vertex/ui.glsl`; no vertex file to touch, no manifest entry. | **New** (validated by `./configure.py test`). A curved Bézier `wire.glsl` is **deferred** — the reference shows zero curves (see §12); revive only if a curved aesthetic is explicitly requested (reviewed sample kept in git history). |
 | `script/Config.App.lua` / `Config.Local.lua` | Optional: add semantic node/edge colors as flat keys under `Config.ui.color` (convention: `accent`, `selection`, … — e.g. `nodeWire`, `nodeSelected`) + demo toggles (`nodegraph.{mode,showEdges}`). Pure Lua; no C++ change. | Optional — defaults can be hardcoded in NodeGraph with Local.lua overrides for tuning. |
-| `script/App/NodeGraphDemo.lua` *(NEW)* | Demo app that builds a system, spawns stations/entities, and shows the node graph (both layout modes). Prior art: `TestEcon.lua` (`self.canvas:add(SystemMap(self.system))`). | New — run via `./run.sh NodeGraphDemo`. |
+| `script/App/NodeGraphDemo.lua` *(NEW, optional harness)* | Standalone demo app (same pattern as `TestEcon.lua`) for developing the widget without booting the full game. The primary host is the LTheory overlay (§13), not this demo. | Optional — run via `./run.sh NodeGraphDemo`. |
 | `script/Game/SystemMap.lua` | **Read-only reference** — do not modify; it is the closest prior art and seeding pattern. | None (reference only). |
 
 **No changes required to:** C++ rendering path, shader manifest, build system (`CMakeLists.txt`), FFI bindings, or any other `.lua`. The new fragment auto-loads via `Cache.Shader`; if it ever fails to compile the existing last-good fallback skips the pass (see §10).
@@ -267,9 +267,9 @@ When `mode == WorldProjection`, project each node's world position onto screen u
 
 **Acceptance criteria (end-to-end):**
 1. `./configure.py test` passes with the new shader compiling+linking headlessly.
-2. Demo runs (`./run.sh NodeGraphDemo`); nodes appear auto-populated from live entities, filtered by importance; solid edges reflect socket/hierarchy/mine links, dotted edges reflect `Jobs.Transport` routes.
+2. Primary host is the LTheory overlay (§13, F10 toggle): nodes auto-populate from the live system, filtered by importance; solid edges reflect socket/hierarchy/mine links, dotted edges reflect `Jobs.Transport` routes. `NodeGraphDemo` remains an optional dev harness.
 3. Free-form drag + pan/zoom work; selection draws the corner-bracket reticle; labels update live on major nodes.
-4. Drill into a node reveals its children; back restores the prior view/camera.
+4. Drill into a node reveals its children (suppressed levels stay unlabeled per §13); back restores the prior view/camera.
 5. No C++ changes, no build-manifest edits, graceful degradation if the shader fails to compile.
 6. Visual check against §12 references: rings + straight/dotted edges + selective labels + overlay (no opaque panel), monochrome blue family.
 
@@ -293,10 +293,46 @@ When `mode == WorldProjection`, project each node's world position onto screen u
 | Stage | Command | Purpose |
 |---|---|---|
 | Shader compile/link | `./configure.py test` | Headless GLSL validator (`tools/validate_glsl.py`) compiles+links every `.glsl` incl. new `fragment/ui/wire` via moderngl/EGL at the engine's GLSL level — **fail fast on typos.** Interpreter resolved from project venv / `$PHX_VALIDATOR_PY` / `python3`. |
-| Runtime demo | `./run.sh NodeGraphDemo` | Launches the node graph over the live game/world; no `LD_LIBRARY_PATH` needed (`$ORIGIN` RUNPATH + absolute FFI loader). |
+| Runtime overlay | Boot LTheory, press F10 | NodeGraph over the live system; drill system → bodies/ships → components (§13). |
+| Runtime demo (harness) | `./run.sh NodeGraphDemo` | Widget without the full game; no `LD_LIBRARY_PATH` needed (`$ORIGIN` RUNPATH + absolute FFI loader). |
 | Config tuning | Edit `Config.Local.lua` | Toggle modes, colors, show/hide edges — no gameplay code changes. |
 
 **Pre-edit rule:** always run `./configure.py test` before any `.glsl` edit (AGENTS.md: a typo now fails at configure time). The validator's interpreter comes from the project venv, so configure as `./configure.py`.
+
+---
+
+## 13. Scenario & drill-down flow (2026-09-18)
+
+### PoC vs real data: real data from the start
+No proof-of-concept with fake data — data access is the entire risk (which entities expose what, §5), and static nodes would prove nothing. `NodeGraph` seeds from the live system from Phase 2 onward; `NodeGraphDemo` is an optional harness, not the deliverable.
+
+### Host + toggle: in-game overlay, F10
+- There is **no map in the game** today (`SystemMap` is demo-only, used solely by `TestEcon`). NodeGraph ships as a GameView child overlay, attached exactly like the debug window (`LTheory.lua:130`: `gameView:add(widget, visibleFlag)`), drawn above the game screen in the UI composite pass.
+- Toggle with **F10** in `GameView:onUpdate`, mirroring the F9 debug toggle (debounced, same function). Do NOT use **M** — it mutes music (`GameView.lua:926`). WASD/QE/Space/Esc are flight/UI-bound; the overlay must not reuse them (see Input below).
+- LTheory spawns ~100 AI ships + 60 asteroids + stations (`LTheory.lua`), so `isGraphWorthy` LOD is load-bearing from day one, not a later optimization.
+
+### Scope correction: one system today, galaxy later
+`LTheory` builds exactly **one** `Entities.System` per run — no multi-sector galaxy exists. So the drill-down top level is the **current system** (label `"System <seed>"` until systems get names), not a galaxy map:
+- Level 0 (system): planets, moons, stations, gates, ships, wormholes — rings + selective labels, hub spokes + dotted trade routes (the §12 look).
+- Level 1 (drill into a body/ship/station): its children — ship sockets (Generator→Thruster→Turret), inventory (`Inventory` component), station markets/factories, moonlets.
+- Level 2+ (drill into a component/node): live stats + `onNodeSelected` inspector detail.
+- A future galaxy level slots in as just another stack entry (the §7 stack already supports it) — no widget changes needed when multi-sector arrives.
+
+### Suppressed-layer rule
+Nodes below the current stack level render as **plain dim rings only** — no labels, no edges, no inspector, no hover. Data appears if and only if its level is on top of the stack. This is both a perf discipline (nothing computed for hidden levels) and the focus contract: the screen never shows two levels' data at once.
+
+### Node identity block (what the player reads)
+Real data only — no invented fields:
+- `getName()` (fallback `Entity @ %p` reads verbatim; NYI types excluded by LOD), integer `entity.id`.
+- Kind tags from capability predicates (`hasTrader`, `hasFactory`, `hasYield`, socket types present) — this is the "function" line, derived, not stored.
+- Live stats already on the entity: health bars (`addHealth`), flow rates (`getFlows`), position/scale.
+- There is **no description field** in the data model. Either ship without flavor text (recommended — identity + tags + stats suffice) or add optional `Name.desc` (3-line change, Phase 2 at the earliest).
+
+### Ship view / inventory: same widget, different context
+No second implementation: open NodeGraph with `context = shipEntity` instead of `context = system`. Sockets seed hub-and-spoke edges, `Inventory`/`Capacitor`/`Health` seed stat nodes, drill-down reaches individual components. The stack, LOD, labels, and inspector path are shared.
+
+### Input modality while open
+The overlay is modal-ish: while visible, ship flight controls are suspended (standard map behavior — otherwise panning the map flies the ship). Map input uses mouse (drag = pan/rearrange, scroll = zoom, click = drill/select) + arrow keys; WASD stays flight-bound so it must not pan the map (unlike standalone `SystemMap`, which uses WASD because no ship is listening).
 
 ---
 
@@ -330,6 +366,9 @@ Every claim below was checked against the tree (read, not assumed). The doc has 
 
 ### Reference pass (2026-09-18)
 Viewed both Josh screenshots; they override the Bézier premise — see §12. Doc reworked: `dashline.glsl` replaces `wire.glsl` as the Phase 0 primitive (demoted, not deleted from history), edge-kind→style mapping locked (solid hierarchy/mine/sockets, dotted `Jobs.Transport`), node/selection/label language taken from the shots.
+
+### Scenario pass (2026-09-18)
+New §13, all verified: real-data-from-start (no PoC), F10 overlay host (M is music-mute; WASD/QE/Space/Esc all bound), single-system scope correction (no galaxy exists — top level is the current system, galaxy slots in later as a stack entry), suppressed-layer rule, node identity from real fields only (no description field exists — derive function from capabilities), ship/inventory as same-widget-different-context, modal-ish input (flight suspended, mouse+arrows for the map).
 
 ---
 
