@@ -1,6 +1,6 @@
 # Node-Based UI / Inventory Visualization — Implementation Plan (LTheory)
 
-**Status:** Planning document + pre-implementation review (2026-09-18, §11). No code changes yet.
+**Status:** Phase 0 shipped (2026-09-18, dashline + `DrawEx.Dash`, validator 136/0). No further code yet.
 **Inspiration:** ComfyUI-style node graph + inventory/workbench visualization, shown by Josh Parnell in a video; must be **live/auto-populated from real game data**, not hand-authored in an editor.
 
 ---
