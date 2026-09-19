@@ -309,7 +309,7 @@ No proof-of-concept with fake data — data access is the entire risk (which ent
 ### Host + toggle: in-game overlay, F10
 - There is **no map in the game** today (`SystemMap` is demo-only, used solely by `TestEcon`). NodeGraph ships as a GameView child overlay, attached exactly like the debug window (`LTheory.lua:130`: `gameView:add(widget, visibleFlag)`), drawn above the game screen in the UI composite pass.
 - Toggle with **F10** in `GameView:onUpdate`, mirroring the F9 debug toggle (debounced, same function). Do NOT use **M** — it mutes music (`GameView.lua:926`). WASD/QE/Space/Esc are flight/UI-bound; the overlay must not reuse them (see Input below).
-- LTheory spawns ~100 AI ships + 60 asteroids + stations (`LTheory.lua`), so `isGraphWorthy` LOD is load-bearing from day one, not a later optimization.
+- LTheory's live census is small (player ship, 1 named station, 1 unnamed planet, 60 field rocks, 30 debug ring rocks — escorts/NPC loops currently run 0), so `isGraphWorthy` LOD is load-bearing from day one, not a later optimization.
 
 ### Scope correction: one system today, galaxy later
 `LTheory` builds exactly **one** `Entities.System` per run — no multi-sector galaxy exists. So the drill-down top level is the **current system** (label `"System <seed>"` until systems get names), not a galaxy map:
@@ -376,11 +376,58 @@ Viewed both Josh screenshots; they override the Bézier premise — see §12. Do
 ### Dev-preview feedback round (2026-09-18)
 F10/select/drag/dotted-follow all confirmed working in-game. Changes: modal input gating in `HUD:onInput` (extends the existing debug-panel `overPanel` pattern — while the map is open the ship holds thrust/aim/fire and the camera holds zoom; target-lock untouched), trade-route color brightened (`cTrade` → 0.45/0.75/1.0 @ 0.95), demo scaffold gains a `Map` node off the hub. Boot-verified headless, zero errors.
 
+### Phase 2 live seeding (2026-09-18)
+`Create(system, {focusEntity})`; per-frame merge (new snap in, live retarget, unseen pruned — table never replaced); lerp tracking; edges from sockets (both-seeded only), hierarchy (context root excluded — no starburst), economy `Jobs` (Mine solid, Transport dotted). Two-tier LOD (majors rings+labels, minors points). Fit majors-only + player-centered (full-set fit piled everything: the "stacked" bug). Drag writes `manual=true` so drops survive reseeding (fixes snap-back; dropped ships freeze where left until Phase 3 pinning). Labels via `e.name` or kind tags (`Factory #12`, never `Entity @ %p`); late-promoted majors backfill labels. Declutter: deterministic draw-time spiral offsets for co-located majors (true positions intact). Bodyless entities (particles) skipped via pcall guards — first live run caught the `getPos` assert. Headless proofs clean, zero errors. Drill-down still Phase 4 (click selects only).
+- **Lock-on that works at any distance (same day).** Root causes found by reading, not guessing: hit radius used *world* scale (planet = 3000px+ click black hole swallowing nearby clicks), and far majors (planet at ~250k, `planetViewDist`) sat off-screen unclickable — so "click the planet" hit 3D space, not a node. Fix: hit-testing uses *drawn* size (shared `drawnRadius` helper, one source of truth with the ring); off-screen majors get edge triangles + labels at the clamped frame position, hit-testable at the same spot — clicking one selects and follow flies the view there. Filter-aware.
+- **Single-intent lock (same day).** Follow-ease (centering) fought zoom-anchor (cursor) whenever the cursor sat off-center — the selected node crept during scroll. Now: locked node is the anchor for everything (never moves under any scroll); cursor anchors only unlocked. Follow-ease holds once centered (3px) instead of pulling forever, so moving ships still track. Click empty = release.
+- **Drift root cause + proof (same day).** Screenshots 02->06 showed the cluster walking up-right while zooming. Two stacked causes: (1) declutter offsets recomputed per frame from the shifting screen layout moved the anchor mid-gesture -- fixed by freezing offsets while scrolling (+6 settle frames); (2) follow-ease dragged view-center-ward *during* scrolls -- fixed by suspending centering while a gesture is live. Proven headless with a select+scroll autopilot: tracked node pinned at identical sub-pixel coords across zoom 721->291,055 (400x), three runs. Autopilot block is TEMP in-tree (env-gated, revert before merge).
+- **Zoom bounds (2026-09-19, committed before Phase 4).** `clampZoom` bounds every zoom change (scroll / drill / fit / ease) to 1e-4..3000 with a NaN guard; a headless autopilot run had reached zoom 291,055 on the unbounded `zoom * exp(k*scrolled)`. Click-zoom no longer caps at an absolute 3 (that cap was a symptom, not a fix). NOTE: `clampZoom`/`kDrillRadius` are locals defined ABOVE `seedFromSystem` — locals are only visible after their definition, so an earlier placement raised `undefined global clampZoom` at runtime (caught headless).
+- **Zoom-about-cursor (same day, superseded by node-priority anchor).** User model: cursor sits on the node, scroll should dive into it — independent of lock state. Scroll now pins the world point under the cursor (clamped into the widget); follow-ease still glides to selections. The node-pinned variant it replaces couldn't survive a silently dead follow.
+- **Lock-on zoom (same day).** Scrolling used to clear follow, so zooming centered mid-screen and the node slid away. Now scroll zooms *about the locked node* (its screen pos pinned, follow survives; manual scroll just retires the auto ×4 push). Click hub → view dives straight in; pan/drag/click-empty still break lock.
+
+### Dense-cluster fan (2026-09-18 — "don't clump the 60")
+Co-located minors spiral onto a capped disc (grid-hashed 16px cells, 3×3 neighbourhood — majors seed the grid first so fans never cover rings), zoom-gated (real positions separate up close, so no lying), with thin leader lines back toward truth (length varies, capped). Dots stay 1:1-anchored; only the overlap is displaced. Accepts: Phase 2 closed after this — overlay host, live seeding, LOD, filters, zoom/focus labels, scale bar, fan all live; drill-down is Phase 4.
+- **Follow-up (same day): mine-spoke starburst.** Ore rocks each draw a lane to their station, so fields read as spokes, not discs. Fix: mine-linked minors arrange in a **ring band (100–160px, direction truthful, distance compressed)** around their station anchor — spokes stay short by construction. Grid fan skips anchored rocks (but still avoids them); leaders suppressed where the spoke serves. Zoom-gated like the fan: close up, truth returns.
+- **Follow-up (same day): full 360° ring.** Direction-preserving slots piled on one arc (fields are one-sided from their station), so layout is now pure golden-angle around the hub with radii alternating 105/130/155 — every spoke a different length, dots spaced for clicking (ringed dots get a 14px hit radius vs 8). Clicking the hub centers + zooms ×4 onto it (follow + targetZoom), so reaching a readable view takes one click, not pan/zoom fiddling.
+
+### Phase 2 display cleanup (2026-09-18, user questions answered in code)
+- Ore fields carry yield on EVERY rock (`spawnAsteroidField(60, 1000)` marks all 60) — yield-alone no longer promotes to major, or 60 labels form an unreadable band. Mineables stay dots, labeled on zoom/focus.
+- Planets (scale 1e5, possibly a sector away) are drawn but excluded from the fit bbox, or stations collapse again.
+- Categories + filters: every node gets `cat` (station/ship/rock); **F5 ships / F6 rocks / F7 places / F8 routes** toggle layers, legend bottom-right. Replaces the old demo hub/mine/trade nodes with the real thing.
+- Minor labels appear when zoomed past 0.3 or on selection (100 ship labels at sector zoom would repeat the band bug); selected minors get a small reticle.
+- Scale bar bottom-left (map is 1:1 world x/z, zoom = px per unit) — answers "how far is that" directly.
+- Verified facts: no gates/wormholes exist in LTheory gen (nothing missing); `visibility-cloud` is a debug print of the same field, not separate rocks; NPC ships scatter at `kSystemScale` while rocks clump by chained spawn — dots are both, distinguished by zoom/focus labels.
+- **2026-09-18** — **Screenshot-driven beautify round**: declutter rewritten in screen pixels (world-space version fanned co-located nodes into giant rings at fit-zoom — the circle artifact); kind tags now read `Ship`/`Ore`/`Factory` (sockets ⇒ ship, yield ⇒ ore); user's shot predated these fixes (pointer labels = old fallback — Lua hot-loads at boot, restart picks them up, no rebuild). Held the line: the ore blob stays clumped (positions are truthful 1:1 — fan requests denied, zoom + F6 rocks-only are the tools). Stations spawn disc-scattered, not planet-adjacent (generator reality; co-located station option = future gen change).
+
 ### Edge mechanical difference + flow animation (2026-09-18)
 Dotted vs solid is now functional, not paint: solid edges are structural/static (hierarchy, sockets, mine links — selectable endpoints, no motion); dotted `Jobs.Transport` edges are live flows — dots drift toward the destination (`flow` phase uniform = time × 0.35) and will carry hover data (item/rate) once Phase 2 attaches edge metadata. `dashline.glsl` + `DrawEx.Dash` take an optional `flow` arg (default 0 = static); validator 136/0, full suite green, visible-path proved headless.
 
 ### Scenario pass (2026-09-18)
 New §13, all verified: real-data-from-start (no PoC), F10 overlay host (M is music-mute; WASD/QE/Space/Esc all bound), single-system scope correction (no galaxy exists — top level is the current system, galaxy slots in later as a stack entry), suppressed-layer rule, node identity from real fields only (no description field exists — derive function from capabilities), ship/inventory as same-widget-different-context, modal-ish input (flight suspended, mouse+arrows for the map).
+
+### Hierarchy + regions + follow (2026-09-18)
+Verified against the generator: no universe/galaxy/sector names exist (top level is `"System <seed>"`); **regions DO exist** — `Zone` entities with generated names (`"X Field"`), positions, and member lists (`Zone:add` is loose grouping, no reparent). Sector level now seeds zone *nodes* and suppresses member rocks until drill-down (Phase 4) — this is the grouping answer for 20-30-minute flight distances: regions, not one giant view. Component children (turrets/thrusters, parented to ships) are likewise excluded. Selection now eases the view onto the node (zoom untouched; pan/drag/zoom breaks follow).
+
+---
+
+## 14. World-generation survey (2026-09-18, read-not-assumed)
+
+`LTheory:generate` (`script/App/LTheory.lua:7-102`) builds exactly one `Entities.System` (`kSystemScale = 10000`). Current census (loops at lines 32/47 run **0** iterations — escorts and NPC AI are disabled in this build):
+
+| What | Count | Position | Name? | Map tier |
+|---|---|---|---|---|
+| Player ship (+`YOU` marker) | 1 | `Config.gen.origin` | no (`Ship #id`) | major, white |
+| Station (Market+Trader+Factory+Production) | 1 | disc radius ~10k | yes, generated | major, labeled |
+| Planet (scale ~1e5) | 1 | random dir, possibly far | no | major ring, unlabeled target |
+| Asteroid field (all 60 carry yield) | 60 | **random** zone (see bug) | no (`Ore #id` on zoom) | minor dots (+ zone node) |
+| Visibility-cloud ring | 30 | ring 8–20k around player | no | minor dots |
+| GPUParticles | 1 | — | skipped (no body) | — |
+| Zones (`system:getZones()`) | 1+ | field centers | yes (`"X Field"`) | major region nodes |
+
+- **The dot-circle artifact was real data**: the 30 visibility-cloud rocks are placed on a ring (`ang = i/30·2π`) — not a map bug. They are debug scaffolding with no distinguishing marker; leave them (deleting changes the scene), but know what they are.
+- **Real gen bug (out of map scope, flagged):** `LTheory.lua:53` passes `fieldPos` ("3,000 units directly in front") but `System:spawnAsteroidField(count, oreCount)` takes no position — the field lands randomly. "Asteroids in front of me" confusion starts here.
+- **Names:** stations and zones (generated), everything else anonymous. Sector itself unnamed → top node reads `"System <seed>"`. No universe/galaxy layer exists.
+- **Recommendation: do NOT expand the universe yet.** One sector already exposes every map problem (grouping, LOD, labels, scale); multi-sector generation + streaming + travel is a separate project. The stack design absorbs it later with no widget changes.
 
 ---
 
