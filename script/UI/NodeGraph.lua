@@ -107,7 +107,7 @@ end
 -- Zoom bounds. Unbounded `zoom * exp(k*scrolled)` ran to ~3e5 in a headless
 -- autopilot run; clamp after every change (scroll, drill, fit, ease).
 local kZoomMin = 1e-4
-local kZoomMax = 3000
+local kZoomMax = 5e5
 local kDrillRadius = 140   -- drill in when a major's drawn radius passes this
 local kUndrillRadius = 40  -- pop back only below this (hysteresis, no flicker)
 
@@ -118,18 +118,32 @@ local function clampZoom (z)
 end
 
 function NodeGraph:seedFromSystem ()
-  local sys = self.system
+  local sys = self.context or self.system  -- drill levels change the context
   if not sys then return end
+  -- Some drill targets are childless (asteroids): show the empty level rather
+  -- than assert in iterChildren (crash was: asteroid selected -> no children).
+  local ctxHas = (sys.hasChildren and sys:hasChildren()) or false
+  if not ctxHas then return end
   -- Region membership: entities grouped inside a named zone (ore fields)
   -- are represented BY the zone node at sector level, not individually.
   -- Zone:add is loose grouping (no reparent), so collect member ids first.
+  -- Zone-member suppression is a SECTOR-level rule: at the sector view each
+  -- zone's members hide behind their zone node. Drilled INTO a zone, its
+  -- members are the level's children and MUST show (Parnell region reveal).
+  -- A zone context IS its members' level: do not suppress them.
+  local ctxIsZone = sys ~= self.system and sys.name ~= nil
+  local suppressMembers = not ctxIsZone
   local memberOfZone = {}
-  for _, z in sys:iterChildren() do
-    if z and not z.deleted and z.name then
-      local okC, ch = pcall(z.getChildren, z)
-      if okC and ch and #ch >= 5 then
-        for _, m in ipairs(ch) do
-          if m and m.id then memberOfZone[m.id] = true end
+  if suppressMembers then
+    -- Only named zones with bodies group (Zone:getPos overrides; sub-5-member
+    -- groups are spurious blobs until Phase 5 clustering decides otherwise).
+    for _, z in sys:iterChildren() do
+      if z and not z.deleted and z.name then
+        local okC, ch = pcall(z.getChildren, z)
+        if okC and ch and #ch >= 5 then
+          for _, m in ipairs(ch) do
+            if m and m.id and m ~= sys then memberOfZone[m.id] = true end
+          end
         end
       end
     end
@@ -138,7 +152,8 @@ function NodeGraph:seedFromSystem ()
   for _, e in sys:iterChildren() do
     if e and not e.deleted then
       -- Only top-level children seed: components (turrets/thrusters, parented
-      -- to ships) and zone members stay hidden until drill-down (Phase 4).
+      -- to ships) stay hidden until drill-down (Phase 4). Zone members: hidden
+      -- behind their zone node at sector level, shown when the zone is drilled.
       local parent = e.getParent and e:getParent()
       local topLevel = (parent == nil or parent == sys)
       local worthy, major, cat = NodeGraph.isGraphWorthy(e)
@@ -207,7 +222,7 @@ function NodeGraph:seedFromSystem ()
       local w, h = math.max(1, x1 - x0), math.max(1, y1 - y0)
       -- Center the player's ship when present (player-centric map).
       local centered = false
-      if self.focusEntity then
+      if self.context == self.system and self.focusEntity then
         for _, n in pairs(self.nodes) do
           if n.entity == self.focusEntity then
             self.pos = Vec2f(n.x, n.y)
@@ -220,12 +235,13 @@ function NodeGraph:seedFromSystem ()
         self.pos = Vec2f((x0 + x1) * 0.5, (y0 + y1) * 0.5)
       end
       self.zoom = clampZoom(math.min(sx / w, sy / h) * 0.85)
+      -- Declutter runs THIS frame: ring branch checks `not self._fitted`,
+      -- so it must see the pre-fit state. Offsets freeze from the next frame
+      -- (_ringDone), and _fitted gates further declutter entirely.
+      if not self._ringDone then self:declutter() end
       self._fitted = true
+      self._ringDone = true
     end
-  end
-  if not (self._offsetsReady and (self._offsetHold or 0) > 0) then
-    self:declutter()
-    self._offsetsReady = true
   end
 end
 
@@ -254,8 +270,8 @@ function NodeGraph:seedEdges ()
       end
     end
   end
-  if self.system and self.system.hasEconomy and self.system:hasEconomy() then
-    local eco = self.system:getEconomy()
+  if self.context and self.context.hasEconomy and self.context:hasEconomy() then
+    local eco = self.context:getEconomy()
     for _, job in ipairs(eco.jobs or {}) do
       if job.src and job.dst then
         link(job.src, job.dst, job.item and 'trade' or 'mine')
@@ -269,7 +285,7 @@ function NodeGraph:onUpdate (state)
   if self._offsetHold and self._offsetHold > 0 then
     self._offsetHold = self._offsetHold - 1
   end
-  if self.system then
+  if (self.context or self.system) then
     self:seedFromSystem()
     self:seedEdges()
     -- Lerp live nodes toward their targets (ships glide, banks sit still).
@@ -281,31 +297,24 @@ function NodeGraph:onUpdate (state)
         n.y = n.y + (n.ty - n.y) * k
       end
     end
-    -- Follow-on-select: ease the view onto the focused node (zoom untouched).
-    -- Any pan/drag/zoom input clears it (see onInput).
-    if self.follow then
-      local fn = self.nodes[self.follow]
+    -- Locked-node handling: NO positional easing. The selected node is the
+    -- zoom anchor — the only camera motion during a locked gesture is
+    -- applyScroll pinning its screen position exactly. Any ease here would
+    -- fight the pin and walk the node away ("works, then drifts").
+    if self.targetZoom then
+      local fn = self.follow and self.nodes[self.follow] or nil
       if fn then
-        local held = (self._offsetHold or 0) > 0
         local fk = 1 - math.exp(-4 * dt)
-        -- Ease only until centered (3px): then hold perfectly still so the
-        -- zoom anchor above never fights this easing. Moving targets (ships)
-        -- re-open the gap and track again on their own.
-        local nx, ny = self:toScreen(self:nodeXY(fn))
-        local _, _, vsx, vsy = self:getRectGlobal()
-        local dx, dy = (self.x + vsx * 0.5) - nx, (self.y + vsy * 0.5) - ny
-        if not held and dx * dx + dy * dy > 9 then
-          self.pos.x = self.pos.x + (fn.x - self.pos.x) * fk
-          self.pos.y = self.pos.y + (fn.y - self.pos.y) * fk
-        end
-        if self.targetZoom then
-          self.zoom = clampZoom(self.zoom + (self.targetZoom - self.zoom) * fk)
-        end
-      else
-        self.follow, self.targetZoom = nil, nil
+        self.zoom = clampZoom(self.zoom + (self.targetZoom - self.zoom) * fk)
       end
     end
   end
+end
+
+-- The map toggle lifecycle: opening (or closing) resets to the sector level.
+-- Without this, F10-open after a drill left the EMPTY drilled level on screen.
+function NodeGraph:onEnable ()
+  while self:drillOut() do end  -- pop any drill levels
 end
 
 function NodeGraph:addEdge (a, b, kind)
@@ -314,6 +323,66 @@ end
 
 function NodeGraph:clearEdges ()
   self.edges = {}
+end
+
+-- Drill context (Phase 4): swap the seeding target without touching the
+-- lens. The stack carries {context, camera{zoom,pos}} so Back restores the
+-- level you came FROM exactly (per-level camera, per-the-plan §7).
+function NodeGraph:drillInto (entity, keepZoom)
+  if entity == self.context then return end
+  -- Only entities that can actually be a seeding context: a node with no
+  -- children CANNOT be one. Clicking a childless node must zoom, never blank.
+  if not (entity and entity.hasChildren and entity:hasChildren()) then
+    return false
+  end
+  -- A drill context is only useful if at least one child can SEED (has a
+  -- body/map position). Factory socket children (turrets/thrusters) are
+  -- parented and bodyless at map scale -> empty reveal (the blank bug).
+  local okC, ch = pcall(entity.getChildren, entity)
+  local seedable = false
+  if okC and ch then
+    for _, c in ipairs(ch) do
+      if c and not c.deleted and (c.getPos) then
+        local okP, p = pcall(c.getPos, c)
+        if okP and p then seedable = true break end
+      end
+    end
+  end
+  if not seedable then return false end
+  self.stack[#self.stack + 1] = {
+    context = self.context,
+    camera  = { zoom = self.zoom, pos = { x = self.pos.x, y = self.pos.y } },
+  }
+  self.context = entity
+  self.nodes, self.edges = self._prevNodes or {}, {}
+  self.focus, self.follow = nil, nil
+  self._fitted = false
+  self._prevNodes = nil
+  self.nucleus = nil
+  if keepZoom then
+    -- Reuse the current zoom for a component/level whose coordinates live in
+    -- the same frame (zone members, ship children); the refit in onUpdate is a
+    -- no-op once _fitted, so this is a pure relabel of the same field.
+  else
+    -- Fresh level, fresh fit: the new DOF comes from fit_VIEW, not a climbing
+    -- zoom (Claude's point - and the Parnell reveal, per zoom-into-a-region).
+    self.zoom = 1.0
+    self.pos = Vec2f(0, 0)
+  end
+  return self.stack[#self.stack]
+end
+
+function NodeGraph:drillOut ()
+  if #self.stack == 0 then return false end
+  local prev = self.stack[#self.stack]
+  self.stack[#self.stack] = nil
+  self.context = prev.context
+  self.nodes, self.edges = {}, {}
+  self.focus, self.follow = nil, nil
+  self._fitted = false
+  self.zoom = prev.camera.zoom
+  self.pos = Vec2f(prev.camera.pos.x, prev.camera.pos.y)
+  return true
 end
 
 -- Visual declutter (Phase 3 precursor): majors sharing nearly the same world
@@ -362,19 +431,21 @@ function NodeGraph:declutter ()
   -- spokes vary and dots stay clickable). The ring is constant screen size at
   -- every zoom, so pushing in refines it instead of collapsing back to a pile.
   local groups = {}
-  for _, e in ipairs(self.edges) do
-    if e.kind == 'mine' then
-      local a, b = self.nodes[e.a], self.nodes[e.b]
-      local rock, hub = nil, nil
-      if a and b then
-        if not a.major and b.major then rock, hub = a, b
-        elseif not b.major and a.major then rock, hub = b, a end
-      end
-      if rock and hub then
-        rock.fanAnchor = hub.id
-        local g = groups[hub.id] or {}
-        groups[hub.id] = g
-        g[#g + 1] = rock.id
+  if not self._fitted then
+    for _, e in ipairs(self.edges) do
+      if e.kind == 'mine' then
+        local a, b = self.nodes[e.a], self.nodes[e.b]
+        local rock, hub = nil, nil
+        if a and b then
+          if not a.major and b.major then rock, hub = a, b
+          elseif not b.major and a.major then rock, hub = b, a end
+        end
+        if rock and hub then
+          rock.fanAnchor = hub.id
+          local g = groups[hub.id] or {}
+          groups[hub.id] = g
+          g[#g + 1] = rock.id
+        end
       end
     end
   end
@@ -405,7 +476,7 @@ function NodeGraph:declutter ()
   -- Grid-hashed (16px cells, 3x3 neighbourhood) so 90+ dots stay cheap.
   -- Zoom-gated: up close their true positions already separate.
   -- Majors seed the grid first so fans never cover rings.
-  if self.zoom < 0.15 then
+  if self.zoom < 0.15 and not self._fitted then
     local grid = {}
     local function gkey (cx, cy)
       return math.floor(cx / 16) .. ':' .. math.floor(cy / 16)
@@ -682,6 +753,30 @@ function NodeGraph:onDraw (focus, active)
       end
     end
   end
+  -- Breadcrumb: current context path (Parnell video keeps a level indicator).
+  do
+    local crumbs = {}
+    local cur = self.context
+    while cur do
+      local name = nil
+      if cur.getName then
+        local ok, nm = pcall(cur.getName, cur)
+        if ok and nm and nm ~= '' then name = nm end
+      end
+      if name then
+        crumbs[#crumbs + 1] = name
+      elseif cur == self.system then
+        crumbs[#crumbs + 1] = 'System'
+      end
+      cur = (cur.getParent and cur:getParent()) or nil
+    end
+    if #crumbs > 0 then
+      local path = table.concat(crumbs, ' / ')
+      DrawEx.TextAlpha(kLabelFont, path, kLabelSize,
+        x + 16, y + 14, 400, 20,
+        1, 1, 1, 0.75, 0.0, 0.0)
+    end
+  end
   -- Scale bar (map units are world units: screen px / zoom) + filter legend.
   do
     local targetPx, mag, pow10 = 120, nil, nil
@@ -728,6 +823,12 @@ function NodeGraph:onInput (state)
   if Input.GetPressed(Button.Keyboard.F7) then self.filter.places = not self.filter.places end
   if Input.GetPressed(Button.Keyboard.F8) then self.filter.routes = not self.filter.routes end
 
+  if Input.GetPressed(Button.Keyboard.Backtick) then
+    self:drillOut()
+  end
+  if Input.GetPressed(Button.Mouse.Right) then
+    self:drillOut()
+  end
   local mp = Input.GetMousePosition()
   local down = Input.GetDown(Button.Mouse.Left)
   do
@@ -747,9 +848,30 @@ function NodeGraph:onInput (state)
     -- Press edge: hit-test once; node => drag+select, empty => pan.
     self._drag = self:nodeAt(mp.x, mp.y)
     if self._drag then
-      self.focus = self._drag.id
-      self.follow = self._drag.id -- ease the view onto the selection (§13)
-      self.targetZoom = clampZoom(self.zoom * 4) -- zoom to it; area reads blue again
+      local dn = self._drag
+      self.focus = dn.id
+      self.follow = dn.id -- ease the view onto the selection (§13)
+      -- CLICK = center the map on this node and zoom toward it. Centered
+      -- anchor = no drift possible: scroll re-anchors at dead center every
+      -- tick, so "works a little then moves" cannot happen. Also fixes the
+      -- planet: 40px ring or not, it stays centered and scrolled-in.
+      -- DRILL = double-click on a node with children (sector -> zone members).
+      local now = Engine.GetTime()
+      if self._lastClick
+        and now - self._lastClick < 0.35
+        and self._lastClickNode == dn.id
+        and dn.entity
+        and dn.entity.hasChildren and dn.entity:hasChildren()
+        and dn.entity ~= self.context then
+        self:drillInto(dn.entity, false)
+        self._lastClick = nil
+      else
+        self.pos.x = dn.x + (dn.jx or 0)
+        self.pos.y = dn.y + (dn.jy or 0)
+        self.targetZoom = clampZoom(self.zoom * 4)
+        self._lastClick = now
+        self._lastClickNode = dn.id
+      end
     end
     self._panAt = { x = mp.x, y = mp.y }
     self._pressAt = { x = mp.x, y = mp.y }
@@ -792,6 +914,8 @@ function NodeGraph.Create (system, opts)
   self.focusEntity = o.focusEntity
   self.nodes = {}
   self.edges = {}
+  self.context = system
+  self.stack  = {}    -- drill levels: {context, camera{zoom,pos}}
   self.focus = nil
   -- Category filters (F5 ships / F6 rocks / F7 places / F8 routes).
   self.filter = { ships = true, rocks = true, places = true, routes = true }

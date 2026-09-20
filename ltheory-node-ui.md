@@ -1,6 +1,6 @@
 # Node-Based UI / Inventory Visualization — Implementation Plan (LTheory)
 
-**Status:** Phase 1 shipped (2026-09-18, skeleton + render proof). No further code yet.
+**Status:** Phases 0–4 shipped (2026-09-19: dashline primitive, overlay host, live seeding, filters/LOD, drill-down stack, center-lock zoom). Phase 5 (vector inspector) specified below — implementation ready. No Phase 5 code yet.
 **Inspiration:** ComfyUI-style node graph + inventory/workbench visualization, shown by Josh Parnell in a video; must be **live/auto-populated from real game data**, not hand-authored in an editor.
 
 ---
@@ -260,10 +260,31 @@ When `mode == WorldProjection`, project each node's world position onto screen u
 - Logical auto-layout in a new `script/UI/GraphLayout.lua` if it grows past ~50 lines, else inline (§8 Phase 3 note). `node.pinned = true` on drag-start so the layout pass treats pinned nodes as fixed anchors and lays out everything else around them. World-projection mode (straight-line edges per §7 edge style). Node labels via poll hooks; health bar if tracked.
 
 **Phase 4 — Drill-down / navigation stack**
-- `self.stack` context push/pop (§7 drill-down); distinguish **drill** (click a node whose type has children → push) vs **select** (invoke the `onNodeSelected` callback). Store per-level camera so `back` restores the prior view instead of recentering; animate zoom+pan transitions. Back/breadcrumb navigation.
+- `self.context` seeds levels instead of the root; `self.stack` carries `{context, camera{zoom,pos}}` per level. **Drill trigger:** click a node with children (mine hub, zone, ship, station) → `drillInto` (fresh fit — new DOF from fit_view, not a climbing zoom; the Parnell reveal is exactly this); otherwise click zooms to selection.
+- **Back:** Backtick (Escape is the quit key — §13) or right-mouse pops one level, restoring the exact camera it came from. Breadcrumb path under the scale bar shows the current level.
+- Hysteresis radii (`kDrillRadius` 140 / `kUndrillRadius` 40) declared for the future radius auto-trigger; the trigger is currently explicit click-only — no flicker risk.
+- **Crash fixed (2026-09-19):** drilling into a childless entity (asteroid) asserted `iterChildren`. Two causes: the drill condition matched any `getChildren` (bare `or`), and `seedFromSystem` never guarded the context. Now: drill requires `hasChildren()`, and childless contexts bail to an empty level instead of asserting. Reproduced via the offending click path, fixed, boot-verified 0 errors.
+- **Blank-after-drill fixed (same day):** drilling a node with no *seeded* children (factory with socket children, station) showed an empty canvas and the map felt dead. Drills now require `hasChildren()`; the zone-refit lets a zone reveal its members (the Parnell "region" step); F10-open/close resets any leftover drill via `onEnable`. Boot-verified.
+- **Zoom-two-walls fixed (same day):** the zoom ceiling (3000) and a per-frame ring/fan recompute (dots re-pinned at 105–155px at every zoom) made the field "impossible to approach". Ceiling raised 3000→5e5; ring/fan computed ONCE per level at fit (`_fitted`/`_ringDone` gating, re-held per gesture), so zooming in now genuinely approaches true positions — dots separate, rings stop clinging to the hub. Boot-verified, errors 0.
+- **Click/Double-click split (2026-09-19).** Feedback: clicking the factory "disappears" (drilled into an empty sub-level), clicking the planet won't lock, but ore dots (no children) work. Root: any child-bearing node auto-drilled on click — the anti-Parnell behavior (they zoom into a selection, they don't reset). Now a single click always zooms in place (lock + ×4, correct for factory/planet/ore alike); **double-click** drills into a node's children (zone members, ship components). This also fixes the "depends what I click on" inconsistency — one behavior for every node.
+- **Click centers then zooms (same day).** Knot #1 ("can only zoom in so far before it moves") and #2 ("planet stays the same size") both trace to anchoring: zoom anchored at the cursor/ring, not at the node, so continuing scroll drifted the (center-off) anchor. Click now centers the map ON the selection immediately (pos = node), then eases ×4. A dead-centered anchor cannot drift — any scroll re-anchors at screen center. The planet ring still clamps at 40px (fixed drawn size), but it centers and stays centered while you scroll in; the ring pixel size is a HUD choice, not zoom failure.
+- **Vector-entity popup feasibility (asked)** — answered YES, at near-zero FPS cost: draw the selected entity's existing mesh once, projected as a wireframe border inset (small panel, top-right), plus coordinates/kind. It requires NO zoom-depth at all and matches the Parnell framed-lens look. Availability: `mesh` exists on every entity (ships/asteroids/stations/planets all have one); projected edge list costs one mesh draw for ≤1 node. Design as the Phase 5 inspector's visual half; intentionally out of scope for Phase 4's map lens.
+- **Profiler note (same day):** the swap-buffer line is vsync, `Canvas.Update 3.5%` includes NodeGraph's per-frame seed+declutter, and `RenderTarget_Push 12%` is post-chain FBO mgmt — nothing pathological; per-call work is what we've introduced, not a leak. (Spikes already tamed: declutter now runs once per level-fit.)
 
-**Phase 5 — Inspector + demo app**
-- Decide inspector-outward-event vs baked-in (§7 inspector decision); edge hover-testing (point-to-segment distance, trivial for straight edges) if routes are interactive (§9). `NodeGraphDemo.lua`: build a system, spawn stations/entities, show graph in both modes; run via `./run.sh NodeGraphDemo`. Config.Local overrides for colors/toggles.
+**Phase 5 — Vector inspector + edge preview + demo harness**
+
+**5.1 The inspector (primary deliverable).** A companion panel, opened by single-click-selecting any node and rendered in the same UI composite pass (stays out of NodeGraph's own draw — §7 decision). Layout: small framed panel top-right (below the filters), ~300×260px, three zones:
+1. **Vector wireframe** (the "popup viewed from a vector point of view" — this is the part that makes deep zoom unnecessary): the selected entity's **existing mesh** (`entity.mesh` exists on Ship/Asteroid/Station/Planet) drawn remotely as a holographic wireframe. Implementation: reuse the standing `DrawEx.Hologram` primitive (`DrawEx.lua:61-82` — view-matrix at a fixed yaw/pitch around the mesh center, `ui/hologram` shader) at panel-screen coords; the mesh is likely already hologram-ready (schema verified). Cost = the SAME single mesh draw `Hologram` already does, and only for the 1 selected node — no FPS concern (a wireframe overlay at 1 node vs the full scene render).
+2. **Identity block** (per §13, real data only): name or kind tag, `id`, live stats (position x/y/z, scale, health bar if `addHealth`), capacity when surface. **Placeholders allowed** where the universe isn't populated yet: if `getName` is absent, show `Ship #12`; if no description field exists (it doesn't), the panel omits description rather than inventing one. Future gen work fills real names/descriptions; the panel reads what exists and leaves holes honest.
+3. **Function line**: capability tags (`hasFactory`→Factory, `hasTrader`→Trader, `hasYield`→Ore) — the "what is it" answer today.
+
+**5.2 Edge preview.** Hover a dotted `Jobs.Transport` edge → tooltip (`item`: `rate`/s, src→dst). Straight-edge distance is a two-line CPU test (no GPU mirroring; §9). If routes prove rarely hovered, this drops to "flow rate in the toolbar when a route is selected" with half the code.
+
+**5.3 Demo harness.** `script/App/NodeGraphDemo.lua` — the original plan's standalone runner, now optional oil-rig for editor work (same pattern as `TestEcon.lua:36`): spawn a system with a known zoo (station, planet, field, NPC squad via `spawnAI(n)`) so inspector/edge-preview features are testable headlessly/offscreen before touching the live LTheory scene. Run via `./run.sh NodeGraphDemo`; the F10 overlay in the game remains the priority, this is for iteration speed on panel layout.
+
+**5.4 Data-richness parked with universe gen.** Names/descriptions for ships/rocks/bodies are a generator-domain change (`LTheory.lua`/`System.lua` spawn sites + `Name` component), not a map change — the panel renders what it's given and holes stay None/hidden until real gen lands. This is the "placeholder until we flush out the universe" boundary, drawn intentionally.
+
+**Acceptance (Phase 5):** (a) click any seeded node → panel opens with wireframe + identity + function; (b) no-mesh/anonymous nodes degrade to the text block only (no crash path); (c) `./configure.py test` still 136/0 (no new shader required — reuse of `ui/hologram`); (d) frame-time delta with the panel open on a 1920×1080 map < 0.1 ms (measurable via headless snapshot after the edit; the single hologram draw is the whole cost).
 
 **Acceptance criteria (end-to-end):**
 1. `./configure.py test` passes with the new shader compiling+linking headlessly.
@@ -292,7 +313,7 @@ When `mode == WorldProjection`, project each node's world position onto screen u
 
 | Stage | Command | Purpose |
 |---|---|---|
-| Shader compile/link | `./configure.py test` | Headless GLSL validator (`tools/validate_glsl.py`) compiles+links every `.glsl` incl. new `fragment/ui/wire` via moderngl/EGL at the engine's GLSL level — **fail fast on typos.** Interpreter resolved from project venv / `$PHX_VALIDATOR_PY` / `python3`. |
+| Shader compile/link | `./configure.py test` | Headless GLSL validator (`tools/validate_glsl.py`) compiles+links every `.glsl` incl. new `fragment/ui/dashline` via moderngl/EGL at the engine's GLSL level — **fail fast on typos.** Interpreter resolved from project venv / `$PHX_VALIDATOR_PY` / `python3`. |
 | Runtime overlay | Boot LTheory, press F10 | NodeGraph over the live system; drill system → bodies/ships → components (§13). |
 | Runtime demo (harness) | `./run.sh NodeGraphDemo` | Widget without the full game; no `LD_LIBRARY_PATH` needed (`$ORIGIN` RUNPATH + absolute FFI loader). |
 | Config tuning | Edit `Config.Local.lua` | Toggle modes, colors, show/hide edges — no gameplay code changes. |
