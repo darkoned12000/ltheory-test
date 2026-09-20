@@ -7,6 +7,14 @@
 local DrawEx = require('UI.DrawEx')
 local Container = require('UI.Container')
 local Window = require('UI.Window')
+local Inspector = require('UI.NodeGraphInspector')
+local Util = require('UI.NodeGraphUtil')
+local GraphProvider = require('UI.GraphProvider')
+
+-- Stateless classifier provider for the module-level LOD contract.
+-- Each NodeGraph instance gets its OWN provider (with its own scratch) so
+-- multiple graphs cannot share per-frame scratch tables.
+local classifyProvider = GraphProvider.system()
 
 local NodeGraph = {}
 NodeGraph.__index = NodeGraph
@@ -33,71 +41,10 @@ local cTrade     = { r = 0.45, g = 0.75, b = 1.00, a = 0.95 }
 local cLabel     = { r = 1.00, g = 1.00, b = 1.00, a = 0.90 }
 local cReticle   = { r = 1.00, g = 1.00, b = 1.00, a = 0.90 }
 
--- LOD: majors get rings + labels; everything else seeded is a minor point.
--- Capability predicates (SystemMap-style); asteroids/NPC hulls fall through
--- to minor automatically. Types with NYI getName (Job/Action) are excluded.
--- Returns worthy, major, cat ('station' | 'ship' | 'rock').
+-- LOD classifier: delegates to the default (system) provider. Kept as a
+-- module function because it is the documented LOD contract and unit-tested.
 function NodeGraph.isGraphWorthy (entity)
-  if entity.deleted then return false end
-  local scale = 0
-  if entity.getScale then
-    local ok, s = pcall(entity.getScale, entity)
-    if ok and type(s) == 'number' then scale = s end
-  end
-  -- Regions (Zones): named + children = drill-down anchors, always major.
-  -- (Ships carry component children but no names; stations get major below.)
-  if entity.name then
-    local okC, ch = pcall(entity.getChildren, entity)
-    if okC and ch and #ch >= 5 then return true, true, 'station' end
-  end
-  -- Big bodies (stations at 100, planets at 1e5) are places, always major.
-  if scale >= 50 then return true, true, 'station' end
-  if entity.hasFactory and entity:hasFactory() then return true, true, 'station' end
-  if entity.hasTrader and entity:hasTrader() then return true, true, 'station' end
-  if entity.hasMarket and entity:hasMarket() then return true, true, 'station' end
-  -- Yield alone is minor: whole ore fields carry yield (60 labeled rocks =
-  -- an unreadable band), so mineables are dots labeled on zoom/focus.
-  if entity.hasActions and entity:hasActions() then return true, false, 'ship' end
-  if entity.hasSockets and entity:hasSockets() then return true, false, 'ship' end
-  return true, false, 'rock'
-end
-
--- Human tag for nodes with no proper name (raw `Entity @ %p` pointers are
--- useless on screen). Derived from capabilities, never invented.
-local function kindTag (e)
-  if e.hasFactory and e:hasFactory() then return 'Factory' end
-  if e.hasTrader and e:hasTrader() then return 'Trader' end
-  if e.hasMarket and e:hasMarket() then return 'Market' end
-  if e.hasYield and e:hasYield() then return 'Ore' end
-  if e.hasActions and e:hasActions() then return 'Ship' end
-  if e.hasSockets and e:hasSockets() then return 'Ship' end
-  return 'Body'
-end
-
-local function resolveLabel (e)
-  if e.name and e.name ~= '' then
-    local ok, name = pcall(e.getName, e)
-    if ok and name then return name end
-  end
-  return kindTag(e) .. ' #' .. tostring(e.id % 1000)
-end
-
-function NodeGraph:addNode (id, x, y, opts)
-  local o = opts or {}
-  local n = {
-    id    = id,
-    x     = x,
-    y     = y,
-    r     = o.r or 10,
-    color = o.color or cNode,
-    label = o.label,
-  }
-  self.nodes[id] = n
-  return n
-end
-
-function NodeGraph:removeNode (id)
-  self.nodes[id] = nil
+  return classifyProvider.classify(entity)
 end
 
 -- Live seeding (Phase 2): merge the system's children into the id-keyed table.
@@ -108,9 +55,6 @@ end
 -- autopilot run; clamp after every change (scroll, drill, fit, ease).
 local kZoomMin = 1e-4
 local kZoomMax = 5e5
-local kDrillRadius = 140   -- drill in when a major's drawn radius passes this
-local kUndrillRadius = 40  -- pop back only below this (hysteresis, no flicker)
-
 local function clampZoom (z)
   if z ~= z or z < kZoomMin then return kZoomMin end -- NaN guard
   if z > kZoomMax then return kZoomMax end
@@ -131,66 +75,40 @@ function NodeGraph:seedFromSystem ()
   -- zone's members hide behind their zone node. Drilled INTO a zone, its
   -- members are the level's children and MUST show (Parnell region reveal).
   -- A zone context IS its members' level: do not suppress them.
-  local ctxIsZone = sys ~= self.system and sys.name ~= nil
-  local suppressMembers = not ctxIsZone
-  local memberOfZone = {}
-  if suppressMembers then
-    -- Only named zones with bodies group (Zone:getPos overrides; sub-5-member
-    -- groups are spurious blobs until Phase 5 clustering decides otherwise).
-    for _, z in sys:iterChildren() do
-      if z and not z.deleted and z.name then
-        local okC, ch = pcall(z.getChildren, z)
-        if okC and ch and #ch >= 5 then
-          for _, m in ipairs(ch) do
-            if m and m.id and m ~= sys then memberOfZone[m.id] = true end
-          end
-        end
-      end
-    end
-  end
-  local seen = {}
-  for _, e in sys:iterChildren() do
-    if e and not e.deleted then
-      -- Only top-level children seed: components (turrets/thrusters, parented
-      -- to ships) stay hidden until drill-down (Phase 4). Zone members: hidden
-      -- behind their zone node at sector level, shown when the zone is drilled.
-      local parent = e.getParent and e:getParent()
-      local topLevel = (parent == nil or parent == sys)
-      local worthy, major, cat = NodeGraph.isGraphWorthy(e)
-      if worthy and topLevel and not memberOfZone[e.id] then
-        -- Not every child has a body (particles, markers): no pos, no node.
-        local okP, p = pcall(e.getPos, e)
-        if okP and p then
-          seen[e.id] = true
-          local okS, s = pcall(e.getScale, e)
-          local r = (okS and type(s) == 'number') and s or 1
-          local n = self.nodes[e.id]
-          if not n then
-            n = {
-              id     = e.id,
-              entity = e,
-              cat    = cat or 'rock',
-              x = p.x, y = p.z, tx = p.x, ty = p.z,
-              r = r,
-              major = major,
-              color = (e == self.focusEntity) and cPlayer or (major and cNode or cMinor),
-              label = nil,
-            }
-            if major then n.label = resolveLabel(e) end
-            if e == self.focusEntity then n.label = n.label or 'YOU' end
-            self.nodes[e.id] = n
-          else
-            n.entity = e
-            n.cat = cat or n.cat or 'rock'
-            -- A user-placed node stays where dropped (drag-to-rearrange wins
-            -- over live tracking until Phase 3 pinning formalizes this).
-            if not n.manual then n.tx, n.ty = p.x, p.z end
-            n.major = major or (e == self.focusEntity)
-            -- Promoted late (major flag flipped after first sighting): a node
-            -- must never be a ring without a label.
-            if n.major and not n.label then n.label = resolveLabel(e) end
-          end
-        end
+  -- Provider supplies the units at this context; NodeGraph owns the merge.
+  local units = self.provider.children(sys)
+  local seen = self._seen
+  if not seen then seen = {}; self._seen = seen end
+  for k in pairs(seen) do seen[k] = nil end
+  for i = 1, #units do
+    local u = units[i]
+    local e = u.entity
+    if e then
+      seen[e.id] = true
+      local n = self.nodes[e.id]
+      if not n then
+        n = {
+          id     = e.id,
+          entity = e,
+          cat    = u.cat or 'rock',
+          x = u.x, y = u.y, tx = u.x, ty = u.y,
+          r = u.r or 1,
+          major = u.major,
+          color = (e == self.focusEntity) and cPlayer or (u.major and cNode or cMinor),
+          label = nil,
+        }
+        if u.major then n.label = u.label or Util.resolveLabel(e) end
+        if e == self.focusEntity then n.label = n.label or 'YOU' end
+        self.nodes[e.id] = n
+      else
+        n.entity = e
+        n.cat = u.cat or n.cat or 'rock'
+        -- A user-placed node stays where dropped (drag-to-rearrange wins over
+        -- live tracking until Phase 3 pinning formalizes this).
+        if not n.manual then n.tx, n.ty = u.x, u.y end
+        n.major = u.major or (e == self.focusEntity)
+        -- Promoted late: a node must never be a ring without a label.
+        if n.major and not n.label then n.label = Util.resolveLabel(e) end
       end
     end
   end
@@ -235,10 +153,13 @@ function NodeGraph:seedFromSystem ()
         self.pos = Vec2f((x0 + x1) * 0.5, (y0 + y1) * 0.5)
       end
       self.zoom = clampZoom(math.min(sx / w, sy / h) * 0.85)
-      -- Declutter runs THIS frame: ring branch checks `not self._fitted`,
-      -- so it must see the pre-fit state. Offsets freeze from the next frame
-      -- (_ringDone), and _fitted gates further declutter entirely.
-      if not self._ringDone then self:declutter() end
+      -- Declutter reads self.edges for the mine-ring fan, so build edges
+      -- FIRST. Previously the ring depended on the PREVIOUS frame's edges,
+      -- which only worked because the widget rect is 0 on the first frame.
+      if not self._ringDone then
+        self:seedEdges()
+        self:declutter()
+      end
       self._fitted = true
       self._ringDone = true
     end
@@ -249,36 +170,14 @@ end
 -- link to the unseeded context root (the system itself) never draws, so the
 -- sector level cannot become a starburst hairball.
 function NodeGraph:seedEdges ()
-  local edges, n = {}, 0
-  local function link (a, b, kind)
-    if a and b and self.nodes[a.id] and self.nodes[b.id] and a.id ~= b.id then
-      n = n + 1
-      edges[n] = { a = a.id, b = b.id, kind = kind }
-    end
-  end
-  for id, node in pairs(self.nodes) do
-    local e = node.entity
-    if e and not e.deleted then
-      if e.hasSockets and e:hasSockets() then
-        for _, s in ipairs(e:getSockets()) do
-          if s.child then link(e, s.child, 'solid') end
-        end
-      end
-      if e.getParent then
-        local p = e:getParent()
-        if p then link(p, e, 'solid') end
-      end
-    end
-  end
-  if self.context and self.context.hasEconomy and self.context:hasEconomy() then
-    local eco = self.context:getEconomy()
-    for _, job in ipairs(eco.jobs or {}) do
-      if job.src and job.dst then
-        link(job.src, job.dst, job.item and 'trade' or 'mine')
-      end
-    end
-  end
-  self.edges = edges
+  -- Reuse the persistent table: this runs every frame, and allocating a fresh
+  -- edge list each frame was pure GC churn.
+  local edges = self.edges
+  for i = #edges, 1, -1 do edges[i] = nil end
+  local ctx = self.context or self.system
+  if not ctx then return end
+  local from = self.provider.links(ctx, self.nodes)
+  for i = 1, #from do edges[i] = from[i] end
 end
 
 function NodeGraph:onUpdate (state)
@@ -315,50 +214,26 @@ end
 -- Without this, F10-open after a drill left the EMPTY drilled level on screen.
 function NodeGraph:onEnable ()
   while self:drillOut() do end  -- pop any drill levels
-end
-
-function NodeGraph:addEdge (a, b, kind)
-  self.edges[#self.edges + 1] = { a = a, b = b, kind = kind or 'solid' }
-end
-
-function NodeGraph:clearEdges ()
-  self.edges = {}
+  if self.inspector then self.inspector:hide() end
 end
 
 -- Drill context (Phase 4): swap the seeding target without touching the
 -- lens. The stack carries {context, camera{zoom,pos}} so Back restores the
 -- level you came FROM exactly (per-level camera, per-the-plan §7).
 function NodeGraph:drillInto (entity, keepZoom)
-  if entity == self.context then return end
-  -- Only entities that can actually be a seeding context: a node with no
-  -- children CANNOT be one. Clicking a childless node must zoom, never blank.
-  if not (entity and entity.hasChildren and entity:hasChildren()) then
-    return false
-  end
-  -- A drill context is only useful if at least one child can SEED (has a
-  -- body/map position). Factory socket children (turrets/thrusters) are
-  -- parented and bodyless at map scale -> empty reveal (the blank bug).
-  local okC, ch = pcall(entity.getChildren, entity)
-  local seedable = false
-  if okC and ch then
-    for _, c in ipairs(ch) do
-      if c and not c.deleted and (c.getPos) then
-        local okP, p = pcall(c.getPos, c)
-        if okP and p then seedable = true break end
-      end
-    end
-  end
-  if not seedable then return false end
+  if entity == self.context then return false end
+  -- Only contexts whose children can actually seed may be drilled into.
+  -- Childless targets (asteroids) and bodyless-children targets (factory
+  -- sockets) would produce a blank level. Provider decides.
+  if not self.provider.drillable(entity) then return false end
   self.stack[#self.stack + 1] = {
     context = self.context,
     camera  = { zoom = self.zoom, pos = { x = self.pos.x, y = self.pos.y } },
   }
   self.context = entity
-  self.nodes, self.edges = self._prevNodes or {}, {}
+  self.nodes, self.edges = {}, {}
   self.focus, self.follow = nil, nil
   self._fitted = false
-  self._prevNodes = nil
-  self.nucleus = nil
   if keepZoom then
     -- Reuse the current zoom for a component/level whose coordinates live in
     -- the same frame (zone members, ship children); the refit in onUpdate is a
@@ -586,6 +461,44 @@ function NodeGraph:toCanvas (mx, my)
          (my - self.y - sy * 0.5) / self.zoom + self.pos.y
 end
 
+-- Whether a node's category is currently filtered out. One definition for
+-- draw, hit-testing and edge drawing, so they cannot disagree.
+function NodeGraph:isHidden (n)
+  local cat = (n and n.cat) or 'rock'
+  if cat == 'ship'  then return not self.filter.ships end
+  if cat == 'rock'  then return not self.filter.rocks end
+  return not self.filter.places
+end
+
+-- Perpendicular distance from (px,py) to segment (ax,ay)-(bx,by).
+local function segDist (px, py, ax, ay, bx, by)
+  local dx, dy = bx - ax, by - ay
+  local len2 = dx * dx + dy * dy
+  local t = 0
+  if len2 > 1e-6 then
+    t = ((px - ax) * dx + (py - ay) * dy) / len2
+    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+  end
+  local qx, qy = ax + dx * t, ay + dy * t
+  return math.sqrt((px - qx) * (px - qx) + (py - qy) * (py - qy))
+end
+
+-- Nearest drawn edge to the cursor within `maxDist` px (for the hover readout).
+function NodeGraph:edgeAt (mx, my, maxDist)
+  local best, bestD = nil, maxDist or 8
+  for i = 1, #self.edges do
+    local e = self.edges[i]
+    local a, b = self.nodes[e.a], self.nodes[e.b]
+    if a and b and not self:isHidden(a) and not self:isHidden(b) then
+      local ax, ay = self:toScreen(self:nodeXY(a))
+      local bx, by = self:toScreen(self:nodeXY(b))
+      local d = segDist(mx, my, ax, ay, bx, by)
+      if d < bestD then best, bestD = e, d end
+    end
+  end
+  return best
+end
+
 -- Drawn radius of a node ring (mirrors onDraw clamping).
 local function drawnRadius (n, zoom)
   return math.min(40, math.max(6, (n.r or 1) * zoom))
@@ -596,15 +509,11 @@ function NodeGraph:nodeAt (mx, my)
   -- is near, so dot clouds never steal clicks from stations. Hit-testing uses
   -- DRAWN size (a planet's world scale would otherwise make a 3000px+ click
   -- black hole); off-screen majors are hittable at their edge indicators.
-  local _, _, vsx, vsy = self:getRectGlobal()
+  local x0, y0, vsx, vsy = self:getRectGlobal()
   local best, bestDist = nil, math.huge
   for _, majorOnly in ipairs({ true, false }) do
     for id, n in pairs(self.nodes) do
-      local cat = n.cat or 'rock'
-      local hidden = (cat == 'ship' and not self.filter.ships)
-        or (cat == 'rock' and not self.filter.rocks)
-        or (cat ~= 'ship' and cat ~= 'rock' and not self.filter.places)
-      if not hidden and (n.major or false) == majorOnly then
+      if not self:isHidden(n) and (n.major or false) == majorOnly then
         local nx, ny = self:toScreen(self:nodeXY(n))
         local gx, gy, hit = nx, ny, 0
         if majorOnly then
@@ -612,10 +521,12 @@ function NodeGraph:nodeAt (mx, my)
         else
           hit = (n.fanAnchor and 14 or 8)
         end
-        if vsx > 0 and (nx < -40 or ny < -40 or nx > vsx + 40 or ny > vsy + 40) then
-          -- Off-screen major: clamp to the frame edge (matches its indicator).
-          gx = math.min(math.max(nx, 24), vsx - 24)
-          gy = math.min(math.max(ny, 24), vsy - 24)
+        -- Off-screen major: clamped to the frame edge in GLOBAL coords (was
+        -- mixing global node coords with a local 24..vsx range, which only
+        -- worked because the map happens to start at the window origin).
+        if vsx > 0 and (nx < x0 - 40 or ny < y0 - 40 or nx > x0 + vsx + 40 or ny > y0 + vsy + 40) then
+          gx = math.min(math.max(nx, x0 + 24), x0 + vsx - 24)
+          gy = math.min(math.max(ny, y0 + 24), y0 + vsy - 24)
           hit = 20
         end
         local dx, dy = gx - mx, gy - my
@@ -644,7 +555,7 @@ function NodeGraph:onDraw (focus, active)
     for i = 1, #self.edges do
       local e = self.edges[i]
       local a, b = self.nodes[e.a], self.nodes[e.b]
-      if a and b then
+      if a and b and not self:isHidden(a) and not self:isHidden(b) then
         local ax, ay = self:toScreen(self:nodeXY(a))
         local bx, by = self:toScreen(self:nodeXY(b))
         if e.kind == 'trade' then
@@ -661,12 +572,13 @@ function NodeGraph:onDraw (focus, active)
 
   -- Minors earn labels when zoomed close or focused (100 ships can't all
   -- carry text at sector zoom — the reference shows dots for the same reason).
+  -- Minor labels: only when zoomed in AND near the view centre. Labelling
+  -- every minor (100 ships) produced an unreadable pile.
   local showMinorLabels = self.zoom > 0.3
+  local cxScreen, cyScreen = x + sx * 0.5, y + sy * 0.5
+  local labelRadius = math.min(sx, sy) * 0.34
   for id, n in pairs(self.nodes) do
-    local cat = n.cat or 'rock'
-    if (cat == 'ship' and not self.filter.ships)
-    or (cat == 'rock' and not self.filter.rocks)
-    or (cat ~= 'ship' and cat ~= 'rock' and not self.filter.places) then
+    if self:isHidden(n) then
       -- filtered out: skip draw entirely
     else
       local nx, ny = self:toScreen(self:nodeXY(n))
@@ -681,9 +593,11 @@ function NodeGraph:onDraw (focus, active)
           Draw.Line(tx0, ty0, nx, ny)
         end
         DrawEx.Point(nx, ny, 2.5, n.color or cMinor)
-        if selected or showMinorLabels then
+        local ddx, ddy = nx - cxScreen, ny - cyScreen
+        local nearCentre = (ddx * ddx + ddy * ddy) < labelRadius * labelRadius
+        if selected or (showMinorLabels and nearCentre) then
           if not n.label then
-            n.label = (n.entity and resolveLabel(n.entity)) or ('Body #' .. tostring(id % 1000))
+            n.label = (n.entity and Util.resolveLabel(n.entity)) or ('Body #' .. tostring(id % 1000))
           end
           DrawEx.TextAlpha(kLabelFont, n.label, kLabelSize,
             nx - 100, ny + 6, 200, 20,
@@ -727,11 +641,7 @@ function NodeGraph:onDraw (focus, active)
   -- and follow flies the view there — distant bodies stay reachable.
   do
     for id, n in pairs(self.nodes) do
-      local cat = n.cat or 'rock'
-      local hidden = (cat == 'ship' and not self.filter.ships)
-        or (cat == 'rock' and not self.filter.rocks)
-        or (cat ~= 'ship' and cat ~= 'rock' and not self.filter.places)
-      if n.major and not hidden then
+      if n.major and not self:isHidden(n) then
         local nx, ny = self:toScreen(self:nodeXY(n))
         if nx < -40 or ny < -40 or nx > sx + 40 or ny > sy + 40 then
           local gx = math.min(math.max(nx, x + 24), x + sx - 24)
@@ -751,6 +661,32 @@ function NodeGraph:onDraw (focus, active)
           end
         end
       end
+    end
+  end
+  -- Edge hover readout: describe the route under the cursor (item + endpoints
+  -- via the job, when we have one). Cheap point-to-segment test.
+  do
+    local mp = Input.GetMousePosition()
+    local edge = self:edgeAt(mp.x, mp.y, 9)
+    if edge then
+      local a, b = self.nodes[edge.a], self.nodes[edge.b]
+      local text = nil
+      if edge.job then
+        local ok, nm = pcall(edge.job.getName, edge.job)
+        if ok and nm then text = nm end
+      end
+      if not text then
+        text = (edge.kind or 'link') .. '  ' ..
+          ((a and a.label) or '?') .. ' -> ' .. ((b and b.label) or '?')
+      end
+      local tw = #text * 7 + 18
+      local tx = math.min(mp.x + 14, x + sx - tw - 8)
+      local ty = math.max(y + 8, mp.y - 26)
+      Draw.Color(0.02, 0.03, 0.06, 0.85)
+      Draw.Rect(tx, ty, tw, 22)
+      DrawEx.RectOutline(tx, ty, tw, 22, { r = 0.25, g = 0.6, b = 1.0, a = 0.8 })
+      DrawEx.TextAlpha(kLabelFont, text, kLabelSize, tx + 8, ty + 3, tw - 16, 18,
+        1, 1, 1, 0.9, 0.0, 0.0)
     end
   end
   -- Breadcrumb: current context path (Parnell video keeps a level indicator).
@@ -802,6 +738,9 @@ function NodeGraph:onDraw (focus, active)
       x + sx - 360, y + sy - 40, 344, 20,
       1, 1, 1, 0.55, 1.0, 0.0)
   end
+  if self.inspector then
+    self.inspector:draw(x, y, sx, sy, Engine.GetTime())
+  end
   Draw.Color(1, 1, 1, 1)
 end
 
@@ -851,6 +790,7 @@ function NodeGraph:onInput (state)
       local dn = self._drag
       self.focus = dn.id
       self.follow = dn.id -- ease the view onto the selection (§13)
+      if self.inspector then self.inspector:show(dn) end
       -- CLICK = center the map on this node and zoom toward it. Centered
       -- anchor = no drift possible: scroll re-anchors at dead center every
       -- tick, so "works a little then moves" cannot happen. Also fixes the
@@ -898,6 +838,7 @@ function NodeGraph:onInput (state)
       local dx, dy = mp.x - self._pressAt.x, mp.y - self._pressAt.y
       if dx * dx + dy * dy < 36 then
         self.focus, self.follow, self.targetZoom = nil, nil, nil
+        if self.inspector then self.inspector:hide() end
       end
     end
     self._drag, self._panAt, self._pressAt = nil, nil, nil
@@ -911,6 +852,7 @@ function NodeGraph.Create (system, opts)
   self:setPadUniform(0)
   self.system = system
   local o = opts or {}
+  self.provider = o.provider or GraphProvider.system()
   self.focusEntity = o.focusEntity
   self.nodes = {}
   self.edges = {}
@@ -919,6 +861,7 @@ function NodeGraph.Create (system, opts)
   self.focus = nil
   -- Category filters (F5 ships / F6 rocks / F7 places / F8 routes).
   self.filter = { ships = true, rocks = true, places = true, routes = true }
+  self.inspector = Inspector.Create(self)
   self.pos = Vec2f(0, 0)
   self.zoom = 1.0
   return self

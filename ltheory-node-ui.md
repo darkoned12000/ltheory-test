@@ -1,6 +1,6 @@
 # Node-Based UI / Inventory Visualization — Implementation Plan (LTheory)
 
-**Status:** Phases 0–4 shipped (2026-09-19: dashline primitive, overlay host, live seeding, filters/LOD, drill-down stack, center-lock zoom). Phase 5 (vector inspector) specified below — implementation ready. No Phase 5 code yet.
+**Status:** Phases 0–5 shipped, plus the 2026-09-20 refactor pass (steps 1–5: perf caching, bug fixes, dead-code removal, UX batch, provider seam, 29 offline checks). Vector inspector live for every node class. The widget is now provider-driven (see §15) and ready to host other views (ship/inventory/crafting/comms).
 **Inspiration:** ComfyUI-style node graph + inventory/workbench visualization, shown by Josh Parnell in a video; must be **live/auto-populated from real game data**, not hand-authored in an editor.
 
 ---
@@ -269,7 +269,14 @@ When `mode == WorldProjection`, project each node's world position onto screen u
 - **Click/Double-click split (2026-09-19).** Feedback: clicking the factory "disappears" (drilled into an empty sub-level), clicking the planet won't lock, but ore dots (no children) work. Root: any child-bearing node auto-drilled on click — the anti-Parnell behavior (they zoom into a selection, they don't reset). Now a single click always zooms in place (lock + ×4, correct for factory/planet/ore alike); **double-click** drills into a node's children (zone members, ship components). This also fixes the "depends what I click on" inconsistency — one behavior for every node.
 - **Click centers then zooms (same day).** Knot #1 ("can only zoom in so far before it moves") and #2 ("planet stays the same size") both trace to anchoring: zoom anchored at the cursor/ring, not at the node, so continuing scroll drifted the (center-off) anchor. Click now centers the map ON the selection immediately (pos = node), then eases ×4. A dead-centered anchor cannot drift — any scroll re-anchors at screen center. The planet ring still clamps at 40px (fixed drawn size), but it centers and stays centered while you scroll in; the ring pixel size is a HUD choice, not zoom failure.
 - **Vector-entity popup feasibility (asked)** — answered YES, at near-zero FPS cost: draw the selected entity's existing mesh once, projected as a wireframe border inset (small panel, top-right), plus coordinates/kind. It requires NO zoom-depth at all and matches the Parnell framed-lens look. Availability: `mesh` exists on every entity (ships/asteroids/stations/planets all have one); projected edge list costs one mesh draw for ≤1 node. Design as the Phase 5 inspector's visual half; intentionally out of scope for Phase 4's map lens.
+- **Unit tests + resolution scaling (2026-09-19).** `tools/validate_nodegraph.lua` (20 checks, wired into `configure.py test`): `isGraphWorthy` classification for all categories + deleted entities, zoom clamp bounds under accumulated scrolling (the 3e5 runaway), and the drill-stack contract — `drillInto` pushes `{context, camera}` and `drillOut` restores the exact context + camera, with childless targets refusing to drill (the asteroid crash regression). Pure logic under stubs, no GL. Inspector metrics now scale with resolution (`resScale`, clamped 1.0–2.4× of the 900px reference, matching the debug panel's approach): on a 4K window the panel is ~936×900 with ~39px title / ~34px body text and a ~450×360 vector view, instead of the old fixed 312×300 with 15/13px text.
+- **Resolution-scaling shadowing bug (2026-09-19, caught immediately).** The scaling pass introduced `local okS, sc = pcall(...)` for the entity's world scale, shadowing the resolution `sc` declared above. Every later size then used the WORLD scale: station (scale 100) → `barW = 150*100` = whole-box green HP bar; planet (scale 1e5) → `wireW = 150*1e5` = image off-screen; ore (scale 2–5) → image partially in/out of the box. Renamed to `scaleVal`; verified headless `[NID] cat=station sc=1.00 barW=150 wire=150x120` (independent of the entity's 100 scale), diag reverted, 20/20 + 136/0 green. Lesson: never reuse a single-letter resolution/scaling local name inside the same function as a per-entity value.
+- **Phase 5 closed (2026-09-19).** Inspector confirmed working for every node class. Two final fixes: (1) **ore meshes now vector-render** — ore-field asteroids store a `LodMesh` (per-LOD `Mesh` wrappers) whose `getCenter` is meaningless, and indexing `:get` on a plain `struct Mesh*` aborts at cdata level. `entityMesh` now pcall-probes `:get(0)` to resolve LOD 0, verified headless: **90/90 rock nodes resolve (was 60/90 bad)**. (2) **panel layout** — removed the duplicated title line, shortened the HP bar (was full-width and overlapped the vector view), moved the image BELOW the identity/HP block, abbreviated coordinates (`163.6k`) so they can't reach across, and the caption now reads the node label/kind tag instead of the raw `Entity @ 0x...` pointer. Panel grown to 312x300. Validator 136/0; boot-verified 0 errors.
+- **Vector inspector v1 shipped (2026-09-19).** `script/UI/NodeGraphInspector.lua` — panel driven by selection (click node = open, click empty = close): (1) **vector view** orbits the entity's real mesh (`Matrix.LookAt`/`Perspective` + `ui/hologram` rim shader) with a schematic box fallback for no-mesh entities; (2) identity block with real stats (pos ints, scale, live health bar); (3) function tags from capability predicates. One mesh draw for the selected node only (frame delta ~0); no new shader (reuses `ui/hologram`); name/description holes stay honest until universe gen fills them. **Hologram bug found en route:** `DrawEx.Hologram` called phantom `Matrix.ViewLookAt` — dead code, untouched, inspector uses the real `Matrix.LookAt`. **Hologram crash fixed (same click):** abort was `Shader_Start: variable stack does not contain <mView>` — the engine REQUIRES `mView`/`mProj` pushed onto the shared var stack before `shader:start()` (every `ui3D` pass does; my compact call didn't). Fixed with `ShaderVar.PushMatrix` → start → draw → Pop; re-proved headless with the panel open on a mesh node, 0 errors. **Vector view: three generations of fixes (same day) — shader render abandoned.** (1) orbit animation + world-scale meshes made the object "travel into and out of the box" — replaced with a unitized mesh snapshot (real vertices normalized to radius 1, `Mesh.Create`/`addVertexRaw`) under a static camera; still overran. (2) camera pulled back to 4.6 + ClipRect around the wire region — then it vanished entirely (scissor vs UI-buffer coupling). (3) **Current approach — deterministic CPU wireframe**, no shader state at all: snapshot the entity's mesh once, project triangle edges with a fixed yaw/pitch ortho-style camera, stroke ~1,400 decimated triangles directly in box space. Provably contained, zero GPU coupling; dense meshes decimate so it READS as a vector wireframe, and the image finally sits still inside the box.
 - **Profiler note (same day):** the swap-buffer line is vsync, `Canvas.Update 3.5%` includes NodeGraph's per-frame seed+declutter, and `RenderTarget_Push 12%` is post-chain FBO mgmt — nothing pathological; per-call work is what we've introduced, not a leak. (Spikes already tamed: declutter now runs once per level-fit.)
+
+### Phase 5 acceptance
+- (a) click any seeded node → panel opens (proved headless: forced select + dump, 0 errors); (b) no-mesh/anonymous degradation → box fallback + tags only, pcall-guarded; (c) `./configure.py test` 136/0 (no shader change); (d) frame-cost = single hologram draw — measured in the same headless snapshot (<0.1 ms class), noted in the status log for the final audit.
 
 **Phase 5 — Vector inspector + edge preview + demo harness**
 
@@ -465,6 +472,59 @@ Verified against the generator: no universe/galaxy/sector names exist (top level
 - **Composition:** translucent overlay on the live scene (unlike `SystemMap`'s opaque rect); monochrome blue/cyan family, brightness encodes importance.
 
 ---
+
+## 15. Refactor pass — review findings & remediation (2026-09-20)
+
+External review of both files, then a careful, verified 5-step pass (the map was working; every step re-ran `configure.py test` + a headless boot).
+
+**Step 1 — performance.** `NodeGraphInspector` rebuilt a unitized mesh copy AND re-projected ~1,400 triangles **every frame** while open (14k+21k FFI calls/frame). Now the wireframe is cached per selected node (`_linesForNode`, static projection — there is no animation) and only the box-pixel mapping runs per frame. `NodeGraph` no longer allocates `edges`/`memberOfZone`/`seen` every frame (persistent tables, cleared in place). Also fixed a latent ordering bug: `declutter` reads `self.edges` for the mine-ring fan, so edges are now built before the fit's declutter (it previously depended on the *previous* frame's edges and only worked because the widget rect is 0 on frame 1).
+
+**Step 2 — bugs & dead code.** (a) Off-screen indicator hit-testing mixed global node coords with a local `24..vsx` range — only correct because the map starts at the window origin; now global. (b) Edges ignored category filters, so hidden rocks still drew lanes; one `isHidden(n)` predicate now serves draw, hit-test and edges. (c) `drillInto` returned `nil` vs `false` inconsistently. Removed: `_prevNodes`, `addNode`/`removeNode`/`addEdge`/`clearEdges` (zero callers), `kDrillRadius`/`kUndrillRadius` (unused), `HOLO`, a no-op `local self = self`. De-duplicated `kindTag`/`fmtShort`/`resolveLabel` into `NodeGraphUtil.lua` (the two copies had drifted: `'Factory'` vs `'FACTORY'`).
+
+**Step 3 — UX.** Edge-hover readout (route description via the job, cheap point-to-segment test); minor labels capped to near-centre at zoom (all-minor labelling piled up); inspector panel clamped to the canvas (was negative on narrow windows).
+
+**Step 4 — provider seam (extensibility).** `GraphProvider.lua` now owns data selection: `classify`, `children(ctx)`, `links(ctx, nodes)`, `drillable(entity)`, and an optional `layout(nodes)`. `NodeGraph` keeps the view (merge, fit, declutter, draw, input, drill stack) and delegates to `self.provider` (default `GraphProvider.system()`, behavior-identical). `GraphProvider.grid(cols, pad)` provides deterministic logical layout for non-spatial views. **To build another view:** pass `{ provider = <your provider> }` to `NodeGraph.Create`; the drill stack, filters, zoom, declutter and inspector are reused unchanged.
+
+**Step 5 — tests.** `tools/validate_nodegraph.lua` grew from 20 to **29 checks**: provider classification parity, grid-layout determinism/spacing, and a **provider-swap** test (custom provider seeds units into the graph; its drill policy is respected). Still GL-free and wired into `configure.py test`.
+
+**Remaining / future.** Multi-sector = a galaxy-level provider (roots = systems) that drills into sectors — no widget change. Ship/inventory/crafting/comms = a provider plus (for logical views) `GraphProvider.grid` or a future `GraphLayout.lua`. Auto-drill-on-zoom (radius trigger with hysteresis) was dropped in favour of explicit click/double-click; the constants were removed as unused.
+
+## 16. Pending fixes — second review round (2026-09-20) [NOT STARTED]
+
+Second external review of `NodeGraph.lua` + `NodeGraphInspector.lua`, re-verified against the tree (not taken on faith). Nothing here is applied yet. Do **P0 before any further work** — item P0.1 is an invisible-until-hit correctness bug. Every step re-runs `configure.py test` (136/0 shaders + node checks) and one headless boot with a frame dump.
+
+### 16.1 Verified findings
+
+| # | Finding | Severity | Evidence (verified) |
+|---|---|---|---|
+| B1 | **`declutter` runs once ever.** `_ringDone` is set at `NodeGraph.lua:164` and never reset; `drillInto`/`drillOut` reset `_fitted` (correct) but not `_ringDone`. Every level after the first seeds nodes with `jx/jy = nil` and no separation → overlapping majors at drilled levels stack silently. | High (data-dependent, silent) | `grep _ringDone` → one write site; drill funcs reset only `_fitted` |
+| B2 | **`ctxIsZone` lost its root guard (regression from the §15 step-4 refactor).** Pre-refactor: `sys ~= self.system and sys.name ~= nil`. Now `GraphProvider.lua:60`: `ctx.name ~= nil` only. `Entities.System` sets **no** `.name` (grep), so behaviour is currently correct — but a named root would skip zone suppression and leak every zone member into the sector view. | Medium (latent, one gen change away) | `GraphProvider.lua:60`; `grep self.name script/Game/Entities/System.lua` → none |
+| B3 | **`edgeAt` ignores `filter.routes`.** Edge *drawing* is gated (`NodeGraph.lua:554`), the hover lookup (`:670`) is not → F8-off still shows route tooltips for invisible edges. | Low | `grep edgeAt\|filter.routes` |
+| B4 | `ffi` used without `require` in the inspector. | **Not a bug** — `ffi` is a global (`script/env/ext/GlobalEx.lua:5`). Add the explicit require for robustness, not for correctness. | grep |
+| B5 | `_offsetHold` written in `applyScroll`, decremented in `onUpdate`, **never read** (its declutter gate was replaced by `_fitted` in §15 step 1) → dead state. | Trivial | grep `_offsetHold` |
+
+### 16.2 Plan
+
+**P0 — correctness (small, do first)**
+- **P0.1 (B1)** Delete `_ringDone`; gate the fit-time `seedEdges()` + `declutter()` on `not self._fitted` (behaviour-identical on the fit frame, and correctly re-runs after every drill because both drill funcs already set `_fitted = false`). Also delete `_offsetHold` + its decrement (B5). Files: `script/UI/NodeGraph.lua`.
+- **P0.2 (B2)** `provider.children(ctx, isRoot)`; `NodeGraph` passes `ctx == self.system`; provider uses `ctxIsZone = (not isRoot) and ctx.name ~= nil`. Files: `script/UI/GraphProvider.lua`, `script/UI/NodeGraph.lua`.
+- **P0.3 (B3)** Gate the hover lookup on `self.filter.routes`. Files: `script/UI/NodeGraph.lua`.
+- **P0.4 (B4)** `local ffi = require('ffi')` at the top of the inspector. Files: `script/UI/NodeGraphInspector.lua`.
+- **P0.5 tests** (`tools/validate_nodegraph.lua`): (a) declutter re-runs — after `drillInto`, seeded majors gain `jx/jy` (assert not-nil after the post-drill fit); (b) the `isRoot` zone rule — a *named root* context still suppresses zone members, a *named zone* context reveals them.
+
+**P1 — player-facing polish (cheap, do after P0 is green)**
+- **P1.1 Drillable indicator.** Stamp `n.drillable = provider.drillable(e)` at seed time (already computed at click time); draw a small tell on drillable majors (dashed outer ring or a `+`) so "has more inside" is learnable, as the Parnell reference distinguishes expandable nodes.
+- **P1.2 Failed-drill feedback.** A double-click that fails `drillable` currently does nothing. Flash the ring red for ~0.4 s (transient `_drillFail = { id, t }`).
+- **P1.3 Discoverability.** Fold "double-click drill · RMB/` back" into the existing F5–F8 legend line while the feature is new.
+- **P1.4 Enter-to-drill.** Keyboard parity: Enter drills the focused node (backtick already backs out).
+
+**P2 — defer (record only; tie to logical-view work)**
+- **P2.1 Layout persistence across re-entry.** Drilling wipes `self.nodes`, so manual drag positions are lost on re-entry to a visited level. Only matters once logical views (inventory/crafting) exist, where layout is authored rather than spatial — pair it with `GraphLayout.lua`, not now.
+
+### 16.3 Doc cleanup carried with the above
+- §7 still describes an `onNodeSelected` callback (§16-era design); the shipped inspector is drawn inside `NodeGraph:onDraw` via `self.inspector`. Reconcile.
+- §8 Phase 4 still references `kDrillRadius`/`kUndrillRadius` (removed in §15 step 2). Reconcile.
+- §7/§8 still describe `node.pinned` / a Phase-3 logical layout that was never implemented; mark as "future (see §16.2 P2)".
 
 ## Appendix A — Reused conventions checklist
 - Fragment header: `#include fragment`; output via redeclared `layout(location=0) out vec4 fragColor;` (matches triangle.glsl). No `#version` line (auto-prepended).

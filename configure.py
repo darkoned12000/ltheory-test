@@ -94,6 +94,17 @@ def run_sdl_tests():
             print(f'[configure.py] No {exe} found - skipping')
     return rc
 
+def run_nodegraph_tests():
+    print('[configure.py] Validating NodeGraph logic (classification, zoom clamp, drill stack)')
+    exe = os.path.join('tools', 'validate_nodegraph.lua')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_nodegraph.lua found - skipping')
+        return 0
+    luajit = os.path.join('libphx', 'ext', 'bin', 'linux64', 'luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    return subprocess.run([luajit, exe]).returncode
+
 def run_hud_tests():
     print('[configure.py] Validating HUD reticle/turret parity (mouse vs gamepad)')
     exe = os.path.join('tools','validate_hud_reticle.lua')
@@ -128,6 +139,7 @@ def run_tests():
     result |= run_renderqueue_tests()
     result |= run_sdl_tests()
     result |= run_hud_tests()
+    result |= run_nodegraph_tests()
     return result
 
 def validate_shaders():
