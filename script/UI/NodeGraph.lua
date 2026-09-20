@@ -76,7 +76,8 @@ function NodeGraph:seedFromSystem ()
   -- members are the level's children and MUST show (Parnell region reveal).
   -- A zone context IS its members' level: do not suppress them.
   -- Provider supplies the units at this context; NodeGraph owns the merge.
-  local units = self.provider.children(sys)
+  -- isRoot tells the provider not to treat a named sector root as a zone.
+  local units = self.provider.children(sys, sys == self.system)
   local seen = self._seen
   if not seen then seen = {}; self._seen = seen end
   for k in pairs(seen) do seen[k] = nil end
@@ -110,6 +111,9 @@ function NodeGraph:seedFromSystem ()
         -- Promoted late: a node must never be a ring without a label.
         if n.major and not n.label then n.label = Util.resolveLabel(e) end
       end
+      -- P1.1: stamp drillability ONCE per node (it is stable; recomputing per
+      -- frame would pcall over children for every entity). Drives the UI tell.
+      if n.drillable == nil then n.drillable = self.provider.drillable(e) end
     end
   end
   for id, n in pairs(self.nodes) do
@@ -124,44 +128,105 @@ function NodeGraph:seedFromSystem ()
     if sx > 0 and sy > 0 then
       -- Fit MAJORS only: a far planet/field in the full set collapses the
       -- whole gameplay area into one pixel pile (the "stacked" bug).
+      -- Bounding box over majors (planets excluded: r >= 5000 counts as
+      -- planet-scale) PLUS the player's own node, so the opening view shows
+      -- the whole level instead of a deep zoom on 'YOU' that had to be
+      -- scrolled out of at every launch.
       local x0, x1, y0, y1 = nil, nil, nil, nil
-      local majors = false
-      for _, n in pairs(self.nodes) do
-        if n.major then majors = true break end
+      local function acc (n)
+        x0, x1 = x0 and math.min(x0, n.x) or n.x, x1 and math.max(x1, n.x) or n.x
+        y0, y1 = y0 and math.min(y0, n.y) or n.y, y1 and math.max(y1, n.y) or n.y
       end
+      local majors, playerNode = false, nil
       for _, n in pairs(self.nodes) do
-        -- Planets (scale 1e5, possibly a full sector away) don't drive the
-        -- fit, or stations collapse into a pile again. They still draw.
-        if (n.major or not majors) and (n.r or 0) < 5000 then
-          x0, x1 = x0 and math.min(x0, n.x) or n.x, x1 and math.max(x1, n.x) or n.x
-          y0, y1 = y0 and math.min(y0, n.y) or n.y, y1 and math.max(y1, n.y) or n.y
+        if n.major then majors = true end
+        if self.focusEntity and n.entity == self.focusEntity then playerNode = n end
+      end
+      -- Robust fit: collect the candidates, then trim FAR outliers before
+      -- taking the bounding box. A chained-clump rock can sit ~1M out while
+      -- its field spans ~10k; including it collapses the field into a pixel
+      -- pile (the zone drill's "didn't display properly"). Trim by the
+      -- 90th-percentile distance from the median, so a tight set (the sector
+      -- view: majors + the player, a handful of nodes) has p90 == its max and
+      -- is unchanged. Trimmed outliers still draw as edge indicators.
+      local fitSet = {}
+      for _, n in pairs(self.nodes) do
+        if (n.major or not majors) and (n.r or 0) < 5000 then fitSet[#fitSet + 1] = n end
+      end
+      if playerNode then fitSet[#fitSet + 1] = playerNode end
+      local nFit = #fitSet
+      if nFit > 0 then
+        local xs, ys = {}, {}
+        for i, n in ipairs(fitSet) do xs[i], ys[i] = n.x, n.y end
+        table.sort(xs); table.sort(ys)
+        local medx = xs[math.ceil(nFit * 0.5)] or xs[1]
+        local medy = ys[math.ceil(nFit * 0.5)] or ys[1]
+        local ds = {}
+        for i, n in ipairs(fitSet) do
+          local dx, dy = n.x - medx, n.y - medy
+          ds[i] = math.sqrt(dx * dx + dy * dy)
+        end
+        table.sort(ds)
+        local radius = (ds[math.min(nFit, math.max(1, math.ceil(nFit * 0.90)))] or ds[nFit] or 0) * 1.5
+        local r2, kept = radius * radius, 0
+        for _, n in ipairs(fitSet) do
+          local dx, dy = n.x - medx, n.y - medy
+          if dx * dx + dy * dy <= r2 then acc(n); kept = kept + 1 end
+        end
+        if kept == 0 then for _, n in ipairs(fitSet) do acc(n) end end
+      end
+      local restoring = self._restore
+      if x0 then
+        local w, h = math.max(1, x1 - x0), math.max(1, y1 - y0)
+        if restoring then
+          -- Drill-out: the level's saved camera wins over the recomputed fit.
+          self.zoom = clampZoom(restoring.zoom)
+          self.pos = Vec2f(restoring.pos.x, restoring.pos.y)
+        else
+          self.pos = Vec2f((x0 + x1) * 0.5, (y0 + y1) * 0.5)
+          self.zoom = clampZoom(math.min(sx / w, sy / h) * 0.85)
         end
       end
-      local w, h = math.max(1, x1 - x0), math.max(1, y1 - y0)
-      -- Center the player's ship when present (player-centric map).
-      local centered = false
-      if self.context == self.system and self.focusEntity then
-        for _, n in pairs(self.nodes) do
-          if n.entity == self.focusEntity then
-            self.pos = Vec2f(n.x, n.y)
-            centered = true
-            break
-          end
+      -- Compression frame for this level: centre + reference radius (the
+      -- level's own extent), and the fit zoom the fade is measured against.
+      -- Set BEFORE declutter, which projects through it. On drill-out the
+      -- saved frame is restored verbatim, so a sector you had zoomed past the
+      -- fade threshold stays uncompressed when you come back.
+      if x0 then
+        if restoring and restoring.frame and restoring.frame.refC then
+          self._refC, self._dRef, self._zFit =
+            restoring.frame.refC, restoring.frame.dRef, restoring.frame.zFit
+        else
+          local cxm, cym = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+          self._refC = { x = cxm, y = cym }
+          local rad = 0.5 * math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0))
+          -- 0.5 x radius: strong enough to cluster the overview, gentle enough
+          -- that shapes/directions still read (ratio ~0.55 at the rim).
+          self._dRef = math.max(1000, rad * 0.5)
+          self._zFit = self.zoom
         end
       end
-      if not centered then
-        self.pos = Vec2f((x0 + x1) * 0.5, (y0 + y1) * 0.5)
-      end
-      self.zoom = clampZoom(math.min(sx / w, sy / h) * 0.85)
-      -- Declutter reads self.edges for the mine-ring fan, so build edges
-      -- FIRST. Previously the ring depended on the PREVIOUS frame's edges,
-      -- which only worked because the widget rect is 0 on the first frame.
-      if not self._ringDone then
-        self:seedEdges()
-        self:declutter()
-      end
+      self._restore = nil
+      -- First open: 'YOU' is SELECTED (red highlight) but the view fits the
+      -- whole level, not centred on the player.
+      if not self.focus and playerNode then self.focus = playerNode.id end
+      -- Build edges FIRST (declutter reads them for the mine-ring fan), then
+      -- declutter. This block only runs when _fitted was false, so it fires
+      -- exactly once per level — including after every drillInto/drillOut,
+      -- which reset _fitted. (A separate _ringDone flag used to gate this and
+      -- was never reset, so levels after the first were never decluttered.)
+      self:seedEdges()
+      self:declutter()
       self._fitted = true
-      self._ringDone = true
+      -- Drill-out: re-select the node we came from and reopen its inspector.
+      if self._restoreFocus then
+        local n = self.nodes[self._restoreFocus]
+        self._restoreFocus = nil
+        if n then
+          self.focus = n.id
+          if self.inspector then self.inspector:show(n) end
+        end
+      end
     end
   end
 end
@@ -181,9 +246,6 @@ function NodeGraph:seedEdges ()
 end
 
 function NodeGraph:onUpdate (state)
-  if self._offsetHold and self._offsetHold > 0 then
-    self._offsetHold = self._offsetHold - 1
-  end
   if (self.context or self.system) then
     self:seedFromSystem()
     self:seedEdges()
@@ -229,6 +291,10 @@ function NodeGraph:drillInto (entity, keepZoom)
   self.stack[#self.stack + 1] = {
     context = self.context,
     camera  = { zoom = self.zoom, pos = { x = self.pos.x, y = self.pos.y } },
+    -- Compression frame of the level we are leaving (restored verbatim on
+    -- drillOut so its zoom-dependent fade state comes back too).
+    frame   = self._refC and { refC = self._refC, dRef = self._dRef, zFit = self._zFit } or nil,
+    focusId = self.focus,   -- re-selected on drillOut
   }
   self.context = entity
   self.nodes, self.edges = {}, {}
@@ -247,6 +313,18 @@ function NodeGraph:drillInto (entity, keepZoom)
   return self.stack[#self.stack]
 end
 
+-- Attempts the drill for a node. Uses the stamped `drillable` (computed once
+-- at seed) and asks the provider why not when it fails, so the UI can say
+-- "nothing to explore here" instead of doing nothing.
+function NodeGraph:tryDrill (n)
+  if not (n and n.entity) then return false end
+  if n.drillable and self:drillInto(n.entity, false) then return true end
+  if self.provider.noDrillReason and self.provider.noDrillReason(n.entity) then
+    self._drillFail = { id = n.id, t = Engine.GetTime() }
+  end
+  return false
+end
+
 function NodeGraph:drillOut ()
   if #self.stack == 0 then return false end
   local prev = self.stack[#self.stack]
@@ -255,8 +333,10 @@ function NodeGraph:drillOut ()
   self.nodes, self.edges = {}, {}
   self.focus, self.follow = nil, nil
   self._fitted = false
-  self.zoom = prev.camera.zoom
-  self.pos = Vec2f(prev.camera.pos.x, prev.camera.pos.y)
+  -- Applied after the level re-seeds: the fit would otherwise recentre (on the
+  -- player) and there are no nodes yet to re-select.
+  self._restore      = { zoom = prev.camera.zoom, pos = prev.camera.pos, frame = prev.frame }
+  self._restoreFocus = prev.focusId
   return true
 end
 
@@ -278,10 +358,8 @@ function NodeGraph:declutter ()
   local scr = {}
   for _, id in ipairs(ids) do
     local n = self.nodes[id]
-    scr[id] = {
-      x = self.x + sx * 0.5 + (n.x - self.pos.x) * self.zoom,
-      y = self.y + sy * 0.5 + (n.y - self.pos.y) * self.zoom,
-    }
+    local tX, tY = self:toScreen(n.x, n.y)
+    scr[id] = { x = tX, y = tY }
   end
   local sep, stepPx, done, ox, oy = 100, 55, {}, {}, {}
   for _, id in ipairs(ids) do
@@ -328,15 +406,15 @@ function NodeGraph:declutter ()
     table.sort(members)
     local hub = self.nodes[hubId]
     if hub then
-      local hx = self.x + sx * 0.5 + ((hub.x + (hub.jx or 0)) - self.pos.x) * self.zoom
-      local hy = self.y + sy * 0.5 + ((hub.y + (hub.jy or 0)) - self.pos.y) * self.zoom
+      local hx, hy = self:toScreenNode(hub)
       for k, rid in ipairs(members) do
         local rock = self.nodes[rid]
         if rock then
           local ang = k * 2.39996
           local ringR = 105 + ((k - 1) % 3) * 25
-          rock.jx = (hx + math.cos(ang) * ringR - (self.x + sx * 0.5 + (rock.x - self.pos.x) * self.zoom)) / self.zoom
-          rock.jy = (hy + math.sin(ang) * ringR - (self.y + sy * 0.5 + (rock.y - self.pos.y) * self.zoom)) / self.zoom
+          local rx, ry = self:toScreen(rock.x, rock.y)
+          rock.jx = (hx + math.cos(ang) * ringR - rx) / self.zoom
+          rock.jy = (hy + math.sin(ang) * ringR - ry) / self.zoom
         end
       end
     end
@@ -380,8 +458,7 @@ function NodeGraph:declutter ()
     end
     for _, id in ipairs(ids) do
       local n = self.nodes[id]
-      occupy(self.x + sx * 0.5 + ((n.x + (n.jx or 0)) - self.pos.x) * self.zoom,
-             self.y + sy * 0.5 + ((n.y + (n.jy or 0)) - self.pos.y) * self.zoom)
+      occupy(self:toScreenNode(n))
     end
     local mids = {}
     for id, n in pairs(self.nodes) do
@@ -391,16 +468,14 @@ function NodeGraph:declutter ()
     for _, id in ipairs(mids) do
       local n = self.nodes[id]
       if n.fanAnchor then
-        occupy(self.x + sx * 0.5 + ((n.x + (n.jx or 0)) - self.pos.x) * self.zoom,
-               self.y + sy * 0.5 + ((n.y + (n.jy or 0)) - self.pos.y) * self.zoom)
+        occupy(self:toScreenNode(n))
       end
     end
     for _, id in ipairs(mids) do
       local n = self.nodes[id]
       if n.fanAnchor then -- ringed already: skip the grid fan
       else
-      local bx = self.x + sx * 0.5 + (n.x - self.pos.x) * self.zoom
-      local by = self.y + sy * 0.5 + (n.y - self.pos.y) * self.zoom
+      local bx, by = self:toScreen(n.x, n.y)
       local px, py = 0, 0
       for step = 1, 10 do
         if not occupied(bx + px, by + py, nil) then break end
@@ -417,10 +492,6 @@ function NodeGraph:declutter ()
   end
 end
 
--- Projected position (true pos + visual offset) for draw/hit/edges.
-function NodeGraph:nodeXY (n)
-  return n.x + (n.jx or 0), n.y + (n.jy or 0)
-end
 -- Zoom application, shared by real scroll input and the headless autopilot.
 -- Anchor: followed node when locked (never moves under any scroll), else the
 -- cursor (standard map UX). Single anchor means the follow-ease below can
@@ -429,36 +500,114 @@ function NodeGraph:applyScroll (scrolled, mx, my, anchor)
   local _, _, vsx, vsy = self:getRectGlobal()
   if vsx <= 0 then return end
   self.targetZoom = nil -- hands on the wheel now
-  -- Freeze declutter offsets for the gesture (+6 settle frames): recomputing
-  -- them from the shifting screen layout mid-zoom moves the anchor out from
-  -- under the zoom (the 02->06 drift). Computed once, they stay exact.
-  self._offsetHold = 6
+  -- Declutter offsets are computed once per level fit and never recomputed
+  -- (see seedFromSystem), so zoom no longer has to freeze them.
   local ax, ay
   if anchor then
     ax, ay = anchor[1], anchor[2]
   else
     local cx = math.min(math.max(mx, self.x), self.x + vsx)
     local cy = math.min(math.max(my, self.y), self.y + vsy)
-    ax = self.pos.x + (cx - self.x - vsx * 0.5) / self.zoom
-    ay = self.pos.y + (cy - self.y - vsy * 0.5) / self.zoom
+    ax, ay = self:toCanvas(cx, cy)   -- world point under the cursor
   end
-  local sx = self.x + vsx * 0.5 + (ax - self.pos.x) * self.zoom
-  local sy = self.y + vsy * 0.5 + (ay - self.pos.y) * self.zoom
+  -- Pin the anchor's WARPED screen position across the zoom change (both the
+  -- warp strength and the scale change with zoom, so solve pos at the new one).
+  local sxp, syp = self:toScreen(ax, ay)
   self.zoom = clampZoom(self.zoom * math.exp(kZoomSpeed * scrolled))
-  self.pos.x = ax - (sx - self.x - vsx * 0.5) / self.zoom
-  self.pos.y = ay - (sy - self.y - vsy * 0.5) / self.zoom
+  local cxS, cyS = self:_viewCentre()
+  local wux, wuy = self:_unwarp(sxp - cxS, syp - cyS)
+  self.pos.x = ax - wux / self.zoom
+  self.pos.y = ay - wuy / self.zoom
 end
 
+-- Projection pipeline: world -> LINEAR screen -> RADIAL WARP -> screen.
+--
+-- `self.pos` and `self.zoom` are plain WORLD space and strictly linear, so
+-- pan, zoom and "centre on this node" are the classic linear operations and a
+-- zoom change can never invalidate the camera. Distance compression is applied
+-- afterwards in SCREEN space, as a radial warp about the view centre: strong
+-- at the overview, fading to identity by `_zFit * 12` ("distance starts to
+-- show as you zoom in"). Direction is preserved (radial only).
+--
+-- (An earlier version stored `pos` in the compressed frame itself; because the
+-- compression depends on zoom, easing the zoom toward a clicked node then slid
+-- the whole map off-screen. This keeps the camera linear instead.)
+--
+-- At the fit the camera sits on the level centre, so this is IDENTICAL to
+-- compressing about that centre — the opening view is unchanged.
+
+-- Compression strength: 0 = fully compressed, 1 = true distance.
+function NodeGraph:_compressT ()
+  local zFit = self._zFit
+  if not zFit or zFit <= 0 then return 1 end
+  local t = self.zoom / (zFit * 12)
+  if t < 0 then t = 0 elseif t > 1 then t = 1 end
+  return t
+end
+
+function NodeGraph:_viewCentre ()
+  local _, _, sx, sy = self:getRectGlobal()
+  return self.x + sx * 0.5, self.y + sy * 0.5
+end
+
+-- Screen-space reference radius for the warp, in pixels.
+function NodeGraph:_warpRef ()
+  local ref = (self._dRef or 1) * self.zoom
+  if ref < 1 then ref = 1 end
+  return ref
+end
+
+-- Linear screen offset from the view centre -> warped offset.
+function NodeGraph:_warp (dx, dy)
+  local t = self:_compressT()
+  if t >= 1 then return dx, dy end
+  local r = math.sqrt(dx * dx + dy * dy)
+  if r < 1e-6 then return dx, dy end
+  local ref = self:_warpRef()
+  local rw = (ref * math.log(1 + r / ref)) * (1 - t) + r * t
+  local k = rw / r
+  return dx * k, dy * k
+end
+
+-- Warped offset -> linear screen offset (inverse; bisection on the monotonic
+-- radial curve).
+function NodeGraph:_unwarp (dx, dy)
+  local t = self:_compressT()
+  if t >= 1 then return dx, dy end
+  local rw = math.sqrt(dx * dx + dy * dy)
+  if rw < 1e-6 then return dx, dy end
+  local ref = self:_warpRef()
+  local lo, hi = 0, rw + ref * 4 + 1e4
+  for _ = 1, 24 do
+    local mid = 0.5 * (lo + hi)
+    local b = (ref * math.log(1 + mid / ref)) * (1 - t) + mid * t
+    if b < rw then lo = mid else hi = mid end
+  end
+  local r = 0.5 * (lo + hi)
+  local k = r / rw
+  return dx * k, dy * k
+end
+
+-- world -> screen, for a bare world point.
 function NodeGraph:toScreen (cx, cy)
-  local _, _, sx, sy = self:getRectGlobal()
-  return self.x + sx * 0.5 + (cx - self.pos.x) * self.zoom,
-         self.y + sy * 0.5 + (cy - self.pos.y) * self.zoom
+  local cxS, cyS = self:_viewCentre()
+  local dx, dy = (cx - self.pos.x) * self.zoom, (cy - self.pos.y) * self.zoom
+  dx, dy = self:_warp(dx, dy)
+  return cxS + dx, cyS + dy
 end
 
+-- world -> screen for a NODE: warped base position + the declutter offset in
+-- SCREEN pixels (a fixed-pixel fan/ring must not be squashed by the warp).
+function NodeGraph:toScreenNode (n)
+  local sx, sy = self:toScreen(n.x, n.y)
+  return sx + (n.jx or 0) * self.zoom, sy + (n.jy or 0) * self.zoom
+end
+
+-- screen -> world (exact inverse of toScreen), for drag placement.
 function NodeGraph:toCanvas (mx, my)
-  local _, _, sx, sy = self:getRectGlobal()
-  return (mx - self.x - sx * 0.5) / self.zoom + self.pos.x,
-         (my - self.y - sy * 0.5) / self.zoom + self.pos.y
+  local cxS, cyS = self:_viewCentre()
+  local dx, dy = self:_unwarp(mx - cxS, my - cyS)
+  return self.pos.x + dx / self.zoom, self.pos.y + dy / self.zoom
 end
 
 -- Whether a node's category is currently filtered out. One definition for
@@ -490,8 +639,8 @@ function NodeGraph:edgeAt (mx, my, maxDist)
     local e = self.edges[i]
     local a, b = self.nodes[e.a], self.nodes[e.b]
     if a and b and not self:isHidden(a) and not self:isHidden(b) then
-      local ax, ay = self:toScreen(self:nodeXY(a))
-      local bx, by = self:toScreen(self:nodeXY(b))
+      local ax, ay = self:toScreenNode(a)
+      local bx, by = self:toScreenNode(b)
       local d = segDist(mx, my, ax, ay, bx, by)
       if d < bestD then best, bestD = e, d end
     end
@@ -514,7 +663,7 @@ function NodeGraph:nodeAt (mx, my)
   for _, majorOnly in ipairs({ true, false }) do
     for id, n in pairs(self.nodes) do
       if not self:isHidden(n) and (n.major or false) == majorOnly then
-        local nx, ny = self:toScreen(self:nodeXY(n))
+        local nx, ny = self:toScreenNode(n)
         local gx, gy, hit = nx, ny, 0
         if majorOnly then
           hit = math.max(14, drawnRadius(n, self.zoom) + 6)
@@ -556,8 +705,8 @@ function NodeGraph:onDraw (focus, active)
       local e = self.edges[i]
       local a, b = self.nodes[e.a], self.nodes[e.b]
       if a and b and not self:isHidden(a) and not self:isHidden(b) then
-        local ax, ay = self:toScreen(self:nodeXY(a))
-        local bx, by = self:toScreen(self:nodeXY(b))
+        local ax, ay = self:toScreenNode(a)
+        local bx, by = self:toScreenNode(b)
         if e.kind == 'trade' then
           -- Flowing dots toward B (dst): trade routes read as movement, not paint.
           DrawEx.Dash(ax, ay, bx, by, cTrade, 2, 9, Engine.GetTime() * 0.35)
@@ -581,7 +730,7 @@ function NodeGraph:onDraw (focus, active)
     if self:isHidden(n) then
       -- filtered out: skip draw entirely
     else
-      local nx, ny = self:toScreen(self:nodeXY(n))
+      local nx, ny = self:toScreenNode(n)
       local selected = self.focus == id
       if not n.major then
         -- Minor bodies: fixed-size dim points (reference dot clouds). Fanned
@@ -616,6 +765,13 @@ function NodeGraph:onDraw (focus, active)
         local ring = selected and cSelected or (n.color or cNode)
         DrawEx.Ring(nx, ny, r, ring)
         DrawEx.Point(nx, ny, r * 0.35, selected and cLabel or cCore)
+        if n.drillable and (n.major or selected) then
+          -- "There is more inside": small + at the ring's lower-right.
+          local gx, gy = nx + r + 7, ny + r + 7
+          Draw.Color(cCore.r, cCore.g, cCore.b, 0.85)
+          Draw.Line(gx - 4, gy, gx + 4, gy)
+          Draw.Line(gx, gy - 4, gx, gy + 4)
+        end
       if n.label then
         DrawEx.TextAlpha(kLabelFont, n.label, kLabelSize,
           nx - 100, ny + r + 2, 200, 20,
@@ -642,7 +798,7 @@ function NodeGraph:onDraw (focus, active)
   do
     for id, n in pairs(self.nodes) do
       if n.major and not self:isHidden(n) then
-        local nx, ny = self:toScreen(self:nodeXY(n))
+        local nx, ny = self:toScreenNode(n)
         if nx < -40 or ny < -40 or nx > sx + 40 or ny > sy + 40 then
           local gx = math.min(math.max(nx, x + 24), x + sx - 24)
           local gy = math.min(math.max(ny, y + 24), y + sy - 24)
@@ -663,11 +819,25 @@ function NodeGraph:onDraw (focus, active)
       end
     end
   end
+  -- Failed-drill feedback: a short red ring so a dead double-click/Enter is
+  -- not silent.
+  if self._drillFail then
+    local age = Engine.GetTime() - self._drillFail.t
+    if age > 0.45 or not self.nodes[self._drillFail.id] then
+      self._drillFail = nil
+    else
+      local n = self.nodes[self._drillFail.id]
+      local nx, ny = self:toScreenNode(n)
+      local a = 0.85 * (1 - age / 0.45)
+      DrawEx.Ring(nx, ny, drawnRadius(n, self.zoom) + 8,
+        { r = 1.0, g = 0.25, b = 0.25, a = a })
+    end
+  end
   -- Edge hover readout: describe the route under the cursor (item + endpoints
   -- via the job, when we have one). Cheap point-to-segment test.
   do
     local mp = Input.GetMousePosition()
-    local edge = self:edgeAt(mp.x, mp.y, 9)
+    local edge = self.filter.routes and self:edgeAt(mp.x, mp.y, 9) or nil
     if edge then
       local a, b = self.nodes[edge.a], self.nodes[edge.b]
       local text = nil
@@ -731,11 +901,14 @@ function NodeGraph:onDraw (focus, active)
       x + 16, y + sy - 40, 200, 20,
       1, 1, 1, 0.7, 0.0, 0.0)
     local f = self.filter
-    local legend = string.format('[F5] ships %s  [F6] rocks %s  [F7] places %s  [F8] routes %s',
+    local legend = string.format(
+      '[F5] ships %s  [F6] rocks %s  [F7] places %s  [F8] routes %s   ' ..
+      '[dbl-click] or [Return] drill   [RMB] or [`] back',
       f.ships and 'on' or 'off', f.rocks and 'on' or 'off',
       f.places and 'on' or 'off', f.routes and 'on' or 'off')
+    local legendW = math.min(720, sx - 40)
     DrawEx.TextAlpha(kLabelFont, legend, kLabelSize,
-      x + sx - 360, y + sy - 40, 344, 20,
+      x + sx - legendW - 8, y + sy - 40, legendW, 20,
       1, 1, 1, 0.55, 1.0, 0.0)
   end
   if self.inspector then
@@ -762,6 +935,9 @@ function NodeGraph:onInput (state)
   if Input.GetPressed(Button.Keyboard.F7) then self.filter.places = not self.filter.places end
   if Input.GetPressed(Button.Keyboard.F8) then self.filter.routes = not self.filter.routes end
 
+  if Input.GetPressed(Button.Keyboard.Return) and self.focus then
+    self:tryDrill(self.nodes[self.focus])
+  end
   if Input.GetPressed(Button.Keyboard.Backtick) then
     self:drillOut()
   end
@@ -777,7 +953,8 @@ function NodeGraph:onInput (state)
       -- before/during scrolling must not move the anchor (the drift bug).
       local lock = self.follow and self.nodes[self.follow] or nil
       if lock then
-        local fx, fy = self:nodeXY(lock)
+        local fx = lock.x + (lock.jx or 0)
+        local fy = lock.y + (lock.jy or 0)
         self:applyScroll(scrolled, mp.x, mp.y, { fx, fy })
       else
         self:applyScroll(scrolled, mp.x, mp.y)
@@ -800,32 +977,45 @@ function NodeGraph:onInput (state)
       if self._lastClick
         and now - self._lastClick < 0.35
         and self._lastClickNode == dn.id
-        and dn.entity
-        and dn.entity.hasChildren and dn.entity:hasChildren()
         and dn.entity ~= self.context then
-        self:drillInto(dn.entity, false)
+        self:tryDrill(dn)   -- double-click
         self._lastClick = nil
       else
-        self.pos.x = dn.x + (dn.jx or 0)
-        self.pos.y = dn.y + (dn.jy or 0)
-        self.targetZoom = clampZoom(self.zoom * 4)
+        -- Centre the camera on the node. pos is WORLD space and linear, so
+        -- this is exact and stays centred through the zoom easing below.
+        self.pos.x, self.pos.y = dn.x + (dn.jx or 0), dn.y + (dn.jy or 0)
+        -- Absolute, size-appropriate target: never relative to the current
+        -- zoom (that compounded x4 per click, making fixed-world links appear
+        -- to grow), and robust to how wide the level fit happens to be.
+        -- Big things (regions) stay wide; small ones come close.
+        local rr = math.max(1, dn.r or 10)
+        self.targetZoom = clampZoom(math.min(1.0, math.max(0.2, 40 / rr)))
         self._lastClick = now
         self._lastClickNode = dn.id
       end
     end
     self._panAt = { x = mp.x, y = mp.y }
     self._pressAt = { x = mp.x, y = mp.y }
+    self._dragFrom = { x = mp.x, y = mp.y }
+    self._dragMoved = false
   end
   if down then
     if self._drag then
-      -- Drag writes position AND target (a dragged node stays put). Subtract
-      -- the visual offset: drops land in true coordinates. Dragging pins the
-      -- view (follow would fight the cursor).
-      self.follow, self.targetZoom = nil, nil
-      local cx, cy = self:toCanvas(mp.x, mp.y)
-      self._drag.x = cx - (self._drag.jx or 0)
-      self._drag.y = cy - (self._drag.jy or 0)
-      self._drag.tx, self._drag.ty = self._drag.x, self._drag.y
+      -- A press only becomes a genuine DRAG once the cursor actually moves.
+      -- A plain click must NOT relocate the node: the click already centres
+      -- the camera on it, and the same-frame drag used to fight that (and
+      -- map-space compression amplified the resulting jump several-fold).
+      local fx = self._dragFrom and self._dragFrom.x or mp.x
+      local fy = self._dragFrom and self._dragFrom.y or mp.y
+      local ddx, ddy = mp.x - fx, mp.y - fy
+      if self._dragMoved or ddx * ddx + ddy * ddy > 16 then
+        self._dragMoved = true
+        self.follow, self.targetZoom = nil, nil
+        -- Drop the node where the cursor is (toCanvas inverts the warp).
+        local wx, wy = self:toCanvas(mp.x, mp.y)
+        self._drag.x, self._drag.y = wx - (self._drag.jx or 0), wy - (self._drag.jy or 0)
+        self._drag.tx, self._drag.ty = self._drag.x, self._drag.y
+      end
     elseif self._panAt then
       self.follow, self.targetZoom = nil, nil -- manual pan breaks follow too
       self.pos.x = self.pos.x - (mp.x - self._panAt.x) / self.zoom
@@ -833,7 +1023,9 @@ function NodeGraph:onInput (state)
       self._panAt = { x = mp.x, y = mp.y }
     end
   else
-    if self._drag then self._drag.manual = true end -- dropped here: keep it
+    -- Only a real drag pins the node where it was dropped; a click leaves it
+    -- tracked (it was selected/centred, not moved).
+    if self._drag and self._dragMoved then self._drag.manual = true end
     if self._pressAt and not self._drag then
       local dx, dy = mp.x - self._pressAt.x, mp.y - self._pressAt.y
       if dx * dx + dy * dy < 36 then
@@ -842,6 +1034,7 @@ function NodeGraph:onInput (state)
       end
     end
     self._drag, self._panAt, self._pressAt = nil, nil, nil
+    self._dragFrom, self._dragMoved = nil, false
   end
   self._wasDown = down
 end

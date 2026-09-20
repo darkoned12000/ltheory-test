@@ -197,7 +197,7 @@ NodeGraph.Mode = { Logical = 0, WorldProjection = 1 }
 | `applyCamera (camera)` | Restore/lerp the per-level camera+zoom when popping a context (§7 "Drill-down"); animates rather than snapping. | — |
 | `function NodeGraph.isGraphWorthy (entity)` | LOD/importance predicate: return true only for graph-worthy entities so dense sectors don't flood the view with asteroid nodes. Capability-predicate include-list first; smarter clustering later if needed (§8 Phase 2). | — |
 | `self.mode`, `self.zoom`, `self.pos` | Layout mode + pan/zoom state. | SystemMap fields. |
-| `node.pinned` (per node) | Set true on drag-start so the auto-layout pass treats it as a fixed anchor and lays out everything else around it — lets \"drag to rearrange\" coexist with re-layout when new nodes appear (§8 Phase 3). | — |
+| `node.pinned` (per node) | **Future — not implemented.** Specified for a logical auto-layout pass (Phase 3) that was never built; today nodes are free-form dragged and `manual=true` freezes a dropped node's position. Revisit with logical views (§16.2 P2). | — |
 | `function NodeGraph.Create (system, opts)` | Seed: `self.system = system`; set stretch; init node/edge tables keyed by id; push initial context onto stack (`self.stack = {context=system}`); set mode + zoom + pos. Returns self. | `SystemMap.Create(system)`. |
 
 ### Node identity across frames (design for before Phase 2)
@@ -225,11 +225,11 @@ function NodeGraph:pop ()                 -- back out; restore previous level's 
   self:applyCamera(self.stack[self.top].camera)   -- animate/restore zoom+pan, don't reset to default
 end
 ```
-- **Drill vs select:** clicking a node with children → `push` (drill); otherwise invoke the `onNodeSelected` callback / show inspector detail (`select`).
+- **Drill vs select:** click = select/zoom (opens `self.inspector`); double-click or Return on a node with a valid drill context = `drillInto`. The earlier `onNodeSelected` callback idea was superseded by the companion inspector (§7).
 - When pushing, animate/transition camera+zoom into the new level instead of jarring recenter — store per-level camera so `pop()` restores it.
 
-### Inspector / detail panel (decision: decide now)
-Is node-click detail a separate widget composed alongside NodeGraph, or baked in? **Decision (review 2026-09-18): separate, via callback.** Nothing in `script/UI` sends events (`Entity:send` is entity-level only), so the outward channel is a callback field — e.g. `self.onNodeSelected(node)` invoked from `onInput`'s click handler, which `GameView`/debug panels assign to render the inspector (health, sockets, economy flows). This is codebase-idiomatic (buttons take closures) and keeps NodeGraph pure node-graph logic. Baked-in only if you want zero extra wiring for the demo.
+### Inspector / detail panel (AS SHIPPED)
+**Shipped form (supersedes the earlier `onNodeSelected` callback idea):** `UI.NodeGraphInspector` is a companion object owned by NodeGraph (`self.inspector = Inspector.Create(self)`) and drawn at the tail of `NodeGraph:onDraw` in the same screen space. Selection drives it (`show(node)` on click, `hide()` on empty-click / map close). It renders the vector wireframe + identity block + function tags (§8 Phase 5) and needs no event plumbing — nothing in `script/UI` sends events, and a callback would have added wiring for the same result. A future detached inspector (docked panel, out-of-band detail) can still subscribe to selection; nothing today depends on the callback.
 
 ### Edge style per mode (locked by reference, §12)
 Josh's shots show **straight lines everywhere** — solid spokes from hubs plus **dotted** long-haul routes. No curves. So:
@@ -257,12 +257,12 @@ When `mode == WorldProjection`, project each node's world position onto screen u
 - `NodeGraph.Create(system)` seeds nodes filtered by `isGraphWorthy` (§7 LOD); edges from sockets/economy/hierarchy. Key nodes by stable id + merge-not-replace (§7 identity) so per-node state survives; lerp smoothing baked into onUpdate (`1 - exp(-k*dt)`). Re-query every frame.
 
 **Phase 3 — Layout algorithm + modes**
-- Logical auto-layout in a new `script/UI/GraphLayout.lua` if it grows past ~50 lines, else inline (§8 Phase 3 note). `node.pinned = true` on drag-start so the layout pass treats pinned nodes as fixed anchors and lays out everything else around them. World-projection mode (straight-line edges per §7 edge style). Node labels via poll hooks; health bar if tracked.
+**Phase 3 — Layout algorithm + modes (NOT BUILT; superseded for the map view)** — the sector view is spatial (node positions are world x/z), so no auto-layout was needed. Logical views (inventory/crafting/comms) will need it: `GraphProvider.layout(nodes)` is the hook and `GraphProvider.grid(cols, pad)` is a working deterministic grid; a full layered/spring `GraphLayout.lua` plus `node.pinned` remain future work (§16.2 P2).
 
 **Phase 4 — Drill-down / navigation stack**
 - `self.context` seeds levels instead of the root; `self.stack` carries `{context, camera{zoom,pos}}` per level. **Drill trigger:** click a node with children (mine hub, zone, ship, station) → `drillInto` (fresh fit — new DOF from fit_view, not a climbing zoom; the Parnell reveal is exactly this); otherwise click zooms to selection.
 - **Back:** Backtick (Escape is the quit key — §13) or right-mouse pops one level, restoring the exact camera it came from. Breadcrumb path under the scale bar shows the current level.
-- Hysteresis radii (`kDrillRadius` 140 / `kUndrillRadius` 40) declared for the future radius auto-trigger; the trigger is currently explicit click-only — no flicker risk.
+- **Drill trigger is explicit** (click = select/zoom, double-click or Return = drill). The zoom-radius auto-trigger with hysteresis (`kDrillRadius`/`kUndrillRadius`) was dropped in favour of explicit input and those constants were removed as unused (§15 step 2) — no hysteresis, no flicker.
 - **Crash fixed (2026-09-19):** drilling into a childless entity (asteroid) asserted `iterChildren`. Two causes: the drill condition matched any `getChildren` (bare `or`), and `seedFromSystem` never guarded the context. Now: drill requires `hasChildren()`, and childless contexts bail to an empty level instead of asserting. Reproduced via the offending click path, fixed, boot-verified 0 errors.
 - **Blank-after-drill fixed (same day):** drilling a node with no *seeded* children (factory with socket children, station) showed an empty canvas and the map felt dead. Drills now require `hasChildren()`; the zone-refit lets a zone reveal its members (the Parnell "region" step); F10-open/close resets any leftover drill via `onEnable`. Boot-verified.
 - **Zoom-two-walls fixed (same day):** the zoom ceiling (3000) and a per-frame ring/fan recompute (dots re-pinned at 105–155px at every zoom) made the field "impossible to approach". Ceiling raised 3000→5e5; ring/fan computed ONCE per level at fit (`_fitted`/`_ringDone` gating, re-held per gesture), so zooming in now genuinely approaches true positions — dots separate, rings stop clinging to the hub. Boot-verified, errors 0.
@@ -343,7 +343,7 @@ No proof-of-concept with fake data — data access is the entire risk (which ent
 `LTheory` builds exactly **one** `Entities.System` per run — no multi-sector galaxy exists. So the drill-down top level is the **current system** (label `"System <seed>"` until systems get names), not a galaxy map:
 - Level 0 (system): planets, moons, stations, gates, ships, wormholes — rings + selective labels, hub spokes + dotted trade routes (the §12 look).
 - Level 1 (drill into a body/ship/station): its children — ship sockets (Generator→Thruster→Turret), inventory (`Inventory` component), station markets/factories, moonlets.
-- Level 2+ (drill into a component/node): live stats + `onNodeSelected` inspector detail.
+- Level 2+ (drill into a component/node): live stats + the inspector panel (§7).
 - A future galaxy level slots in as just another stack entry (the §7 stack already supports it) — no widget changes needed when multi-sector arrives.
 
 ### Suppressed-layer rule
@@ -489,9 +489,11 @@ External review of both files, then a careful, verified 5-step pass (the map was
 
 **Remaining / future.** Multi-sector = a galaxy-level provider (roots = systems) that drills into sectors — no widget change. Ship/inventory/crafting/comms = a provider plus (for logical views) `GraphProvider.grid` or a future `GraphLayout.lua`. Auto-drill-on-zoom (radius trigger with hysteresis) was dropped in favour of explicit click/double-click; the constants were removed as unused.
 
-## 16. Pending fixes — second review round (2026-09-20) [NOT STARTED]
+## 16. Second review round (2026-09-20) — P0 DONE, P1/P2 pending
 
-Second external review of `NodeGraph.lua` + `NodeGraphInspector.lua`, re-verified against the tree (not taken on faith). Nothing here is applied yet. Do **P0 before any further work** — item P0.1 is an invisible-until-hit correctness bug. Every step re-runs `configure.py test` (136/0 shaders + node checks) and one headless boot with a frame dump.
+Second external review of `NodeGraph.lua` + `NodeGraphInspector.lua`, re-verified against the tree (not taken on faith).
+
+**P0 status: DONE 2026-09-20.** P0.1–P0.4 applied; P0.5 tests 29 -> 34, all green; 136/0 shaders; clean boot. The declutter test was proved to *catch* the bug (re-breaking the gate produced exactly the 2 expected FAILs, then passed on restore).  **P1 status: DONE 2026-09-20.** Drillable indicator (`+` on drillable nodes: majors always, minors only when selected; `n.drillable` stamped once at seed), failed-drill red-ring flash (~0.45 s), legend documents drill/back keys, Return drills the focused node. Tests 34 -> 37. Clean boot + dump, 136/0. Boot caught one bug: the `+` glyph used the inspector-local `HEAD` colour in `NodeGraph` (undefined global) — switched to `cCore`.  **P2 status: RECORDED (deferred by design).** Layout persistence across drill re-entry is not implemented — only needed once logical views exist, where layout is authored; pair with `GraphProvider.layout`/`GraphLayout.lua`. Doc cleanup applied below.
 
 ### 16.1 Verified findings
 
@@ -505,12 +507,12 @@ Second external review of `NodeGraph.lua` + `NodeGraphInspector.lua`, re-verifie
 
 ### 16.2 Plan
 
-**P0 — correctness (small, do first)**
-- **P0.1 (B1)** Delete `_ringDone`; gate the fit-time `seedEdges()` + `declutter()` on `not self._fitted` (behaviour-identical on the fit frame, and correctly re-runs after every drill because both drill funcs already set `_fitted = false`). Also delete `_offsetHold` + its decrement (B5). Files: `script/UI/NodeGraph.lua`.
-- **P0.2 (B2)** `provider.children(ctx, isRoot)`; `NodeGraph` passes `ctx == self.system`; provider uses `ctxIsZone = (not isRoot) and ctx.name ~= nil`. Files: `script/UI/GraphProvider.lua`, `script/UI/NodeGraph.lua`.
-- **P0.3 (B3)** Gate the hover lookup on `self.filter.routes`. Files: `script/UI/NodeGraph.lua`.
-- **P0.4 (B4)** `local ffi = require('ffi')` at the top of the inspector. Files: `script/UI/NodeGraphInspector.lua`.
-- **P0.5 tests** (`tools/validate_nodegraph.lua`): (a) declutter re-runs — after `drillInto`, seeded majors gain `jx/jy` (assert not-nil after the post-drill fit); (b) the `isRoot` zone rule — a *named root* context still suppresses zone members, a *named zone* context reveals them.
+**P0 — correctness — DONE 2026-09-20**
+- **[DONE]** **P0.1 (B1)** Delete `_ringDone`; gate the fit-time `seedEdges()` + `declutter()` on `not self._fitted` (behaviour-identical on the fit frame, and correctly re-runs after every drill because both drill funcs already set `_fitted = false`). Also delete `_offsetHold` + its decrement (B5). Files: `script/UI/NodeGraph.lua`.
+- **[DONE]** **P0.2 (B2)** `provider.children(ctx, isRoot)`; `NodeGraph` passes `ctx == self.system`; provider uses `ctxIsZone = (not isRoot) and ctx.name ~= nil`. Files: `script/UI/GraphProvider.lua`, `script/UI/NodeGraph.lua`.
+- **[DONE]** **P0.3 (B3)** Gate the hover lookup on `self.filter.routes`. Files: `script/UI/NodeGraph.lua`.
+- **[DONE]** **P0.4 (B4)** `local ffi = require('ffi')` at the top of the inspector. Files: `script/UI/NodeGraphInspector.lua`.
+- **[DONE]** **P0.5 tests** (`tools/validate_nodegraph.lua`): (a) declutter re-runs — after `drillInto`, seeded majors gain `jx/jy` (assert not-nil after the post-drill fit); (b) the `isRoot` zone rule — a *named root* context still suppresses zone members, a *named zone* context reveals them.
 
 **P1 — player-facing polish (cheap, do after P0 is green)**
 - **P1.1 Drillable indicator.** Stamp `n.drillable = provider.drillable(e)` at seed time (already computed at click time); draw a small tell on drillable majors (dashed outer ring or a `+`) so "has more inside" is learnable, as the Parnell reference distinguishes expandable nodes.
@@ -521,10 +523,110 @@ Second external review of `NodeGraph.lua` + `NodeGraphInspector.lua`, re-verifie
 **P2 — defer (record only; tie to logical-view work)**
 - **P2.1 Layout persistence across re-entry.** Drilling wipes `self.nodes`, so manual drag positions are lost on re-entry to a visited level. Only matters once logical views (inventory/crafting) exist, where layout is authored rather than spatial — pair it with `GraphLayout.lua`, not now.
 
-### 16.3 Doc cleanup carried with the above
-- §7 still describes an `onNodeSelected` callback (§16-era design); the shipped inspector is drawn inside `NodeGraph:onDraw` via `self.inspector`. Reconcile.
-- §8 Phase 4 still references `kDrillRadius`/`kUndrillRadius` (removed in §15 step 2). Reconcile.
-- §7/§8 still describe `node.pinned` / a Phase-3 logical layout that was never implemented; mark as "future (see §16.2 P2)".
+### 16.4 Follow-up from play-test (2026-09-20) — regions, zoom compounding, ship policy
+
+Three things came out of play-testing the map. All fixed and verified (44/44 node checks, 136/0, clean boot).
+
+**Q: should double-clicking the factory/solar node show the ore asteroids?** No — and the root cause was a missing feature, not a misclick. Facts from a headless node dump: the solar array is a station with `children = {}` (`kids=0`, `drill=false`), and the ore is NOT its child. The mine **lanes** the user sees are economy `Jobs.Mine` edges (station ← rock), i.e. a *relationship*, not ownership. The ore's actual owner is the region: `System:spawnAsteroidField` creates a `Zone` ("Rine Field") with 60 members and calls `system:addZone(zone)` — which stores it in `system.zones`, **not** in the child tree. `provider.children` only walked `iterChildren()`, so no region node was ever seeded: the field had no drill anchor at all.
+
+- **Fix:** `GraphProvider.system().children(ctx, isRoot)` now also emits each `ctx:getZones()` zone as a **major region node** at the sector level (position = zone center, radius = clamped bounding radius over members). `drillable(zone)` was already true; drilling it reveals its 60 members. Verified headless: `id=14 cat=station drill=true label=Rine Field r=4000 members: ore=60`.
+- **Zone drill was also broken** one layer deeper: members are parented to the **system** (`Zone:add` is loose, no reparent), so `topLevel` rejected them; `children` now treats a zone context's members as top-level (`ctxIsZone`). Test: "drilling the zone reveals its members".
+- **Radius clamp:** the computed bounding radius could be dominated by a far outlier (1.07e6 observed), which would also drop the region from the fit (`r >= 5000` is treated as planet-scale). Clamped to 600..4000 so regions read correctly and contribute to the fit.
+
+**Bug: "the link connecting the ore to the factory gets longer every time I click".** Real. `targetZoom = clampZoom(self.zoom * 4)` was relative to the *current* zoom and ran on every click, so repeated clicks compounded ×4 each time — the view zoomed in without bound and fixed-world mine lanes stretched on screen. **Fix:** the click-zoom target is now absolute for the level (`clampZoom(self._fitZoom * 4)`, with `_fitZoom` captured at fit), so clicking the same node repeatedly lands on the same zoom.
+
+**Feedback: drilling the player ship shows ship parts — not wanted on the map.** Agreed; that is the ship-systems/inventory view, not sector content. `provider.drillable` now returns false for ships (`hasActions`), so double-clicking `YOU` no longer drills. `provider.noDrillReason(entity)` (new, optional) tells the UI *why* a failed drill happened without flashing for targets that belong to another view: a childless/empty station returns `'empty'` (red flash = "nothing to explore here"); a ship returns `nil` (no flash).
+
+### 16.5 Follow-up from play-test #2 (2026-09-20) — back restores focus, launch fits the level
+
+Two reports after drilling `Rine Field`:
+
+**Bug: right-click (drill out) dumped the player's view instead of staying on the inspected node.** Root cause: `drillOut` did restore `zoom`/`pos` from the stack, but it also set `_fitted = false` — so the very next `seedFromSystem` re-fit the level, and the fit's player-centred branch overrode the restore (the player was the fit centre). Netting out to "back = go to YOU". Worse, the drilled-from node was not re-selected at all (`focus` was cleared).
+- **Fix:** `drillInto` now records `focusId` in the stack entry. `drillOut` **defers** the camera + focus restore (`_restore`, `_restoreFocus`) instead of applying them immediately — there are no nodes to select yet, and the fit would overwrite the camera. `seedFromSystem`'s fit block applies the saved camera (skipping the recomputed fit) and, after seeding, re-selects the node and reopens its inspector. Verified by test: "re-seed applies the restored camera (not a player recentre)" + "re-seed re-selects the node we drilled from".
+
+**Request: opening the map should show ALL nodes with 'YOU' selected, not a deep zoom on 'YOU'.** The fit was player-centred by design (an early "player-centric map" decision), which meant every launch started zoomed in on the player and required a big scroll-out to find the station/region.
+- **Fix:** the fit bbox now spans majors (planets excluded, `r >= 5000`) **plus the player's own node**, and centres on that set. `YOU` is then **selected** (red highlight) without being centred. Verified headless: `bbox=-2219,-72108..227635,5711 zoom=0.00379 focus=4(YOU)`, i.e. the whole level in frame.
+- Consequence: click-zoom can no longer be `fitZoom * 4` (the fit is now very wide, so ×4 is still an overview). It is now **absolute and size-appropriate**: `clamp(min(1.0, max(0.2, 40 / node.r)))` — regions stay wide, small bodies come close, and it is independent of the fit, so no compounding.
+
+Status: 49/49 node checks, 136/0 shaders, clean boot.
+
+### 16.9 Compression moved to SCREEN space (2026-09-20) — "something is wrong"
+
+Symptom: clicking a node (asteroid/ore) centred the camera, then the whole map vanished — no node elements at any zoom, and F10 close/reopen did not recover.
+
+Cause: §16.6 applied the distance compression in the **stored camera frame** — `self.pos` was a *compressed map* coordinate, and the compression depended on zoom. A click sets `pos = mapXY(node)` at the fit zoom and a `targetZoom`; as the zoom eased, the compression faded, so every node's map coordinate moved but `pos` did not. The clicked node slid off-screen and nothing brought it back (F10 doesn't reset the camera).
+
+Fix: the projection is now `world -> linear screen -> radial warp`. `self.pos`/`self.zoom` are plain **world space** and strictly linear, so pan / zoom / centre-on-node are the classic linear operations and a zoom change can never invalidate the camera. The compression is a screen-space radial warp about the view centre (`_warp`/`_unwarp`, `toScreen`/`toCanvas`), with the same strength/fade (`t` from `_zFit*12`) and reference radius (`_dRef * zoom`). `applyScroll` now pins the anchor's **warped** screen position across the zoom (solving `pos` at the new zoom), so cursor and locked-node zoom are both exact.
+
+Properties:
+- **Identical opening/zone view** to §16.6 — at the fit the camera sits on the level centre, where a warp about the view centre equals a warp about that centre. Verified: root `zoom=0.003787 dRef=60667 0/94 off-screen`, Rine Field `zoom=0.152716 dRef=3303 5/60`, unchanged.
+- Clicking now keeps the node centred through the zoom ease (the camera is linear). Drag still relocates a node (`toCanvas` inverts the warp).
+- Declutter offsets are added in screen pixels after the warp, so fans/rings stay fixed-size.
+
+Removed the now-obsolete `mapOf`/`unmap`/`mapXY`/`toScreenMap`/`toCanvasMap`. `_refC` remains set but is no longer used by the projection (kept for the drill-stack frame record).
+
+Verified 60/60 node checks (new: "the node stays centred as the click-zoom eases"), 136/0 shaders, clean boot. §16.8's map-space plumbing is superseded by this; its drag-on-click gate still stands.
+
+### 16.8 Click-to-centre regression (2026-09-20) — "centre focus when you click nodes stopped working"
+
+Two separate faults, both fallout from the §16.6 projection change (which made `self.pos` live in **compressed map space**):
+
+1. **`self.pos` set from raw world coords.** The press-edge centred the camera with `self.pos = dn.x + jx` (raw world). `pos` is map space now, so the camera centred on the *uncompressed* point — far off for any node away from the level centre. Fixed with a `NodeGraph:mapXY(n)` helper (compressed world + declutter offset); the click-centre, the scroll anchor, and `toScreenNode` all use it now (one source of truth).
+2. **A click also ran the drag.** On the press frame the drag branch ran unconditionally, relocating the node to the cursor (`toCanvasMap` + `unmap`). A plain click therefore *fought* its own centring and pinned the node under the cursor — and map-space compression amplified the jump several-fold (measured: node world x 6000 -> 12129 on a click at zoom 0.149). The drag is now gated behind real cursor motion (`_dragMoved`, 4px threshold); a plain click leaves the node tracked, and only a genuine drag sets `manual` (pins it). Side effect: the click's `targetZoom` is no longer cancelled on the press frame, so click-to-zoom behaves as documented again.
+
+Verified 59/59 node checks. New §10 regression drives the real `onInput` press-edge: with compression active, a click must (a) select the node, (b) not move it, (c) land it at the viewport centre; and a subsequent press+move must still relocate it. Confirmed to fail if either fix is reverted.
+
+### 16.7 Zone drill: robust fit (2026-09-20) — "drilled into the rine field, didn't display properly"
+
+Report: the sector view looked good after §16.6, but drilling into **Rine Field** did not — the field rendered as a thin smear with the nodes crammed into a small band.
+
+Root cause (measured on seed 987654321, `System:spawnAsteroidField` clump step `(0.1*kSystemScale)*getExp()^getExp()`): the field is genuinely compact — 55/60 rocks within 20k of the zone centre, median 1,878 — but **one chained-clump rock sits 1,069,860 units out** (a $e^{e}$ tail step). The level fit took a plain min/max bbox over all members, so that single straggler stretched the span to ~1.25M and collapsed the real field into a ~30px pile (zone fit zoom **0.00128**). The sector view was unaffected because its fit already excludes planet-scale nodes.
+
+Fix (`NodeGraph.lua`, sector-view fit preserved):
+- **Robust fit**: collect the fit set (majors + player, or all minors at a zone level), compute the median position, then take the bbox over nodes within **1.5 x the p90 distance from the median**. Trimmed outliers still seed and draw, so they appear as clickable edge indicators. A small fit set (the sector view) has `p90 == its max`, so its fit is bit-for-bit unchanged.
+- **Compression frame through the drill stack**: `drillInto` now saves the leaving level's `{refC, dRef, zFit}` and `drillOut` restores it verbatim, instead of recomputing `_zFit` from the restored camera zoom (so a sector you had zoomed past the §16.6 fade threshold stays uncompressed when you come back).
+
+Measured: root fit unchanged (`zoom=0.003787`, `dRef=60667`, `0/94` off-screen); Rine Field fit `zoom 0.00128 -> 0.1527` (~120x), `5/60` off-screen (the far stragglers, as edge indicators). Verified 53/53 node checks (new §9 regression: 40 clustered nodes + one 1e6 outlier must not collapse the zoom), 136/0 shaders, clean boot.
+
+Note: the ~1M outlier is a **generator** artifact, not a map bug (`spawnAsteroidField`'s chained step has an unbounded exponential tail, and `LTheory.lua`'s `spawnAsteroidField(60, 1000, fieldPos)` drops its third argument because the signature is `(count, oreCount)`). The map now displays whatever the generator produces; tightening the field itself is a separate gameplay-side decision (not made here, to avoid changing the scene under test).
+
+### 16.6 Overview distance compression (2026-09-20) — "bring the nodes to the centre"
+
+Context: the player's ship can be 200k+ units from the station (last dump: `YOU` at 227,635 vs the station at -2,219), so a strict 1:1 overview spans ~230k and reads as a sparse spread. Chosen approach (user picked compression over tighter-fit / outlier-culling): **compress distances radially at the overview, fade to true distance as you zoom in.**
+
+Implementation in `NodeGraph.lua` — the projection is now two-stage: `world -> compressed map -> screen`.
+- `mapOf(wx,wy)` compresses radius about the level centre `_refC` (`dRef * log(1 + d/dRef)`, `dRef = 0.5 x level radius`) blended toward identity by `t = clamp(zoom / (_zFit*12), 0, 1)`. At the fit `t ~= 0.083` (strong); by 12x the fit zoom `t = 1` (distances true). Direction is preserved (radial only).
+- `unmap` is the numeric inverse (bisection on the monotonic curve) — used for drag placement.
+- Pan/zoom stay **linear in map space** (`toScreenMap`/`toCanvasMap`), so all the existing pan / zoom-about-anchor / click-centre math is untouched. Only `mapOf`/`unmap` are non-linear.
+- Node draw/hit/edges use `toScreenNode(n)` = `toScreenMap(mapOf(n) + jx/jy)` — declutter offsets are added in **map space**, so the fixed-pixel fan/ring is never squashed by the compression (that was the one real hazard).
+- `declutter` now projects through `toScreen` (was raw `(x-pos)*zoom`), which is what keeps fans/rings aligned with the compressed view.
+
+Measured at the fit: `t=0.083`, extreme nodes at ratio ~0.55-0.72 of their true radius (clustered centrally), fading to 1.00 by zoom ~0.045. Verified headless probe + 49/49 node checks + 136/0 + clean boot. Trade-off accepted: the scale bar is approximate while compressed (exact once zoomed in).
+
+**Test note:** the compression surfaced a latent test/code hazard — a declutter table constructor `{ x = f(), y = g() }` was collapsed to a single-field assignment by an edit, leaving `y = nil` (caught by `validate_nodegraph.lua` before the boot). Fixed to `local tX,tY = f()`.
+
+### 16.3 Doc cleanup — APPLIED 2026-09-20
+- §7 inspector section rewritten to the as-shipped companion-inspector design (the `onNodeSelected` callback idea is marked superseded).
+- §7 `node.pinned` row + §8 Phase 3 marked **future / not built** (the sector view is spatial; logical views need `GraphProvider.layout` / `GraphLayout.lua`).
+- §8 Phase 4 drill-trigger line corrected (explicit click/double-click/Return; hysteresis constants removed).
+- §8 Phase 4/5 and the ideas list: stale `onNodeSelected` mentions reconciled.
+
+## 17. Representation glyphs (2026-09-20) — "the field shows a box"
+
+Problem: selecting a non-body node (a named region such as **Rine Field**) drew the inspector's generic `boxWire` fallback, because `entityMesh` only finds geometry on entities that *are* a body. A region is a **representation** of something in the sector, so a box is meaningless.
+
+Design — a small, extensible seam:
+- `NodeGraphUtil.repKind(entity)` -> `'field', count` for an aggregate (named entity with >= 5 positioned, non-ship children and no mesh of its own), else `nil`. Ships are excluded (that's the ship-systems view); a real body with a mesh is excluded (it draws the mesh).
+- `NodeGraphUtil.fieldSchematic(seed, count)` -> a flat segment list (same shape as the mesh-derived `_linesForNode` output) describing a deterministic cluster of small irregular vector rocks. Same shape as the wireframe path, so the inspector's existing pixel-mapping draws it unchanged.
+- `NodeGraphInspector:show` classifies once per selection (`_repKind`/`_repCount`); `_linesForNode` returns the field schematic when there is no mesh and `repKind == 'field'`; the stat block adds `N asteroids` (a field has no `scale`, so the member count is the meaningful number).
+
+Adding a new representation kind (e.g. a station-group, a convoy) = one branch in `repKind` + one glyph generator in `NodeGraphUtil`; no inspector or projection changes.
+
+Verified in-engine: the `Rine Field` node reports `kind=field count=60` and yields an 83-segment rock cluster (was a box). 67/67 node checks (new §11: `repKind` thresholds + ships/real-bodies excluded + `fieldSchematic` determinism/scatter), 136/0 shaders, clean boot.
+
+### 17.1 Range from YOU (2026-09-20)
+
+The status block only showed absolute `pos`, which is unusable for navigation; nothing was measured relative to the player. Added `NodeGraphUtil.rangeBetween(a, b)` -> `(d3, plane, dy)` (true range incl. vertical / X-Z map separation / signed vertical), and the inspector now shows `dist <plane> u from you` for any selection that isn't the player, switching to `dist <plane> u (map)  rng <d3> u` when the vertical separation is material (>5%). The player's own node shows no range line. Verified in-engine: `Rine Field` -> `dist 213.8k u from you`; player -> nil. 70/70 node checks.
 
 ## Appendix A — Reused conventions checklist
 - Fragment header: `#include fragment`; output via redeclared `layout(location=0) out vec4 fragColor;` (matches triangle.glsl). No `#version` line (auto-prepended).
@@ -542,7 +644,7 @@ Second external review of `NodeGraph.lua` + `NodeGraphInspector.lua`, re-verifie
 - `script/UI/DrawEx.lua` — add `DrawEx.Dash(...)` (+ bbox padding).
 - `script/Config.App.lua`, `Config.Local.lua` — optional semantic colors/toggles (pure Lua).
 
-**TBD / may be a separate widget:** node inspector/detail panel (§7 Inspector decision) composed alongside NodeGraph, fed by the `onNodeSelected` callback.
+**TBD / may be a separate widget:** a *detached* inspector panel (docked, out-of-band detail). The shipped inspector is a companion object drawn inside `NodeGraph:onDraw` (§7).
 
 **Reference only (unchanged):** `script/Game/SystemMap.lua`, all of `script/UI/*.lua` framework, entity/socket/economy components.
 
@@ -558,7 +660,7 @@ A few things worth considering beyond the plan, in no particular order:
 
 3. **Straight + dotted per mode — confirmed by reference (§12).** Logical mode uses solid `DrawEx.Line` + dotted `DrawEx.Dash`; world-projection uses the same two styles. No curves anywhere — `wire.glsl` stays out of the tree.
 
-4. **Inspector as a callback, composed in GameView.** Assign `nodeGraph.onNodeSelected` and let existing debug-panel/inspector infrastructure render detail (health, sockets, economy flows). Zero extra wiring for the demo; real inspector reuse later without touching NodeGraph's click handling.
+4. **Inspector detail (shipped differently).** Built as `UI.NodeGraphInspector`, a companion drawn inside `NodeGraph:onDraw`, driven by selection — no callback wiring. See §7 / §8 Phase 5.
 
 5. **Animate camera transitions per stack level** — store `{zoom,pos}` on each entry so `back` restores the prior view instead of snapping to default. Small thing that disproportionately affects how "polished" drill-down feels (per Claude's feedback); bake it into §7 push/pop now rather than Phase 4.
 

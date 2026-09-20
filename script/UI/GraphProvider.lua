@@ -53,11 +53,16 @@ function GraphProvider.system ()
   -- sector level but ARE the level when the zone itself is the context.
   -- Scratch tables live on the provider (per NodeGraph) so this per-frame call
   -- does not allocate.
-  function P.children (ctx)
+  --
+  -- `isRoot` is passed by NodeGraph (ctx == system). Zone-ness must NOT be
+  -- inferred from `.name` alone: a named sector root would then be treated as
+  -- a zone and skip member suppression (leaking every zone member into the
+  -- sector view).
+  function P.children (ctx, isRoot)
     local out = P._units
     if not out then out = {}; P._units = out end
     for i = #out, 1, -1 do out[i] = nil end
-    local ctxIsZone = ctx.name ~= nil
+    local ctxIsZone = (not isRoot) and ctx.name ~= nil
     local memberOfZone = P._memberOfZone
     if not memberOfZone then memberOfZone = {}; P._memberOfZone = memberOfZone end
     for k in pairs(memberOfZone) do memberOfZone[k] = nil end
@@ -76,7 +81,9 @@ function GraphProvider.system ()
     for _, e in ctx:iterChildren() do
       if e and not e.deleted then
         local parent = e.getParent and e:getParent()
-        local topLevel = (parent == nil or parent == ctx)
+        -- Zone members are parented to the SYSTEM (Zone:add is loose, no
+        -- reparent), so when the zone IS the context its members are top-level.
+        local topLevel = (parent == nil or parent == ctx or ctxIsZone)
         local worthy, major, cat = P.classify(e)
         if worthy and topLevel and not memberOfZone[e.id] then
           -- Not every child has a body (particles, markers): no pos, no node.
@@ -89,6 +96,43 @@ function GraphProvider.system ()
               cat    = cat or 'rock',
               x = p.x, y = p.z,
               r = (okS and type(s) == 'number') and s or 1,
+            }
+          end
+        end
+      end
+    end
+    -- Regions: zones live in `system.zones`, NOT in the child tree, so they
+    -- never appear via iterChildren. At the sector level add each zone as a
+    -- major region node (bounding radius over its members) so the field has a
+    -- drill anchor — the ore view the map was missing.
+    if isRoot and ctx.getZones then
+      local okZ, zones = pcall(ctx.getZones, ctx)
+      if okZ and zones then
+        for _, z in ipairs(zones) do
+          local okP, zp = pcall(z.getPos, z)
+          if okP and zp then
+            local rr = 600
+            local okC, ch = pcall(z.getChildren, z)
+            if okC and ch then
+              local r2 = 0
+              for _, m in ipairs(ch) do
+                local okM, mp = pcall(m.getPos, m)
+                if okM and mp then
+                  local dx, dy = mp.x - zp.x, mp.z - zp.z
+                  local d2 = dx * dx + dy * dy
+                  if d2 > r2 then r2 = d2 end
+                end
+              end
+              if r2 > 0 then rr = math.sqrt(r2) end
+            end
+            -- Squared distances can be dominated by a far outlier member;
+            -- clamp so the region's size is sane and it still contributes to
+            -- the fit (the fit skips r >= 5000 as "planet-scale").
+            if rr < 600 then rr = 600 end
+            if rr > 4000 then rr = 4000 end
+            out[#out + 1] = {
+              entity = z, major = true, cat = 'station',
+              x = zp.x, y = zp.z, r = rr,
             }
           end
         end
@@ -132,10 +176,22 @@ function GraphProvider.system ()
     return out
   end
 
+  -- Why a node cannot be drilled (for the UI's failed-drill feedback).
+  -- nil = don't flash (childless rock, or a ship that belongs to another view).
+  function P.noDrillReason (entity)
+    if not (entity and entity.hasChildren and entity:hasChildren()) then return nil end
+    if entity.hasActions and entity:hasActions() then return nil end
+    if P.drillable(entity) then return nil end
+    return 'empty'
+  end
+
   -- Drillable: has children AND at least one child can seed (has a body).
   -- Factory socket children (turrets/thrusters) are bodyless -> no drill.
   function P.drillable (entity)
     if not (entity and entity.hasChildren and entity:hasChildren()) then return false end
+    -- Ships drill into components -> that belongs to the ship-systems /
+    -- inventory view, not the sector map. Ships are not drill targets here.
+    if entity.hasActions and entity:hasActions() then return false end
     local okC, ch = pcall(entity.getChildren, entity)
     if not (okC and ch) then return false end
     for _, c in ipairs(ch) do

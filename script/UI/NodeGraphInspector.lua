@@ -6,6 +6,7 @@
 
 local DrawEx = require('UI.DrawEx')
 local Util = require('UI.NodeGraphUtil')
+local ffi = require('ffi')   -- global in-engine, but never rely on that
 
 local NodeGraphInspector = {}
 NodeGraphInspector.__index = NodeGraphInspector
@@ -130,7 +131,16 @@ function NodeGraphInspector:_linesForNode (node)
   self._linesResolved = true
   self._lines = nil
   local mesh = entityMesh(node and node.entity)
-  if not mesh then return nil end
+  if not mesh then
+    -- Representation node (an asteroid field / region): no mesh of its own, so
+    -- draw the aggregate glyph instead of the generic box fallback.
+    if self._repKind == 'field' then
+      local seed = (node.entity and node.entity.id) or node.id or 1
+      self._lines = Util.fieldSchematic(seed, self._repCount)
+      return self._lines
+    end
+    return nil
+  end
   local snap = unitizedMeshCopy(mesh)
   if not snap then return nil end
   local okI, icnt = pcall(function () return snap:getIndexCount() end)
@@ -172,7 +182,22 @@ end
 function NodeGraphInspector:show (node)
   self.active = true
   self.node = node
-  if self._linesNode ~= node then self._linesResolved = false end
+  if self._linesNode ~= node then
+    self._linesResolved = false
+    -- Classify representations once per selection (drives both the glyph and
+    -- the stat block): 'field' + member count for an aggregate, else nil.
+    self._repKind, self._repCount = Util.repKind(node and node.entity)
+    -- Range from the player: the map's absolute `pos` is not a usable
+    -- navigation number, so every non-player selection also gets a dist/range.
+    self._range = nil
+    local owner = self.owner
+    local pe = owner and owner.focusEntity
+    local e = node and node.entity
+    if pe and e and e ~= pe then
+      local d3, plane, dy = Util.rangeBetween(e, pe)
+      if d3 then self._range = { d3 = d3, plane = plane, dy = dy } end
+    end
+  end
 end
 
 function NodeGraphInspector:hide ()
@@ -181,6 +206,7 @@ function NodeGraphInspector:hide ()
   self._linesNode = nil
   self._linesResolved = false
   self._lines = nil
+  self._repKind, self._repCount = nil, nil
 end
 
 -- Screen-space (px) draw. x,y = canvas origin; sx,sy = canvas size. The panel
@@ -226,6 +252,22 @@ function NodeGraphInspector:draw (x, y, sx, sy, now)
   local okS, scaleVal = pcall(function () return e and e.getScale and e:getScale() or nil end)
   if okS and scaleVal then line('scale ' .. Util.fmtShort(scaleVal), TEXT) end
   line(Util.kindTag(e), HEAD)
+  -- Representation nodes have no scale; the meaningful number is what they
+  -- stand for (an asteroid field's member count).
+  if self._repKind == 'field' and self._repCount then
+    line(string.format('%d asteroids', self._repCount), HEAD)
+  end
+  -- Range from 'YOU' (map-plane distance, plus the true range when the
+  -- vertical separation actually matters).
+  if self._range then
+    local r = self._range
+    local txt = 'dist ' .. Util.fmtShort(r.plane) .. ' u from you'
+    if math.abs(r.d3 - r.plane) > 0.05 * math.max(1, r.d3) then
+      txt = 'dist ' .. Util.fmtShort(r.plane) .. ' u (map)   rng ' ..
+            Util.fmtShort(r.d3) .. ' u'
+    end
+    line(txt, TEXT)
+  end
 
   -- Health bar: narrowed (was full-width and overlapped the vector view),
   -- kept above the image on its own row.
