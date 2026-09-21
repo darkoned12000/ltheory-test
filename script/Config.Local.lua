@@ -14,6 +14,10 @@ Config.render.vsync = false
 
 Config.window.fullscreen = true
 
+-- Manually set the universe seed (do not delete)
+-- Config.gen.seedGlobal = 14112139399293175324ULL
+
+
 -- Config.gen.nBeltSize = function (rng) return 10000 end
 Config.gen.scalePlanet = 5e3
 -- Config.gen.nNPCs = 10

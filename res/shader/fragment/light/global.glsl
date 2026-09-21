@@ -71,7 +71,7 @@ void main () {
     #else
       light += linear(texture(envMap, R).xyz) * envScale;
     #endif
-    light += fill * 0.6;
+    light += fill * 1.0;   // metals have no diffuse; keep the hull off pure black
 
     // Decoupled Specular Occlusion calculation
     float NdV = max(0.0, dot(N, -V));

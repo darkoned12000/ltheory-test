@@ -36,6 +36,8 @@ Config.gen = {
   nNPCs      = 0,
   nNPCsNew   = 0,
   nPlanets   = 1,
+  -- Moons per planet (planets-work Phase B).
+  nMoons     = function (rng) return rng:getInt(0, 3) end,
   nBeltSize  = function (rng) return 0 end, -- Asteroids per planetary belt
   nThrusters = 1,
   nTurrets   = 2,
@@ -122,6 +124,50 @@ Config.render = {
   -- override in Config.Local.lua to opt in.
   multithread      = false,
   workers          = 0,  -- worker threads for batch build (0 = auto via core count, clamped 1..8)
+
+  -- Planet axial spin (planets-work Phase A). Angle accrued in the planet's
+  -- update; deterministic per seed. spin = false restores fully static planets.
+  planet = {
+    spin      = true,
+    spinSpeed = function (rng) return rng:getUniformRange(0.01, 0.05) end,  -- rad/s
+
+    -- Surface TYPES (planets). Picked per seed by weight; each drives the
+    -- generator, palette, ocean level and atmosphere, so a planet's "biome" IS
+    -- its type. `weather` is the cloud chance (Phase C, not wired yet).
+    --   ocean = waterline range | atmo = atmosphere scale (0 = none/airless)
+    --   hue/sat/light = palette ranges (light ramps toward peaks)
+    -- forceType = 'terrestrial' pins every planet's type for auditioning
+    -- (override in Config.Local.lua); nil = weighted per-seed pick.
+    forceType = 'desert', -- default is nil
+    types = {
+      { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 },
+        hue = { 0.18, 0.46 }, sat = { 0.12, 0.34 }, light = { 0.11, 0.40 }, crater = 0.45 },
+      { name = 'ocean',       weight = 14, gen = 'gen/planet', ocean = { 0.62, 0.92 }, atmo = 1.15, weather = 0.70, mountain = 0.45, atmoTint = { 0.90, 1.00, 1.10 },
+        hue = { 0.50, 0.62 }, sat = { 0.18, 0.40 }, light = { 0.14, 0.30 }, crater = 0.08 },
+      { name = 'desert',      weight = 14, gen = 'gen/planet', ocean = { 0.00, 0.03 }, atmo = 1.03, weather = 0.08, mountain = 0.70, atmoTint = { 1.40, 0.95, 0.55 },
+        hue = { 0.04, 0.12 }, sat = { 0.20, 0.45 }, light = { 0.10, 0.44 }, crater = 0.90 },
+      { name = 'ice',         weight = 14, gen = 'gen/planet', ocean = { 0.15, 0.55 }, atmo = 1.05, weather = 0.40, mountain = 0.70, atmoTint = { 0.90, 0.98, 1.12 },
+        hue = { 0.55, 0.66 }, sat = { 0.05, 0.18 }, light = { 0.22, 0.55 }, crater = 0.55 },
+      { name = 'barren',      weight = 18, gen = 'gen/moon',   ocean = { 0.00, 0.00 }, atmo = 0.0,  weather = 0.00,
+        hue = { 0.05, 0.10 }, sat = { 0.02, 0.16 }, light = { 0.06, 0.22 },
+        freqBase = 6, powerBase = 1.0, powerVar = 1.0 },
+      { name = 'lava',        weight =  8, gen = 'gen/planet', ocean = { 0.00, 0.00 }, atmo = 1.04, weather = 0.15, mountain = 1.00, atmoTint = { 1.60, 0.60, 0.32 },
+        hue = { 0.00, 0.04 }, sat = { 0.25, 0.55 }, light = { 0.05, 0.14 }, crater = 0.30 },
+    },
+
+    -- Moons (Phase B). Sizes/radii are multiples of the PARENT radius, so big
+    -- planets get big, distant moons. Speeds are slow: a full orbit takes
+    -- minutes, not seconds.
+    moon = {
+      orbitSpeed  = function (rng) return rng:getUniformRange(0.004, 0.018) end,  -- rad/s
+      scale       = function (rng) return rng:getUniformRange(0.03, 0.14) end,    -- x parent radius
+      orbit       = function (rng) return rng:getUniformRange(1.6, 3.2) end,      -- x parent radius
+      orbitMax    = 220000,   -- absolute cap (world units): keeps moons clear of the
+                              -- 1e6 far plane, so they can't clip out as you fly
+      inclination = function (rng) return rng:getUniformRange(-0.6, 0.6) end,     -- rad
+      roll        = function (rng) return rng:getUniform() * 2 * math.pi end,     -- rad
+    },
+  },
 }
 
 -- Window setup at launch (consumed by Application:run). ``width``/``height`` set
@@ -198,6 +244,7 @@ Config.gpu = {
   nebulaQuality  = 'High',     -- Off | Low | Medium | High (steps 8/16/24, evals 2/2/3)
   nebulaDebug    = 'Composite',      -- Off | Density | Transmittance | Lighting | Steps | Anchors
   nebulaDensity  = 1,          --   medium master gain (0..4)
+  nebulaJitter   = 0.05,       --   ray-start dither in steps (0 = none; speckle knob)
   nebulaBackground = 1,        --   everywhere-field presence (0..1.5, anchors unaffected)
   nebulaCoverage = 1,          --   bank size/density multiplier (0.25..2.5)
   nebulaRadius   = 12000,      --   max march distance, world units
@@ -230,7 +277,7 @@ Config.gpu = {
   -- hardcoded starColor (1, 0.5, 0.1) used by planet atmospheric scattering.
   sunLight        = true,  -- directional + dust backlight contribution
   sunIntensity    = 1,     --   direct/ambient brightness (0..6)
-  sunAmbientFill  = 0.3,   --   hemisphere fill so shadows aren't pure black; lifted
+  sunAmbientFill  = 0.42,  --   hemisphere fill so shadows aren't pure black; lifted
                            --   from 0.12 so GTAO (ambient-only) has visible contrast
                            --   (ao_on==ao_off composite measured 2026-09-10)
   sunWarmth       = 1,     --   1 = warm orange (matching starColor), 0 = white

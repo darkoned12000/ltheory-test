@@ -90,6 +90,7 @@ local SETTINGS = {
   { kind = 'enum',  key = 'nebula.debug',   label = ' - Debug View', default = 1,
     options = { 'Off', 'Density', 'Transmittance', 'Lighting', 'Steps', 'Anchors' }, gpu = 'nebulaDebug' },
   { kind = 'float', key = 'nebula.density', label = ' - Density',    default = 1, min = 0, max = 4, gpu = 'nebulaDensity' },
+  { kind = 'float', key = 'nebula.jitter',  label = ' - Ray Jitter', default = 0.05, min = 0, max = 1, gpu = 'nebulaJitter' },
   { kind = 'float', key = 'nebula.background', label = ' - Background', default = 1, min = 0, max = 1.5, gpu = 'nebulaBackground' },
   { kind = 'float', key = 'nebula.coverage', label = ' - Coverage',  default = 1, min = 0.25, max = 2.5, gpu = 'nebulaCoverage' },
   { kind = 'float', key = 'nebula.radius',  label = ' - Radius',     default = 12000, min = 500, max = 40000, gpu = 'nebulaRadius' },
@@ -715,7 +716,7 @@ end
 function Renderer:volume (med)
   local q = Settings.get('nebula.quality') or 1
   if q <= 1 then return end
-  local steps = { 8, 16, 24 }
+  local steps = { 8, 16, 32 }
   local evals = { 2, 2, 3 }
   local stepF = steps[q - 1] or 16
   local evalF = evals[q - 1] or 2
@@ -829,10 +830,11 @@ function Renderer:volume (med)
       Shader.SetFloat('volSteps',   stepF)
       Shader.SetFloat('volDist',    volDist)
       Shader.SetFloat('volEvals',   evalF)
+      Shader.SetFloat('volJitter',  Settings.get('nebula.jitter') or 0.05)
       Shader.SetFloat3('volFlow', 40 * fx / fl, 40 * fy / fl, 40 * fz / fl)
       Shader.SetFloat('volTime',    volTime)
       Shader.SetFloat('volCount',   volCount)
-      if volCount > 0 then Shader.SetTex2D('texAnchors', self.texAnchors) end
+      if volCount > 0 and self.texAnchors then Shader.SetTex2D('texAnchors', self.texAnchors) end
       Shader.SetFloat('volAniso',   volAniso)
       Shader.SetFloat3('volTint', tintR, tintG, tintB)
       Shader.SetFloat('volTintAmt', tintAmt)
@@ -862,7 +864,7 @@ function Renderer:volume (med)
       Shader.SetFloat('volDist',    volDist)
       Shader.SetFloat('volEvals',   evalF)
       Shader.SetFloat('volCount',   volCount)
-      if volCount > 0 then Shader.SetTex2D('texAnchors', self.texAnchors) end
+      if volCount > 0 and self.texAnchors then Shader.SetTex2D('texAnchors', self.texAnchors) end
       Shader.SetFloat3('volFlow', 40 * fx / fl, 40 * fy / fl, 40 * fz / fl)
       Shader.SetFloat('volTime',    volTime)
       Shader.SetFloat3('volTint', tintR, tintG, tintB)
@@ -899,7 +901,7 @@ function Renderer:godrays (med)
   local volDist = Settings.get('nebula.radius') or 12000
   local q = Settings.get('nebula.quality') or 1
   if q <= 1 then q = 2 end
-  local steps = { 8, 16, 24 }
+  local steps = { 12, 24, 40 }
   local evals = { 2, 2, 3 }
   local stepF = steps[q - 1] or 8
   local evalF = evals[q - 1] or 2
@@ -911,6 +913,9 @@ function Renderer:godrays (med)
                               Settings.get('nebula.tintG') or 1,
                               Settings.get('nebula.tintB') or 1
 local volCount = med.anchors and #med.anchors or 0
+  -- Nebula Off => Renderer:volume() early-returns and never creates texAnchors.
+  -- Must not bind a nil texture (and the shader must skip the anchor loop).
+  if not self.texAnchors then volCount = 0 end
   local godA = Settings.get('postfx.godrays.g') or 0.92
   local strength = Settings.get('postfx.godrays.strength') or 1
   local godMode = (Settings.get('postfx.godrays.debug') or 1) - 1
@@ -933,7 +938,7 @@ local volCount = med.anchors and #med.anchors or 0
       Shader.SetFloat3('volFlow', 40 * fx / fl, 40 * fy / fl, 40 * fz / fl)
       Shader.SetFloat('volTime',    volTime)
       Shader.SetFloat('volCount',   volCount)
-      if volCount > 0 then Shader.SetTex2D('texAnchors', self.texAnchors) end
+      if volCount > 0 and self.texAnchors then Shader.SetTex2D('texAnchors', self.texAnchors) end
       Shader.SetFloat3('volTint', tintR, tintG, tintB)
       Shader.SetFloat('volTintAmt', tintAmt)
       Shader.SetFloat('godA', godA)

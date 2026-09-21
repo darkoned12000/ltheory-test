@@ -18,6 +18,7 @@ uniform sampler2D texDepth;  /* zBufferL (linear eye distance) */
 uniform sampler2D texNoise;  /* 64x64 blue-noise LUT */
 uniform vec3      sunColor;  /* sun radiance */
 uniform float     volAniso;  /* Henyey-Greenstein g (-1..1) */
+uniform float     volJitter; /* ray-start jitter, in steps (0 = none) */
 
 /* Lightning storm flash sources (fog-nebula Phase 4). Bounded 2D float table
  * mirroring texAnchors, ≤ lightningCount rows:
@@ -72,10 +73,10 @@ void main () {
   // Multiplicative tint filter (1.0, 1.0, 1.0 = neutral pass-through)
   vec3 tintFilter = mix(vec3(1.0), volTint, volTintAmt);
 
-  for (int i = 0; i < 24; ++i) {
+  for (int i = 0; i < 48; ++i) {
     if (float(i) + 0.5 >= volSteps) break;
 
-    vec3 p = ro + rd * min((float(i) + bn) * step, tCap);
+    vec3 p = ro + rd * min((float(i) + 0.5 + (bn - 0.5) * volJitter) * step, tCap);
     vec4 mc = mediumCloud(p);
     float rho = mc.x;
 
@@ -83,7 +84,16 @@ void main () {
       float ndl = dot(rd, normalize(starDir));
 
       // Illumination = (Sun Radiance + Ambient Skybox Starlight) * Plume Palette * Tint Filter
-      vec3 light = (sunColor * hgPhase(ndl) + texture(irMap, rd).xyz) * mc.yzw * tintFilter;
+      //
+      // Ambient starlight comes from the IR cube at a HIGH mip. LOD 0 still
+      // carries bright point features (stars), and sampling it per pixel mapped
+      // each one to a dot on screen -> dots landed on planets ("light shining
+      // through the planet"). A blurred LOD gives a smooth ambient instead.
+      // (GenIRMap mipmaps, so this is well-defined.)
+      vec3 ambient = textureLod(irMap, rd, 6.0).xyz;
+      vec3 light = (sunColor * hgPhase(ndl) + ambient) * mc.yzw * tintFilter;
+      // Also bound the per-sample radiance so no direction can spike.
+      light = min(light, vec3(3.0));
 
       /* Lightning storm flash — bounded point-light loop (≤6, no branch on count) */
       for (int L = 0; L < 6; ++L) {

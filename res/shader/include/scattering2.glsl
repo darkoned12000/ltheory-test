@@ -9,6 +9,7 @@ uniform samplerCube cloudCube;
 uniform sampler3D cloudNoise;
 uniform float rPlanet;
 uniform float rAtmo;
+uniform vec3  atmoTint;   // per-type atmosphere colour (scales Rayleigh)
 
 vec2 rsi(vec3 ro, vec3 rd, float sr) {
   float a = dot(rd, rd);
@@ -207,7 +208,7 @@ vec4 atmosphereDefault(vec3 rd, vec3 ro) {
     22.0,
     1.0,
     rAtmo / rPlanet,
-    kRayleigh,
+    kRayleigh * atmoTint,
     kMie,
     atmoScale * hRayleigh,
     atmoScale * hMie,

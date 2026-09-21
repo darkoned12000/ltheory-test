@@ -27,7 +27,13 @@ uniform sampler2D texAnchors;/* RGBA32F rows per anchor                  */
  * presence only (anchors keep their Lua density); without it, a density gain
  * high enough for thick banks also turns the whole sky into drifting wash. */
 float mediumDensity (vec3 p) {
-  p += volFlow * volTime;
+  // Bounded drift. A true unbounded translation (volFlow * volTime) grows the
+  // sample coordinate without limit; noise() hashes with sin(), which loses
+  // precision past ~1e4 and degenerates into a stipple (the "green speckle").
+  // volTime is also absolute (~1.8e6 s), so the offset hit ~6e7 immediately.
+  // Wrap the phase and sway within a bounded range instead.
+  float driftT = mod(volTime, 300.0);
+  p += volFlow * (10.0 * sin(driftT * 0.02) + 6.0 * sin(driftT * 0.0071 + 1.7));
   float a = valueNoise(p * 0.0004);
   float b = valueNoise(p * 0.002);
   float d = smoothstep(0.42, 0.62, 0.66 * a + 0.34 * b);
@@ -120,7 +126,7 @@ float mediumOpticalDepth (vec3 ro, vec3 rd, float tCap) {
   float step = tCap / max(1.0, volSteps);
   float od = 0.0;
   if (step <= 0.0) return 0.0;
-  for (int i = 0; i < 24; ++i) {
+  for (int i = 0; i < 48; ++i) {
     if (float(i) + 0.5 >= volSteps) break;
     od += mediumCloud(ro + rd * (float(i) + 0.5) * step).x * step;
   }

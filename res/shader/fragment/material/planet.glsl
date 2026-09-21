@@ -16,6 +16,7 @@ uniform vec3 color3;
 uniform vec3 color4;
 uniform float heightMult;
 uniform float oceanLevel;
+uniform float hasAtmo;      // 1 = planet (scatter), 0 = airless moon/barren
 
 const float kSpecular = 1.0;
 const vec3 kOceanColor = vec3(0.01, 0.13, 0.20);
@@ -76,14 +77,21 @@ void main() {
   float h1 = heightFn(map.x, 6, 0.70);
   float h2 = heightFn(map.x, 3, 0.20);
 
-  vec3 color = mix(color1, color2, h1);
+  // 4-stop biome ramp: low -> mid -> high -> peak (snow/ice caps etc.).
+  vec3 color = mix(color1, color2, smoothstep(0.0, 0.45, h1));
+  color = mix(color, color3, smoothstep(0.45, 0.75, h1));
+  color = mix(color, color4, smoothstep(0.75, 1.0, h1));
   color = 1.0 - exp(-pow2(3.0 * color));
   color *= visibility(surface, vertPos, 6, 0.70, h1, 0.002, 2.0, dist);
-  color = mix(color, kOceanColor, 1.0 - exp(-sqrt(16.0 * max(0.0, h2 - 0.8))));
+  // Waterline from the planet TYPE: oceanLevel 0 = no water, 1 = all water.
+  float waterline = 1.0 - clamp(oceanLevel, 0.0, 1.0);
+  color = mix(color, kOceanColor, 1.0 - exp(-sqrt(16.0 * max(0.0, h2 - waterline))));
   color *= light;
 
-  vec4 atmo = atmosphereDefault(V, eye - origin);
-  color = atmo.xyz + color * (1.0 - atmo.w);
+  if (hasAtmo > 0.5) {
+    vec4 atmo = atmosphereDefault(V, eye - origin);
+    color = atmo.xyz + color * (1.0 - atmo.w);
+  }
 
   if (isnan(color.r) || isnan(color.g) || isnan(color.b)) {
     color = vec3(0.0);

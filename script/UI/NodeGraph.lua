@@ -117,6 +117,7 @@ function NodeGraph:seedFromSystem ()
       -- P1.1: stamp drillability ONCE per node (it is stable; recomputing per
       -- frame would pcall over children for every entity). Drives the UI tell.
       if n.drillable == nil then n.drillable = self.provider.drillable(e) end
+      if u.context then n.isContext = true end
     end
   end
   for id, n in pairs(self.nodes) do
@@ -151,10 +152,11 @@ function NodeGraph:seedFromSystem ()
       -- collapse the field into a pixel pile. Planets (r >= 5000) are excluded
       -- up front (they still draw as edge arrows). Trimmed outliers stay
       -- reachable as edge indicators.
+      -- Fit ALL nodes: the robust p90 trim below already drops far outliers,
+      -- so the old `r < 5000` "planet-scale" exclusion is obsolete — and it
+      -- broke moon levels (moons are r >= 5000 too, leaving an empty fit).
       local fitSet = {}
-      for _, n in pairs(self.nodes) do
-        if (n.r or 0) < 5000 then fitSet[#fitSet + 1] = n end
-      end
+      for _, n in pairs(self.nodes) do fitSet[#fitSet + 1] = n end
       local nFit = #fitSet
       if nFit > 0 then
         local xs, ys = {}, {}
@@ -256,6 +258,16 @@ function NodeGraph:onUpdate (state)
     -- zoom anchor — the only camera motion during a locked gesture is
     -- applyScroll pinning its screen position exactly. Any ease here would
     -- fight the pin and walk the node away ("works, then drifts").
+    -- Follow the selection: a selected body that MOVES (an orbiting moon, a
+    -- flying ship) would otherwise drift out of the centred view. Exact
+    -- assignment, not an ease — an ease would fight applyScroll's screen pin
+    -- and reintroduce the old "works, then drifts" behaviour.
+    if self.follow then
+      local fn = self.nodes[self.follow]
+      if fn then
+        self.pos.x, self.pos.y = fn.x + (fn.jx or 0), fn.y + (fn.jy or 0)
+      end
+    end
     if self.targetZoom then
       local fn = self.follow and self.nodes[self.follow] or nil
       if fn then
@@ -760,6 +772,18 @@ function NodeGraph:onDraw (focus, active)
         local ring = selected and cSelected or (n.color or cNode)
         DrawEx.Ring(nx, ny, r, ring)
         DrawEx.Point(nx, ny, r * 0.35, selected and cLabel or cCore)
+        if n.isContext then
+          -- The body you drilled INTO: an outer ring so it reads as "here".
+          DrawEx.Ring(nx, ny, r * 1.7, cCore)
+        end
+        -- True physical extent: a huge planet's CENTRE can be far from a ship
+        -- hugging its surface, so draw the body's real radius as a faint ring
+        -- ("close to the surface" then reads as close on the map).
+        local pr = (n.r or 0) * self.zoom
+        if pr > r + 6 then
+          if pr > 600 then pr = 600 end
+          DrawEx.Ring(nx, ny, pr, { r = cNode.r, g = cNode.g, b = cNode.b, a = 0.20 })
+        end
         if n.drillable and (n.major or selected) then
           -- "There is more inside": small + at the ring's lower-right.
           local gx, gy = nx + r + 7, ny + r + 7

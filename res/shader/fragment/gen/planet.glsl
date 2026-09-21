@@ -9,6 +9,8 @@ uniform float seed;
 uniform float freq;
 uniform float power;
 uniform vec4 coef;
+uniform float mountain;   // ridge amplitude (0 = featureless, 1 = strong ranges)
+uniform float crater;     // impact-crater amplitude (0 = none)
 
 float genClouds(vec3 p) {
   p += 0.5 * vec3(
@@ -37,6 +39,34 @@ float genColor(vec3 p) {
   return 0.5 + 0.5 * sin(4.0 * a);
 }
 
+// Ridged multifractal: sharp crests, for mountain ranges (unlike the smooth
+// sine-bandpass base terrain). Amplitude is scaled by `mountain` per type.
+float genRidge (vec3 p) {
+  float acc = 0.0, w = 1.0, f = max(1.0, freq);
+  for (int i = 0; i < 6; ++i) {
+    float n = 1.0 - abs(2.0 * cellNoise(p * f, seed + 3.7 + float(i) * 13.0) - 1.0);
+    acc += w * n * n * n;   // sharper crests => more pronounced ranges
+    w *= 0.5;
+    f *= 2.07;
+  }
+  return clamp(acc, 0.0, 1.0);
+}
+
+// Impact craters / basins: a cell field gives pit centres; a bowl + raised rim
+// profile carves them (subtler that gen/moon's — planets have weather).
+float genCraters (vec3 p) {
+  float c = 0.0, amp = 1.0, f = max(1.0, freq) * 1.15;
+  for (int i = 0; i < 4; ++i) {
+    float d = cellNoise(p * f + vec3(seed), seed + 5.1 + float(i) * 11.0);
+    float bowl = smoothstep(0.0, 0.35, d);          // 0 at the pit centre
+    float rim  = 1.0 - smoothstep(0.35, 0.5, d);    // raised ring at the edge
+    c += amp * (rim * 0.35 - (1.0 - bowl) * 0.9);   // deep bowl + rim
+    amp *= 0.5;
+    f *= 2.3;
+  }
+  return c;
+}
+
 float genHeight(vec3 p) {
   // Pre-scaled initial vector
   vec4 z = vec4(p * 0.25 + 0.75, 0.3);
@@ -56,7 +86,14 @@ float genHeight(vec3 p) {
     l = m;
   }
   float baseVal = max(0.0, 0.5 + 0.5 * sin(freq * a));
-  return gain(pow(baseVal, max(0.01, power)), 4.0);
+  float base = gain(pow(baseVal, max(0.01, power)), 4.0);
+  // Mountains on top of the continents. mountain=0 returns the base exactly;
+  // larger mountain lifts ridges toward the top of the range WITHOUT exceeding
+  // it (so raising the amplitude adds relief instead of clipping flat peaks).
+  float ridge = genRidge(p);
+  float h = base + mountain * ridge * (1.0 - base);
+  h += crater * genCraters(p);
+  return clamp(h, 0.0, 1.0);
 }
 
 void main() {

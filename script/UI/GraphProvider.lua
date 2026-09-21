@@ -138,6 +138,24 @@ function GraphProvider.system ()
         end
       end
     end
+    -- The drill parent itself (non-root levels): keep the body you drilled
+    -- into visible at the centre, so its satellites read in context
+    -- ("the planet, with moons slowly orbiting it").
+    if not isRoot then
+      local already = false
+      for i = 1, #out do if out[i].entity == ctx then already = true break end end
+      if not already then
+        local okP, p = pcall(ctx.getPos, ctx)
+        if okP and p then
+          local okS, s = pcall(ctx.getScale, ctx)
+          out[#out + 1] = {
+            entity = ctx, major = true, cat = 'station',
+            x = p.x, y = p.z, r = (okS and type(s) == 'number') and s or 1,
+            context = true,
+          }
+        end
+      end
+    end
     return out
   end
 

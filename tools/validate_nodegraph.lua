@@ -367,7 +367,11 @@ do
 
   -- zone context: members are parented to the SYSTEM, yet must seed
   local zunits = P.children(zone, false)
-  ok(#zunits == 6, 'region: drilling the zone reveals its members (parent is the system)')
+  ok(#zunits == 7, 'region: drilling the zone reveals its members + the zone (context)')
+  local ctxUnit = nil
+  for _, u in ipairs(zunits) do if u.entity == zone then ctxUnit = u end end
+  ok(ctxUnit ~= nil and ctxUnit.context == true,
+     'region: the drilled zone is kept as the context node (visible at the centre)')
 end
 
 -- 8. Ships are not map drill targets (that is the ship-systems view) ---------

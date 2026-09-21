@@ -63,7 +63,9 @@ void main () {
     if (wsum > 1e-4) {
       vol = acc / wsum;
     } else {
-      vol = texelFetch(texVol, pH, 0);
+      // Depth boundary: can't gather across it. A BILINEAR half-res tap (not a
+      // nearest fetch) keeps the fine blue-noise grain from showing raw here.
+      vol = texture(texVol, uv);
     }
 
     vec3 scene = texture(texScene, uv).xyz;
@@ -99,7 +101,7 @@ void main () {
   vec2 sec = cloudSection(worldOrigin, normalize(worldDir), tCap);
   float od = 0.0;
   float ds = (sec.y - sec.x) / max(1.0, volSteps);
-  for (int i = 0; i < 24; ++i) {
+  for (int i = 0; i < 48; ++i) {
     if (float(i) + 0.5 >= volSteps) break;
     od += anchorEnvelope(worldOrigin + normalize(worldDir) * (sec.x + (float(i) + 0.5) * ds)) * ds;
   }

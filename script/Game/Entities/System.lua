@@ -283,8 +283,45 @@ function System:spawnPlanet ()
   local scale = 1e5 * rng:getErlang(2)
   planet:setPos(pos)
   planet:setScale(scale)
+  planet:setName(genName(rng))
   self:addChild(planet)
+
+  -- Moons (planets-work Phase B): a few per planet, orbiting + tidally locked.
+  local nMoons = Config.gen.nMoons and Config.gen.nMoons(rng) or 0
+  for i = 1, nMoons do self:spawnMoon(planet, i) end
+  print(format('[system] planet %s  type=%s  moons=%d  radius=%.0f',
+    planet:getName(), tostring(planet.typeName), nMoons, scale))
   return planet
+end
+
+local kRoman = { 'I', 'II', 'III', 'IV', 'V', 'VI' }
+
+-- A moon is a Planet in a lower detail band that orbits (and faces) its parent.
+function System:spawnMoon (planet, index)
+  local rng = self.rng
+  local cfg = Config.render.planet.moon
+  local radius = math.min(planet:getScale() * cfg.orbit(rng), cfg.orbitMax or math.huge)
+  -- Never inside the planet: a huge planet's radius can exceed orbitMax.
+  radius = math.max(radius, planet:getScale() * 1.5)
+  local moon = Entities.Planet(rng:get64(), {
+    detail      = 4,
+    cubeRes     = 512,
+    mass        = 100,
+    parent      = planet,
+    orbitRadius = radius,
+  })
+  moon:setScale(planet:getScale() * cfg.scale(rng))
+  moon:setName(planet:getName() .. ' ' .. (kRoman[index] or tostring(index)))
+  moon:setPos(planet:getPos() + Vec3f(radius, 0, 0))
+  -- Parent the moon to its PLANET (not the system) so the map groups it under
+  -- the planet (revealed by drilling, like zone members) instead of stranding
+  -- it far off-screen as its own node. The planet shares the system physics
+  -- world so the moon's body still enters the simulation, and `addChildren`
+  -- enables event forwarding (Update/Render) down to the moon.
+  if not planet.children then planet:addChildren() end
+  if not planet.physics then planet.physics = self.physics end
+  planet:addChild(moon)
+  return moon
 end
 
 function System:spawnShip ()

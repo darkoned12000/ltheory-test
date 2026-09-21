@@ -61,12 +61,17 @@ function LTheory:generate ()
       local sp       = controlling:getPos()
       local dx, dy, dz = sp.x - center.x, sp.y - center.y, sp.z - center.z
       local dist     = math.sqrt(dx * dx + dy * dy + dz * dz)
-      if dist < Config.gen.planetViewDist then
-        local nx, ny, nz = dx / dist, dy / dist, dz / dist
+      -- Clear by at least the planet SURFACE: planetViewDist alone let a huge
+      -- planet (radius 343812 > 250000) spawn the ship INSIDE it -> Bullet
+      -- "Overflow in AABB" -> ship destroyed -> the getRoot() crash.
+      local clear = math.max(Config.gen.planetViewDist, planet:getScale() * 1.35)
+      if dist < clear then
+        local nx, ny, nz = 0, 0, 1
+        if dist > 1e-3 then nx, ny, nz = dx / dist, dy / dist, dz / dist end
         controlling:setPos(Vec3f(
-          center.x + nx * Config.gen.planetViewDist,
-          center.y + ny * Config.gen.planetViewDist,
-          center.z + nz * Config.gen.planetViewDist))
+          center.x + nx * clear,
+          center.y + ny * clear,
+          center.z + nz * clear))
       end
     end
   end
@@ -144,7 +149,10 @@ function LTheory:onInput ()
 end
 
 function LTheory:onUpdate (dt)
-  self.player:getRoot():update(dt)
+  -- getRoot() is nil with no controlling ship, and a DESTROYED ship detaches
+  -- from the tree (no `update`). Guard so a bad spawn can't kill the process.
+  local root = self.player and self.player:getRoot()
+  if root and root.update then root:update(dt) end
   self.canvas:update(dt)
 end
 
