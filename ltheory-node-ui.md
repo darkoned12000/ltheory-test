@@ -628,6 +628,52 @@ Verified in-engine: the `Rine Field` node reports `kind=field count=60` and yiel
 
 The status block only showed absolute `pos`, which is unusable for navigation; nothing was measured relative to the player. Added `NodeGraphUtil.rangeBetween(a, b)` -> `(d3, plane, dy)` (true range incl. vertical / X-Z map separation / signed vertical), and the inspector now shows `dist <plane> u from you` for any selection that isn't the player, switching to `dist <plane> u (map)  rng <d3> u` when the vertical separation is material (>5%). The player's own node shows no range line. Verified in-engine: `Rine Field` -> `dist 213.8k u from you`; player -> nil. 70/70 node checks.
 
+## 18. Navigation additions (2026-09-20) — the "useful map" batch
+
+All six follow-ups from the map-usability review. Pure logic lives in
+`NodeGraphUtil` so it is unit-tested; the drawing/keys live in `NodeGraph` /
+`NodeGraphInspector`.
+
+1. **Symbol key.** `drawSymbolKey` renders a bottom-row key decoding the visual language the text legend never explained: you (white ring), selected (red ring), place (blue ring), rock (dot), trade (dashed), mine (dim line), drillable (`+`). The text legend below it still covers keys/filters.
+2. **`Home` = centre on YOU, `End` = re-fit.** `centerOnPlayer()` selects/follows the player's node and snaps the camera to it; `refit()` clears the fit flag so the next seed recomputes pos/zoom and the compression frame.
+3. **Bearing relative to heading.** `NodeGraphUtil.relativeBearing(fx,fz,dx,dz)` -> degrees in the map plane (0 = ahead, +starboard, 180 = astern, 270 = port); `bearingLabel` -> 8-way word (FWD / FWD-STBD / ...). The inspector shows `brg NNN deg  LABEL`.
+4. **Persistent lock readout.** A top-centre panel (`label  distance u  bearing`) is drawn whenever a node is focused, so range/bearing read without the inspector.
+5. **Cursor readout.** Bottom-left shows the world `x`/`z` under the pointer plus `d` (range from YOU), via `toCanvas` (warp-exact inverse).
+6. **Edge tooltip range.** The route hover readout now appends the endpoint separation in world units.
+
+Shared seam: `NodeGraphUtil.navTo(target, player)` -> `{ d3, plane, dy, bearing }`, used by both the inspector and the lock readout so they cannot disagree. All readings are LIVE (recomputed per frame — the player and targets move); only the representation classification is cached per selection.
+
+Verified in-engine: player heading `(0,0,-1)`, `Rine Field` -> `dist 213.8k u`, `brg 249.3 PORT` (matches the raw X/Z offset). 80/80 node checks (new §13: bearing quadrants/wrap/degenerate + `navTo`), 136/0 shaders, clean boot with the map open.
+
+## 19. Distance compression removed; map is 1:1 (2026-09-20)
+
+Symptom: with nothing selected, zoom out until the nodes overlap, then zoom in — the nodes stopped responding and flew off-screen; F10 did not recover it.
+
+Root cause (reproduced in the validator): the screen-space warp reference (`_dRef * zoom`) is clamped to 1px, so at deep zoom-out the warp is extremely compressive and its **inverse is unbounded**. `applyScroll` solved the anchor through `toCanvas`/`_unwarp`, so it wrote enormous world coordinates into `pos` (measured `-5.5e7` on the way out, `2.3e8` after zooming back in) and every node projected to ~`1e8 px`. Even short of divergence, the warp *fading* with zoom made nodes slide sideways during a zoom, which reads as "nodes don't respond correctly".
+
+Fix (and simplification): the compression is **gone**. The projection is strictly linear 1:1 (`toScreen`/`toCanvas`; `toScreenNode` = base + declutter offset). `applyScroll` zooms about the anchor with linear world-space maths and applies a zoom-out floor of `0.35 x fit zoom` so the view can never collapse into a point. `toCanvas` is now an exact inverse with no solve.
+
+Consequences / decisions:
+- True ranges are reported **textually** (inspector `dist … from you`, top-centre lock readout, cursor readout) — the user's own suggestion, and it is clearer and stable. The scale bar is now exact everywhere (it was only approximate at the compressed overview).
+- The opening fit now frames **all** nodes (robust p90 trim, planets excluded), not just majors: verified `0/94` off-screen on the sector and `5/60` on the Rine Field drill. Without the warp, framing only majors would have left most nodes outside the frame.
+- Removed `_compressT`/`_warp`/`_unwarp`/`_warpRef`/`_viewCentre`/`mapOf`/`unmap`/`mapXY`. The drill frame now carries only `zFit` (the per-level zoom floor).
+- Known trade-off: a truthful 1:1 overview is spread out when the player is very far from everything (the case compression was hiding). Accepted — `Home` recentres on YOU, edge arrows mark off-screen nodes, and ranges are in the readouts. A *bounded, zoom-independent* overview could be reintroduced later if the density is missed, but truthfulness + stability is the better default.
+
+Verified 83/83 node checks (new §14: a 200-scroll zoom-out then zoom-in must keep the camera bounded `<1e6` and all projections finite — the old warp produced ~`1e8`), 136/0 shaders, clean boot with the map open.
+
+## 20. Scale watchlist (2026-09-20) — before loading the map with objects
+
+Current state is solid at tens of nodes. Before populating with 20-50 NPC ships, hundreds of asteroids, warp lanes/wormholes and more stations, these are the known pressure points (read from the code; **not measured yet** — the revisit should profile each):
+
+1. **Trade lanes start a shader PER EDGE.** `DrawEx.Dash` does `Cache.Shader` + `shader:start()` + `BlendMode.Push/Pop` on every call, and the edge loop calls it once per `kind == 'trade'` edge. Hundreds of lanes = hundreds of shader start/stop per frame. **Most likely first cliff.** Fix: one batched dash pass for all edges (or a dash texture on the shared immediate batch).
+2. **Entity set + edges are rebuilt EVERY FRAME.** `onUpdate` calls `seedFromSystem()` and `seedEdges()` unconditionally; both pcall per child / socket / economy job. At hundreds of entities with sockets this is O(n·sockets)/frame of pcall overhead. Fix: dirty-flag the structure (rebuild on add/remove/context change), keep the existing per-node `tx/ty` interpolation for motion.
+3. **`declutter` is O(n²) over majors** (nested 100px overlap test) and the minor fan likewise. Once per fit (a hitch, not per-frame), but it grows with station/ship count. Fix: spatial hash/grid for the separation test.
+4. **No viewport culling.** Every non-hidden node is projected + drawn each frame; off-screen majors also emit an indicator. Points batch cheaply, but rings/labels/indicators add up. Fix: skip nodes outside the canvas (+margin).
+5. **Aggregation is the real answer at density.** Asteroids are already represented *by their Zone* (one region node until drilled) — keep leaning on that: one node per field / convoy / station cluster. New kinds (warp lanes, wormholes) each get a visual style through the provider seam, the way `mine`/`trade` did.
+6. **LOD/labels.** Minor labels already gate on zoom + view-centre proximity, and F5-F8 filter categories; expect to tune the thresholds once real counts land.
+
+Revisit plan: a dev stress scenario spawning the target counts, then `Profiler` the seed / declutter / draw phases; fix **1** and **2** first (they are per-frame), then 3/4 as needed.
+
 ## Appendix A — Reused conventions checklist
 - Fragment header: `#include fragment`; output via redeclared `layout(location=0) out vec4 fragColor;` (matches triangle.glsl). No `#version` line (auto-prepended).
 - DrawEx standalone pattern: PadAndCenter → nil-check shader → PushAdditive → uniforms (`SetFloat/SetFloat2/SetFloat4`) → `Draw.Rect(xMin,yMin,sx,sy)` → stop → Pop.

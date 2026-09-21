@@ -412,16 +412,16 @@ do
   ok(g.nodes[999] ~= nil, 'robust fit: the far outlier is still seeded (draws as an indicator)')
   ok(g.zoom > 0.1,
      'robust fit: far outlier does not collapse the level zoom (cluster stays readable)')
-  ok(g._refC and math.abs(g._refC.x) < 5000,
+  ok(math.abs(g.pos.x) < 5000,
      'robust fit: level centre sits on the cluster, not the outlier')
   local ox, oy = g:toScreenNode(g.nodes[999])
   ok(ox < 0 or oy < 0 or ox > 1000 or oy > 1000,
      'robust fit: the far outlier projects off-screen (edge-indicator territory)')
 end
 
--- 10. Regression: click-centre must use MAP space, not raw world coords -----
--- `self.pos` lives in compressed map space; the press-edge used to snap it to
--- raw n.x/n.y, so clicking a node no longer pulled it to the middle.
+-- 10. Regression: clicking a node centres it and must not drag it -----------
+-- The press-edge centres the camera on the node; a same-frame drag used to
+-- relocate the node instead (the "centre stopped working" regression).
 do
   local root = { hasChildren = function () return true end }
   local fake = {}
@@ -442,7 +442,8 @@ do
   g.x, g.y = 0, 0
   g.getRectGlobal = function () return 0, 0, 1000, 1000 end
   g:seedFromSystem()
-  ok(g:_compressT() < 1, 'click-centre: compression is active at this fit (non-identity)')
+  ok(math.abs(select(1, g:toScreenNode(g.nodes[20])) - 500) > 20,
+     'click-centre: the node starts well off-centre (so the test is meaningful)')
 
   -- Drive the real press-edge path with the cursor exactly on the node.
   local far = g.nodes[20]
@@ -535,6 +536,105 @@ do
   local d0 = U.rangeBetween(body(1, 1, 1), body(1, 1, 1))
   ok(d0 == 0, 'rangeBetween: zero for coincident bodies (the player itself)')
   ok(U.rangeBetween({}, body(0, 0, 0)) == nil, 'rangeBetween: nil when a body has no pos')
+end
+
+-- 13. Bearing + combined nav reading (relative to the player's heading) -----
+do
+  local U = require('UI.NodeGraphUtil')
+  -- Facing +X (map east). Target straight ahead -> 0; to +Z -> 90; -Z -> 270.
+  ok(math.abs(U.relativeBearing(1, 0, 5, 0) - 0) < 1e-6, 'bearing: dead ahead = 0')
+  ok(math.abs(U.relativeBearing(1, 0, 0, 5) - 90) < 1e-6, 'bearing: +Z = starboard 90')
+  ok(math.abs(U.relativeBearing(1, 0, 0, -5) - 270) < 1e-6, 'bearing: -Z = port 270')
+  ok(math.abs(U.relativeBearing(1, 0, -5, 0) - 180) < 1e-6, 'bearing: astern = 180')
+  ok(U.relativeBearing(0, 0, 1, 1) == nil, 'bearing: nil for a degenerate heading')
+  ok(U.relativeBearing(1, 0, 0, 0) == nil, 'bearing: nil for a zero offset')
+  ok(U.bearingLabel(0) == 'FWD' and U.bearingLabel(90) == 'STBD' and
+     U.bearingLabel(180) == 'AFT' and U.bearingLabel(270) == 'PORT' and
+     U.bearingLabel(350) == 'FWD', 'bearingLabel: 8-way words (350 wraps to FWD)')
+
+  -- navTo: heading-relative reading between two bodies, nil for self
+  local player = { getPos = function () return { x = 0, y = 0, z = 0 } end,
+                   getForward = function () return { x = 1, y = 0, z = 0 } end }
+  local target = { getPos = function () return { x = 3, y = 4, z = 0 } end }
+  local nav = U.navTo(target, player)
+  ok(nav and math.abs(nav.plane - 3) < 1e-9 and math.abs(nav.d3 - 5) < 1e-9
+     and math.abs(nav.bearing) < 1e-6, 'navTo: plane/3D/bearing to a target')
+  ok(U.navTo(player, player) == nil, 'navTo: nil for the player itself')
+  ok(U.navTo({}, player) == nil, 'navTo: nil when the target has no position')
+end
+
+
+-- DIAG (temporary)
+do
+  local root = { hasChildren = function () return true end }
+  local fake = {}
+  function fake.children ()
+    local out = {}
+    for i = 1, 8 do
+      out[i] = { entity = { id = i, deleted = false }, major = (i <= 3), cat = 'rock',
+                 x = (i - 4) * 20000, y = (i % 3) * 8000, r = (i <= 3) and 200 or 5 }
+    end
+    return out
+  end
+  function fake.links () return {} end
+  function fake.drillable () return false end
+  local g = NodeGraph.Create(root, { provider = fake })
+  g.x, g.y = 0, 0
+  g.getRectGlobal = function () return 0, 0, 1000, 1000 end
+  g:seedFromSystem()
+  local function log (tag)
+    local xs = {}
+    for id, n in pairs(g.nodes) do
+      local sx, sy = g:toScreenNode(n)
+      xs[#xs + 1] = string.format('%d:(%.0f,%.0f)', id, sx, sy)
+    end
+    table.sort(xs)
+    print(string.format('[DIAG] %-22s zoom=%.6f pos=(%.0f,%.0f)', tag, g.zoom, g.pos.x, g.pos.y))
+    print('[DIAG]   ' .. table.concat(xs, ' '))
+  end
+  log('fit')
+  for _ = 1, 100 do g:applyScroll(-1, 600, 500) end
+  log('out x100')
+  for _ = 1, 100 do g:applyScroll(1, 600, 500) end
+  log('in x100 (same cursor)')
+  for _ = 1, 100 do g:applyScroll(-1, 600, 500) end
+  log('out x100 again')
+  for _ = 1, 100 do g:applyScroll(1, 950, 120) end
+  log('in x100 (edge cursor)')
+end
+
+-- 14. Regression: zoom-out then zoom-in must stay bounded -------------------
+-- The old screen-space warp inverted to enormous world coordinates at deep
+-- zoom-out, flinging the camera to ~1e8 and every node off-screen forever.
+do
+  local root = { hasChildren = function () return true end }
+  local fake = {}
+  function fake.children ()
+    local out = {}
+    for i = 1, 8 do
+      out[i] = { entity = { id = i, deleted = false }, major = (i <= 3), cat = 'rock',
+                 x = (i - 4) * 20000, y = (i % 3) * 8000, r = (i <= 3) and 200 or 5 }
+    end
+    return out
+  end
+  function fake.links () return {} end
+  function fake.drillable () return false end
+  local g = NodeGraph.Create(root, { provider = fake })
+  g.x, g.y = 0, 0
+  g.getRectGlobal = function () return 0, 0, 1000, 1000 end
+  g:seedFromSystem()
+  local fitZoom = g.zoom
+  for _ = 1, 200 do g:applyScroll(-1, 600, 500) end
+  ok(g.zoom >= fitZoom * 0.3, 'zoom: zoom-out is bounded (cannot collapse past the fit)')
+  for _ = 1, 60 do g:applyScroll(1, 600, 500) end
+  ok(math.abs(g.pos.x) < 1e6 and math.abs(g.pos.y) < 1e6,
+     'zoom: in/out cycle keeps the camera bounded (no warp-inverse blowup)')
+  local finite = true
+  for _, n in pairs(g.nodes) do
+    local sx, sy = g:toScreenNode(n)
+    if sx ~= sx or sy ~= sy or math.abs(sx) > 1e9 or math.abs(sy) > 1e9 then finite = false end
+  end
+  ok(finite, 'zoom: node projections stay finite through a zoom cycle')
 end
 
 print(string.format('\n[NodeGraph] %d checks, %d failure(s)', checks, failures))

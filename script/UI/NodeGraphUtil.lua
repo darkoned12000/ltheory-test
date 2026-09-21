@@ -115,6 +115,47 @@ function NodeGraphUtil.rangeBetween (a, b)
          dy
 end
 
+-- Relative bearing from a heading to a target, in the MAP plane (X/Z).
+-- Inputs are raw (unnormalized) forward and offset components. Returns degrees
+-- in [0,360): 0 = dead ahead, +90 = to starboard, 180 = astern, 270 = port.
+-- nil when the heading or the offset is degenerate. Pure numbers, so it is
+-- testable without entities.
+function NodeGraphUtil.relativeBearing (fx, fz, dx, dz)
+  local fl = math.sqrt(fx * fx + fz * fz)
+  local dl = math.sqrt(dx * dx + dz * dz)
+  if fl < 1e-9 or dl < 1e-9 then return nil end
+  local dot = (fx * dx + fz * dz) / (fl * dl)
+  local crs = (fx * dz - fz * dx) / (fl * dl)
+  local deg = math.deg(math.atan2(crs, dot))
+  if deg < 0 then deg = deg + 360 end
+  return deg
+end
+
+-- Combined navigation reading from `player` to `target`:
+--   { d3, plane, dy, bearing }  (bearing nil when the player has no heading)
+-- nil for the player itself or when either body lacks a position. One helper
+-- so the inspector and the on-map lock readout cannot disagree.
+function NodeGraphUtil.navTo (target, player)
+  if not (target and player and target ~= player) then return nil end
+  local d3, plane, dy = NodeGraphUtil.rangeBetween(target, player)
+  if not d3 then return nil end
+  local bearing = nil
+  local okF, fwd = pcall(function () return player:getForward() end)
+  local okP, pp = pcall(function () return player:getPos() end)
+  local okT, tp = pcall(function () return target:getPos() end)
+  if okF and fwd and okP and pp and okT and tp then
+    bearing = NodeGraphUtil.relativeBearing(fwd.x, fwd.z, tp.x - pp.x, tp.z - pp.z)
+  end
+  return { d3 = d3, plane = plane, dy = dy, bearing = bearing }
+end
+
+-- 8-way word for a relative bearing (FWD / FWD-STBD / STBD / ...).
+function NodeGraphUtil.bearingLabel (deg)
+  if not deg then return nil end
+  local names = { 'FWD', 'FWD-STBD', 'STBD', 'AFT-STBD', 'AFT', 'AFT-PORT', 'PORT', 'FWD-PORT' }
+  return names[(math.floor(deg / 45 + 0.5) % 8) + 1]
+end
+
 -- Compact number for on-screen stats (163633 -> '163.6k').
 function NodeGraphUtil.fmtShort (n)
   if type(n) ~= 'number' or n ~= n then return '?' end

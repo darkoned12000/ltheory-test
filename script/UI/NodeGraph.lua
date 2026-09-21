@@ -55,6 +55,9 @@ end
 -- autopilot run; clamp after every change (scroll, drill, fit, ease).
 local kZoomMin = 1e-4
 local kZoomMax = 5e5
+-- How far past the fit zoom the view may zoom OUT (~3x). Prevents the
+-- "everything collapses to one pixel" degenerate state.
+local kZoomOutSlack = 0.35
 local function clampZoom (z)
   if z ~= z or z < kZoomMin then return kZoomMin end -- NaN guard
   if z > kZoomMax then return kZoomMax end
@@ -137,23 +140,21 @@ function NodeGraph:seedFromSystem ()
         x0, x1 = x0 and math.min(x0, n.x) or n.x, x1 and math.max(x1, n.x) or n.x
         y0, y1 = y0 and math.min(y0, n.y) or n.y, y1 and math.max(y1, n.y) or n.y
       end
-      local majors, playerNode = false, nil
+      local playerNode = nil
       for _, n in pairs(self.nodes) do
-        if n.major then majors = true end
         if self.focusEntity and n.entity == self.focusEntity then playerNode = n end
       end
-      -- Robust fit: collect the candidates, then trim FAR outliers before
-      -- taking the bounding box. A chained-clump rock can sit ~1M out while
-      -- its field spans ~10k; including it collapses the field into a pixel
-      -- pile (the zone drill's "didn't display properly"). Trim by the
-      -- 90th-percentile distance from the median, so a tight set (the sector
-      -- view: majors + the player, a handful of nodes) has p90 == its max and
-      -- is unchanged. Trimmed outliers still draw as edge indicators.
+      -- Robust fit over ALL nodes (the display is 1:1 now, so the opening view
+      -- must actually contain everything, not just majors). Trim FAR outliers
+      -- by the 90th-percentile distance from the median: a chained-clump rock
+      -- can sit ~1M out while its field spans ~10k, and including it would
+      -- collapse the field into a pixel pile. Planets (r >= 5000) are excluded
+      -- up front (they still draw as edge arrows). Trimmed outliers stay
+      -- reachable as edge indicators.
       local fitSet = {}
       for _, n in pairs(self.nodes) do
-        if (n.major or not majors) and (n.r or 0) < 5000 then fitSet[#fitSet + 1] = n end
+        if (n.r or 0) < 5000 then fitSet[#fitSet + 1] = n end
       end
-      if playerNode then fitSet[#fitSet + 1] = playerNode end
       local nFit = #fitSet
       if nFit > 0 then
         local xs, ys = {}, {}
@@ -193,18 +194,11 @@ function NodeGraph:seedFromSystem ()
       -- saved frame is restored verbatim, so a sector you had zoomed past the
       -- fade threshold stays uncompressed when you come back.
       if x0 then
-        if restoring and restoring.frame and restoring.frame.refC then
-          self._refC, self._dRef, self._zFit =
-            restoring.frame.refC, restoring.frame.dRef, restoring.frame.zFit
-        else
-          local cxm, cym = (x0 + x1) * 0.5, (y0 + y1) * 0.5
-          self._refC = { x = cxm, y = cym }
-          local rad = 0.5 * math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0))
-          -- 0.5 x radius: strong enough to cluster the overview, gentle enough
-          -- that shapes/directions still read (ratio ~0.55 at the rim).
-          self._dRef = math.max(1000, rad * 0.5)
-          self._zFit = self.zoom
-        end
+        -- _zFit is the fit zoom, used as the zoom-OUT floor for this level.
+        -- Restored verbatim on drill-out so returning to a level you had
+        -- zoomed into does not re-impose a different floor.
+        self._zFit = (restoring and restoring.frame and restoring.frame.zFit)
+          or self.zoom
       end
       self._restore = nil
       -- First open: 'YOU' is SELECTED (red highlight) but the view fits the
@@ -291,9 +285,8 @@ function NodeGraph:drillInto (entity, keepZoom)
   self.stack[#self.stack + 1] = {
     context = self.context,
     camera  = { zoom = self.zoom, pos = { x = self.pos.x, y = self.pos.y } },
-    -- Compression frame of the level we are leaving (restored verbatim on
-    -- drillOut so its zoom-dependent fade state comes back too).
-    frame   = self._refC and { refC = self._refC, dRef = self._dRef, zFit = self._zFit } or nil,
+    -- Fit zoom of the level we are leaving (the zoom-out floor on return).
+    frame   = self._zFit and { zFit = self._zFit } or nil,
     focusId = self.focus,   -- re-selected on drillOut
   }
   self.context = entity
@@ -338,6 +331,25 @@ function NodeGraph:drillOut ()
   self._restore      = { zoom = prev.camera.zoom, pos = prev.camera.pos, frame = prev.frame }
   self._restoreFocus = prev.focusId
   return true
+end
+
+-- Home: recentre the view on the player's own node (after panning away).
+function NodeGraph:centerOnPlayer ()
+  if not self.focusEntity then return end
+  local pn = nil
+  for _, n in pairs(self.nodes) do
+    if n.entity == self.focusEntity then pn = n break end
+  end
+  if not pn then return end
+  self.focus, self.follow = pn.id, pn.id
+  self.pos.x, self.pos.y = pn.x + (pn.jx or 0), pn.y + (pn.jy or 0)
+  if self.inspector then self.inspector:show(pn) end
+end
+
+-- End: re-fit the whole level (recompute pos/zoom + compression frame).
+function NodeGraph:refit ()
+  self.follow = nil
+  self._fitted = false   -- the next seed recomputes the fit
 end
 
 -- Visual declutter (Phase 3 precursor): majors sharing nearly the same world
@@ -508,96 +520,42 @@ function NodeGraph:applyScroll (scrolled, mx, my, anchor)
   else
     local cx = math.min(math.max(mx, self.x), self.x + vsx)
     local cy = math.min(math.max(my, self.y), self.y + vsy)
-    ax, ay = self:toCanvas(cx, cy)   -- world point under the cursor
+    ax = self.pos.x + (cx - self.x - vsx * 0.5) / self.zoom
+    ay = self.pos.y + (cy - self.y - vsy * 0.5) / self.zoom
   end
-  -- Pin the anchor's WARPED screen position across the zoom change (both the
-  -- warp strength and the scale change with zoom, so solve pos at the new one).
-  local sxp, syp = self:toScreen(ax, ay)
-  self.zoom = clampZoom(self.zoom * math.exp(kZoomSpeed * scrolled))
-  local cxS, cyS = self:_viewCentre()
-  local wux, wuy = self:_unwarp(sxp - cxS, syp - cyS)
-  self.pos.x = ax - wux / self.zoom
-  self.pos.y = ay - wuy / self.zoom
+  -- Zoom about the anchor with LINEAR world-space maths. (Inverting the display
+  -- warp instead is exact under compression but diverges as the warp reference
+  -- clamps to 1px at deep zoom-out, which flung the camera off to 1e8.) Bound
+  -- the zoom-out too: the level is already framed at the fit zoom, so going
+  -- past ~3x that only collapses everything into a point.
+  local sx = self.x + vsx * 0.5 + (ax - self.pos.x) * self.zoom
+  local sy = self.y + vsy * 0.5 + (ay - self.pos.y) * self.zoom
+  local zmin = math.max(kZoomMin, (self._zFit or 0) * kZoomOutSlack)
+  local z = self.zoom * math.exp(kZoomSpeed * scrolled)
+  if z < zmin then z = zmin end
+  self.zoom = clampZoom(z)
+  self.pos.x = ax - (sx - self.x - vsx * 0.5) / self.zoom
+  self.pos.y = ay - (sy - self.y - vsy * 0.5) / self.zoom
 end
 
--- Projection pipeline: world -> LINEAR screen -> RADIAL WARP -> screen.
+-- Projection: world -> screen, strictly LINEAR (no distance compression).
 --
--- `self.pos` and `self.zoom` are plain WORLD space and strictly linear, so
--- pan, zoom and "centre on this node" are the classic linear operations and a
--- zoom change can never invalidate the camera. Distance compression is applied
--- afterwards in SCREEN space, as a radial warp about the view centre: strong
--- at the overview, fading to identity by `_zFit * 12` ("distance starts to
--- show as you zoom in"). Direction is preserved (radial only).
---
--- (An earlier version stored `pos` in the compressed frame itself; because the
--- compression depends on zoom, easing the zoom toward a clicked node then slid
--- the whole map off-screen. This keeps the camera linear instead.)
---
--- At the fit the camera sits on the level centre, so this is IDENTICAL to
--- compressing about that centre — the opening view is unchanged.
-
--- Compression strength: 0 = fully compressed, 1 = true distance.
-function NodeGraph:_compressT ()
-  local zFit = self._zFit
-  if not zFit or zFit <= 0 then return 1 end
-  local t = self.zoom / (zFit * 12)
-  if t < 0 then t = 0 elseif t > 1 then t = 1 end
-  return t
-end
-
-function NodeGraph:_viewCentre ()
-  local _, _, sx, sy = self:getRectGlobal()
-  return self.x + sx * 0.5, self.y + sy * 0.5
-end
-
--- Screen-space reference radius for the warp, in pixels.
-function NodeGraph:_warpRef ()
-  local ref = (self._dRef or 1) * self.zoom
-  if ref < 1 then ref = 1 end
-  return ref
-end
-
--- Linear screen offset from the view centre -> warped offset.
-function NodeGraph:_warp (dx, dy)
-  local t = self:_compressT()
-  if t >= 1 then return dx, dy end
-  local r = math.sqrt(dx * dx + dy * dy)
-  if r < 1e-6 then return dx, dy end
-  local ref = self:_warpRef()
-  local rw = (ref * math.log(1 + r / ref)) * (1 - t) + r * t
-  local k = rw / r
-  return dx * k, dy * k
-end
-
--- Warped offset -> linear screen offset (inverse; bisection on the monotonic
--- radial curve).
-function NodeGraph:_unwarp (dx, dy)
-  local t = self:_compressT()
-  if t >= 1 then return dx, dy end
-  local rw = math.sqrt(dx * dx + dy * dy)
-  if rw < 1e-6 then return dx, dy end
-  local ref = self:_warpRef()
-  local lo, hi = 0, rw + ref * 4 + 1e4
-  for _ = 1, 24 do
-    local mid = 0.5 * (lo + hi)
-    local b = (ref * math.log(1 + mid / ref)) * (1 - t) + mid * t
-    if b < rw then lo = mid else hi = mid end
-  end
-  local r = 0.5 * (lo + hi)
-  local k = r / rw
-  return dx * k, dy * k
-end
+-- `pos`/`zoom` are world space, so pan, zoom-about-anchor and centre-on-node
+-- are the classic linear operations. The earlier radial "compression" that
+-- pulled far nodes toward the centre is GONE: it distorted distances, made
+-- zooming feel wrong (nodes slid sideways as the warp faded), and inverting it
+-- at deep zoom-out could fling the camera off to 1e8. True ranges are reported
+-- textually now (inspector + lock readout), which is both clearer and stable.
 
 -- world -> screen, for a bare world point.
 function NodeGraph:toScreen (cx, cy)
-  local cxS, cyS = self:_viewCentre()
-  local dx, dy = (cx - self.pos.x) * self.zoom, (cy - self.pos.y) * self.zoom
-  dx, dy = self:_warp(dx, dy)
-  return cxS + dx, cyS + dy
+  local _, _, sx, sy = self:getRectGlobal()
+  return self.x + sx * 0.5 + (cx - self.pos.x) * self.zoom,
+         self.y + sy * 0.5 + (cy - self.pos.y) * self.zoom
 end
 
--- world -> screen for a NODE: warped base position + the declutter offset in
--- SCREEN pixels (a fixed-pixel fan/ring must not be squashed by the warp).
+-- world -> screen for a NODE: base position + its declutter offset (world
+-- units, so the fan/ring scales with zoom like everything else).
 function NodeGraph:toScreenNode (n)
   local sx, sy = self:toScreen(n.x, n.y)
   return sx + (n.jx or 0) * self.zoom, sy + (n.jy or 0) * self.zoom
@@ -605,9 +563,9 @@ end
 
 -- screen -> world (exact inverse of toScreen), for drag placement.
 function NodeGraph:toCanvas (mx, my)
-  local cxS, cyS = self:_viewCentre()
-  local dx, dy = self:_unwarp(mx - cxS, my - cyS)
-  return self.pos.x + dx / self.zoom, self.pos.y + dy / self.zoom
+  local _, _, sx, sy = self:getRectGlobal()
+  return (mx - self.x - sx * 0.5) / self.zoom + self.pos.x,
+         (my - self.y - sy * 0.5) / self.zoom + self.pos.y
 end
 
 -- Whether a node's category is currently filtered out. One definition for
@@ -688,6 +646,43 @@ function NodeGraph:nodeAt (mx, my)
     if best then return best end
   end
   return best
+end
+
+-- Bottom-row symbol key: decodes the map's shapes/colours. The text legend
+-- only covers keys and filters, not what you are actually looking at.
+local function drawSymbolKey (x, y)
+  local entries = {
+    { 'you', 'you' }, { 'selected', 'selected' }, { 'place', 'place' },
+    { 'rock', 'rock' }, { 'trade', 'trade' }, { 'mine', 'mine' },
+    { 'drill', 'drillable' },
+  }
+  local gx, tx = x + 6, x + 16
+  for i = 1, #entries do
+    local kind, label = entries[i][1], entries[i][2]
+    if kind == 'you' then
+      DrawEx.Ring(gx, y, 5, cLabel); DrawEx.Point(gx, y, 1.6, cLabel)
+    elseif kind == 'selected' then
+      DrawEx.Ring(gx, y, 5, cSelected)
+    elseif kind == 'place' then
+      DrawEx.Ring(gx, y, 5, cNode)
+    elseif kind == 'rock' then
+      DrawEx.Point(gx, y, 2.5, cMinor)
+    elseif kind == 'trade' then
+      DrawEx.Dash(gx - 8, y, gx + 8, y, cTrade, 2, 6, 0)
+    elseif kind == 'mine' then
+      DrawEx.Line(gx - 8, y, gx + 8, y, cMine)
+    elseif kind == 'drill' then
+      Draw.Color(cCore.r, cCore.g, cCore.b, 0.9)
+      Draw.Line(gx - 4, y, gx + 4, y)
+      Draw.Line(gx, y - 4, gx, y + 4)
+    end
+    DrawEx.TextAlpha(kLabelFont, label, kLabelSize, tx, y - 8, 120, 18,
+      1, 1, 1, 0.6, 0.0, 0.0)
+    local w = 26 + #label * 7
+    gx = gx + w
+    tx = tx + w
+  end
+  Draw.Color(1, 1, 1, 1)
 end
 
 function NodeGraph:onDraw (focus, active)
@@ -849,6 +844,10 @@ function NodeGraph:onDraw (focus, active)
         text = (edge.kind or 'link') .. '  ' ..
           ((a and a.label) or '?') .. ' -> ' .. ((b and b.label) or '?')
       end
+      if a and b then
+        local ddx, ddy = a.x - b.x, a.y - b.y
+        text = text .. '   ' .. Util.fmtShort(math.sqrt(ddx * ddx + ddy * ddy)) .. ' u'
+      end
       local tw = #text * 7 + 18
       local tx = math.min(mp.x + 14, x + sx - tw - 8)
       local ty = math.max(y + 8, mp.y - 26)
@@ -883,6 +882,46 @@ function NodeGraph:onDraw (focus, active)
         1, 1, 1, 0.75, 0.0, 0.0)
     end
   end
+  -- Locked-target readout: always visible at top-centre while a node is
+  -- selected, so range/bearing stay readable with or without the inspector.
+  do
+    local n = self.focus and self.nodes[self.focus] or nil
+    if n then
+      local txt = n.label or Util.kindTag(n.entity, 'short')
+      local nav = Util.navTo(n.entity, self.focusEntity)
+      if nav then
+        txt = txt .. '   ' .. Util.fmtShort(nav.plane) .. ' u'
+        if nav.bearing then txt = txt .. '   ' .. Util.bearingLabel(nav.bearing) end
+      end
+      local tw = #txt * 7 + 18
+      local tx = x + (sx - tw) * 0.5
+      if tx < x + 8 then tx = x + 8 end
+      Draw.Color(0.02, 0.03, 0.06, 0.7)
+      Draw.Rect(tx, y + 10, tw, 22)
+      DrawEx.RectOutline(tx, y + 10, tw, 22, { r = 0.25, g = 0.6, b = 1.0, a = 0.7 })
+      DrawEx.TextAlpha(kLabelFont, txt, kLabelSize, tx + 8, y + 13, tw - 16, 18,
+        1, 1, 1, 0.9, 0.0, 0.0)
+    end
+  end
+  -- Symbol key: decodes the shapes/colours (the text legend below only covers
+  -- keys and filters).
+  drawSymbolKey(x + 16, y + sy - 62)
+  -- Cursor readout: world X/Z under the pointer + range from YOU.
+  do
+    local mp = Input.GetMousePosition()
+    if mp.x >= x and mp.x <= x + sx and mp.y >= y and mp.y <= y + sy then
+      local wx, wz = self:toCanvas(mp.x, mp.y)
+      local txt = string.format('x %s   z %s', Util.fmtShort(wx), Util.fmtShort(wz))
+      local pe = self.focusEntity
+      local okP, pp = pcall(function () return pe and pe:getPos() end)
+      if okP and pp then
+        local dx, dz = wx - pp.x, wz - pp.z
+        txt = txt .. '   d ' .. Util.fmtShort(math.sqrt(dx * dx + dz * dz))
+      end
+      DrawEx.TextAlpha(kLabelFont, txt, kLabelSize,
+        x + 16, y + sy - 88, 400, 18, 1, 1, 1, 0.55, 0.0, 0.0)
+    end
+  end
   -- Scale bar (map units are world units: screen px / zoom) + filter legend.
   do
     local targetPx, mag, pow10 = 120, nil, nil
@@ -903,7 +942,7 @@ function NodeGraph:onDraw (focus, active)
     local f = self.filter
     local legend = string.format(
       '[F5] ships %s  [F6] rocks %s  [F7] places %s  [F8] routes %s   ' ..
-      '[dbl-click] or [Return] drill   [RMB] or [`] back',
+      '[dbl-click]/[Return] drill  [RMB]/[`] back  [Home] me  [End] fit',
       f.ships and 'on' or 'off', f.rocks and 'on' or 'off',
       f.places and 'on' or 'off', f.routes and 'on' or 'off')
     local legendW = math.min(720, sx - 40)
@@ -934,6 +973,9 @@ function NodeGraph:onInput (state)
   if Input.GetPressed(Button.Keyboard.F6) then self.filter.rocks = not self.filter.rocks end
   if Input.GetPressed(Button.Keyboard.F7) then self.filter.places = not self.filter.places end
   if Input.GetPressed(Button.Keyboard.F8) then self.filter.routes = not self.filter.routes end
+  -- Home = recentre on YOU; End = re-fit the whole level.
+  if Input.GetPressed(Button.Keyboard.Home) then self:centerOnPlayer() end
+  if Input.GetPressed(Button.Keyboard.End) then self:refit() end
 
   if Input.GetPressed(Button.Keyboard.Return) and self.focus then
     self:tryDrill(self.nodes[self.focus])

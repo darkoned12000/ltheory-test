@@ -187,17 +187,15 @@ function NodeGraphInspector:show (node)
     -- Classify representations once per selection (drives both the glyph and
     -- the stat block): 'field' + member count for an aggregate, else nil.
     self._repKind, self._repCount = Util.repKind(node and node.entity)
-    -- Range from the player: the map's absolute `pos` is not a usable
-    -- navigation number, so every non-player selection also gets a dist/range.
-    self._range = nil
-    local owner = self.owner
-    local pe = owner and owner.focusEntity
-    local e = node and node.entity
-    if pe and e and e ~= pe then
-      local d3, plane, dy = Util.rangeBetween(e, pe)
-      if d3 then self._range = { d3 = d3, plane = plane, dy = dy } end
-    end
   end
+end
+
+-- Live range + bearing to the player for the selected node (recomputed every
+-- frame: both the player and the target move). nil for the player's own node
+-- or when either body lacks a position.
+function NodeGraphInspector:_playerRange ()
+  local owner = self.owner
+  return Util.navTo(self.node and self.node.entity, owner and owner.focusEntity)
 end
 
 function NodeGraphInspector:hide ()
@@ -257,16 +255,20 @@ function NodeGraphInspector:draw (x, y, sx, sy, now)
   if self._repKind == 'field' and self._repCount then
     line(string.format('%d asteroids', self._repCount), HEAD)
   end
-  -- Range from 'YOU' (map-plane distance, plus the true range when the
-  -- vertical separation actually matters).
-  if self._range then
-    local r = self._range
+  -- Range + relative bearing from 'YOU' (the absolute `pos` line above is not
+  -- a usable navigation number). Live: the player and the target both move.
+  local r = self:_playerRange()
+  if r then
     local txt = 'dist ' .. Util.fmtShort(r.plane) .. ' u from you'
     if math.abs(r.d3 - r.plane) > 0.05 * math.max(1, r.d3) then
       txt = 'dist ' .. Util.fmtShort(r.plane) .. ' u (map)   rng ' ..
             Util.fmtShort(r.d3) .. ' u'
     end
     line(txt, TEXT)
+    if r.bearing then
+      line(string.format('brg %03d deg  %s', math.floor(r.bearing + 0.5),
+        Util.bearingLabel(r.bearing)), TEXT)
+    end
   end
 
   -- Health bar: narrowed (was full-width and overlapped the vector view),
