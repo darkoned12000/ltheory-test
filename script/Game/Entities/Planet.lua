@@ -39,7 +39,13 @@ local Planet = subclass(Entity, function (self, seed, opts)
   local mesh = Gen.Primitive.IcoSphere(detail):managed()
 
   self:addRigidBody(true, mesh)
-  self:setMass(opts.mass or 1000)
+  -- Planets are static/immovable: mass 0 sets Bullet's CF_STATIC_OBJECT, which
+  -- exempts them from the "AABB too large -> object removed from simulation"
+  -- check (so radius isn't bounded by ~289k). Static is correct here: gravity is
+  -- 0, nothing drives the planet, the collision shape is a sphere (its AABB is
+  -- rotation-invariant, so the axial spin needs no broadphase update), and it
+  -- still collides with the ship. Moons pass `mass` + setKinematic below.
+  self:setMass(opts.mass or 0)
 
   self.mesh = mesh
   local rng = RNG.Create(seed):managed()

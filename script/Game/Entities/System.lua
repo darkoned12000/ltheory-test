@@ -139,19 +139,69 @@ function System:handleRamming ()
     local e0 = Entity.fromRigidBody(b0)
     local e1 = Entity.fromRigidBody(b1)
     if e0 and e1 then
-      local v0 = e0:getVelocity()
-      local v1 = e1:getVelocity()
-      local relSpeed = v0:distance(v1)
-      if relSpeed > rammingMinSpeed then
-        -- Damage scales with how far above the threshold the impact was.
-        -- `e.health` is nil for non-damageable objects (e.g. Zones), so the
-        -- `if e.health` guard skips them safely.
-        local dmg = (relSpeed - rammingMinSpeed) * 2.0
-        if e0.health then e0:damage(dmg, e1) end
-        if e1.health then e1:damage(dmg, e0) end
+      -- Immovable world bodies (planets are static -> mass 0) BOUNCE you; they
+      -- must not ram-damage. Otherwise flying at a planet at speed dealt
+      -- ~(speed-25)*2 damage, killed the only ship instantly, and (no death
+      -- handling) black-screened the frame. Damage only between movable bodies.
+      if b0:getMass() > 0 and b1:getMass() > 0 then
+        local v0 = e0:getVelocity()
+        local v1 = e1:getVelocity()
+        local relSpeed = v0:distance(v1)
+        if relSpeed > rammingMinSpeed then
+          -- Damage scales with how far above the threshold the impact was.
+          -- `e.health` is nil for non-damageable objects (e.g. Zones), so the
+          -- `if e.health` guard skips them safely.
+          local dmg = (relSpeed - rammingMinSpeed) * 2.0
+          if e0.health then e0:damage(dmg, e1) end
+          if e1.health then e1:damage(dmg, e0) end
+        end
       end
     end
   end
+end
+
+--[[
+  handleAtmosphere -- planet atmosphere exclusion bubble
+  ----------------------------------------------------------------------------
+  Planets collide only as a smooth sphere at `scale`, so pressing into one
+  "meshes" with the shaded surface. This is a gameplay-side bubble: any ship
+  inside `scale * max(atmoScale, atmoBubbleMin)` is pushed back to that boundary
+  and has its inward radial velocity removed, so it bounces off the atmosphere
+  instead of grinding the planet. `ship.atmoWarning` drives the HUD banner.
+]]
+function System:handleAtmosphere (ship)
+  if not (ship and ship.body and Config.render.planet.atmoBubble) then return end
+  local minFactor = Config.render.planet.atmoBubbleMin or 1.02
+  local warn = false
+
+  local function pushOut (body)
+    if not (body.typeName and body.getScale and body.getPos) then return end
+    local sp = ship:getPos()
+    local c  = body:getPos()
+    local r  = body:getScale()
+    local shell = r * math.max(body.atmoScale or 1.0, minFactor)
+    local dx, dy, dz = sp.x - c.x, sp.y - c.y, sp.z - c.z
+    local d = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if d >= shell then return end
+    local nx, ny, nz = 0, 0, 1
+    if d > 1e-3 then nx, ny, nz = dx / d, dy / d, dz / d end
+    -- Clamp to the shell and drop the inward radial velocity component.
+    ship:setPos(Vec3f(c.x + nx * shell, c.y + ny * shell, c.z + nz * shell))
+    local v = ship:getVelocity()
+    local vr = v.x * nx + v.y * ny + v.z * nz        -- >0 = moving outward
+    if vr < 0 then
+      ship:setVelocity(Vec3f(v.x - vr * nx, v.y - vr * ny, v.z - vr * nz))
+    end
+    warn = true
+  end
+
+  for _, body in self:iterChildren() do
+    pushOut(body)
+    if body.children then
+      for _, moon in ipairs(body.children) do pushOut(moon) end
+    end
+  end
+  ship.atmoWarning = warn
 end
 
 -- Helpers For Testing ---------------------------------------------------------
@@ -280,7 +330,11 @@ function System:spawnPlanet ()
   local rng = self.rng
   local planet = Entities.Planet(rng:get64())
   local pos = rng:getDir3():scale(kSystemScale * (1.0 + rng:getExp()))
-  local scale = 1e5 * rng:getErlang(2)
+  -- Radius = base * Erlang(2), capped so the far side stays inside the 1e6 far
+  -- plane at the ship's 1.35x stand-off (see Config.gen.planetRadiusMax).
+  local scale = math.min(
+    (Config.gen.planetScaleBase or 1e5) * rng:getErlang(2),
+    Config.gen.planetRadiusMax or 400000)
   planet:setPos(pos)
   planet:setScale(scale)
   planet:setName(genName(rng))

@@ -153,6 +153,10 @@ function LTheory:onUpdate (dt)
   -- from the tree (no `update`). Guard so a bad spawn can't kill the process.
   local root = self.player and self.player:getRoot()
   if root and root.update then root:update(dt) end
+  -- Atmosphere bubble: push the ship back out of planet atmospheres before it
+  -- can grind the surface (see System:handleAtmosphere).
+  local ship = self.player and self.player:getControlling()
+  if self.system and ship then self.system:handleAtmosphere(ship) end
   self.canvas:update(dt)
 end
 

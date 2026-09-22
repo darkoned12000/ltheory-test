@@ -227,6 +227,34 @@ function HUD:drawDockPrompt (a)
   )
 end
 
+function HUD:drawAtmosphereWarning (a)
+  local ship = self.player:getControlling()
+  if not (ship and ship.atmoWarning) then return end
+
+  local text  = Config.render.planet.atmoBubbleMsg or 'ATMOSPHERE - PULL UP'
+  local bound = Cache.Font('NovaMono', 20):getSize(text)
+
+  -- Blink so it reads as an alert, but never fully vanish.
+  local blink = 0.65 + 0.35 * math.sin(Time.GetRaw() * 0.012)
+
+  -- LTheory-styled plate: a dark plate + accent border behind bright text.
+  -- (Additive red text over a bright nebula was unreadable.)
+  local padX, padY = 28, 14
+  local bw, bh = bound.z + padX * 2, bound.w + padY * 2
+  local x, y, sx, sy = self:getRectGlobal()
+  local bx = x + (sx - bw) / 2
+  local by = y + sy * 0.10
+
+  UI.DrawEx.PushAlpha(a * blink)
+  UI.DrawEx.Panel(bx, by, bw, bh, Color(0.22, 0.015, 0.03, 0.95), 0.6)
+  UI.DrawEx.RectOutline(bx, by, bw, bh, Color(1.0, 0.15, 0.25, 1.0))
+  UI.DrawEx.TextAlpha('NovaMono', text, 20,
+    bx, by, bw, bh,
+    1.0, 0.90, 0.88, 1.0,
+    0.5, 0.5)
+  UI.DrawEx.PopAlpha()
+end
+
 function HUD:controlThrust (e)
   if not e:hasThrustController() then return end
   local c = e:getThrustController()
@@ -350,6 +378,7 @@ function HUD:onDraw (focus, active)
   Profiler.Begin('HUD.DrawLock')    self:drawLock      (self.enabled) Profiler.End()
   Profiler.Begin('HUD.DrawReticle') self:drawReticle   (self.enabled) Profiler.End()
   Profiler.Begin('HUD.DrawPrompt')  self:drawDockPrompt(self.enabled) Profiler.End()
+  Profiler.Begin('HUD.AtmoWarn')    self:drawAtmosphereWarning(self.enabled) Profiler.End()
 end
 
 function HUD:onDrawIcon (iconButton, focus, active)

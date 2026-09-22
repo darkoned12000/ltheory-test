@@ -405,8 +405,14 @@ function GameView:draw (focus, active)
   self.camera:setViewport(x, y, sx, sy)
   self.camera:beginDraw()
 
-  local world = self.player:getRoot()
-  if world == self.player or not world.beginRender then
+  -- A destroyed controlling ship detaches from the tree, so player:getRoot()
+  -- returns the detached ship (or nil). Fall back to the sector so a death
+  -- renders the scene instead of a black frame (Player:getRoot / GameView:render).
+  local world = self.player and self.player:getRoot()
+  if world == self.player or not (world and world.beginRender) then
+    world = self.ltheory and self.ltheory.system
+  end
+  if not (world and world.beginRender) then
     ClipRect.Pop()
     RenderState.PopAll()
     self.camera:endDraw()

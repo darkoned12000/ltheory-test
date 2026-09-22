@@ -54,6 +54,13 @@ Config.gen = {
   -- so there's room to see and fly around it. Tune freely; default ~1.25x radius.
   planetViewDist = 250000,
 
+  -- Planet-work planet size (System:spawnPlanet). `scalePlanet` just below is the
+  -- legacy SystemBasic scale and is unrelated. Planets are static bodies, so
+  -- Bullet's oversized-AABB limit (~289k radius) no longer bounds them; this cap
+  -- is about the 1e6 far plane and system coherence.
+  planetScaleBase = 1e5,     -- radius = planetScaleBase * Erlang(2); mean ~200k
+  planetRadiusMax = 400000,  -- hard cap (far side inside 1e6 at 1.35x stand-off)
+
   scalePlanet = 2000,
   playerShipSize = 4,
 }
@@ -130,6 +137,15 @@ Config.render = {
   planet = {
     spin      = true,
     spinSpeed = function (rng) return rng:getUniformRange(0.01, 0.05) end,  -- rad/s
+
+    -- Atmosphere exclusion bubble. A planet only collides as a smooth sphere at
+    -- `scale`, so a ship pressing in "meshes" with the shaded surface. This
+    -- pushes a ship back out at `scale * max(atmoScale, atmoBubbleMin)` and
+    -- removes its inward velocity, so you bounce off the atmosphere instead of
+    -- grinding the planet. Sets `ship.atmoWarning` for the HUD banner.
+    atmoBubble    = true,
+    atmoBubbleMin = 1.02,  -- minimum shell factor (airless bodies have atmoScale 1)
+    atmoBubbleMsg = 'ATMOSPHERE - PULL UP',
 
     -- Surface TYPES (planets). Picked per seed by weight; each drives the
     -- generator, palette, ocean level and atmosphere, so a planet's "biome" IS
