@@ -1,17 +1,17 @@
 ==== Debug Panel Snapshot ====
-time:    2026-09-21 11:13:50
-window:  1891x1952
-frame:   4.66 ms  (avg 214.7 fps, 1% low 8.58 ms)
-render:  submit 0.29 | postfx 0.38 | present 0.00 ms
+time:    2026-09-21 21:46:22
+window:  3840x2160
+frame:   7.28 ms  (avg 137.4 fps, 1% low 7.86 ms)
+render:  submit 0.55 | postfx 0.48 | present 0.00 ms
 pools:   2 objects / 0 rigidbodies | entities 94 | textures 4
-lua:     14.74 kb | gc 59.02 kb/s | passes 1576 | freq 2.40 Hz
-hdr:     avg 0.0676 max 1.9561 over1 0.24% lit 0.0679 autoEV +0.00
+lua:     10.36 kb | gc 59.34 kb/s | passes 628 | freq 1.02 Hz
+hdr:     avg 0.1528 max 14.2500 over1 0.88% lit 0.1528 autoEV +0.00
 
 -- settings --
 postfx.aberration.enable   false
 postfx.aberration.strength 1
 postfx.bloom.enable        true
-postfx.bloom.radius        48
+postfx.bloom.radius        20
 postfx.bloom.intensity     1
 postfx.bloom.threshold     1
 postfx.sharpen.enable      true
@@ -21,7 +21,7 @@ postfx.radialblur.enable   false
 postfx.radialblur.strength 1
 postfx.radialblur.scanlines 1
 postfx.tonemap.enable      true
-postfx.tonemap.operator    AgX
+postfx.tonemap.operator    ACES
 postfx.exposure.ev         0
 postfx.color.sat           1
 postfx.color.contrast      1
@@ -33,7 +33,7 @@ postfx.autoexposure.minEV  -6
 postfx.autoexposure.maxEV  2
 postfx.autoexposure.speed  0.5
 postfx.vignette.enable     true
-postfx.vignette.strength   0.25
+postfx.vignette.strength   0.5
 postfx.vignette.hardness   20
 postfx.grain.enable        false
 postfx.grain.strength      1
@@ -45,11 +45,11 @@ postfx.fog.r               0.04
 postfx.fog.g               0.06
 postfx.fog.b               0.13
 nebula.enable              true
-nebula.quality             High
-nebula.debug               Lighting
-nebula.density             2.2
-nebula.jitter              0.04978
-nebula.background          0.4
+nebula.quality             Low
+nebula.debug               Off
+nebula.density             1.505
+nebula.jitter              0.05195
+nebula.background          0.2013
 nebula.coverage            2
 nebula.radius              1.4e+04
 nebula.g                   0.4
@@ -61,31 +61,37 @@ postfx.godrays.enable      false
 postfx.godrays.strength    1
 postfx.godrays.g           0.92
 postfx.godrays.debug       Off
-lightning.enable           true
+lightning.enable           false
 lightning.quality          High
 lightning.energy           22
 lightning.radius           6000
 lightning.rate             2
 lightning.debug            Off
-render.fovY                70
+render.fovY                74.96
 render.superSample         Off
+render.resolutionScale     100%
 render.wireframe           false
 render.cullface            true
 render.showBuffers         false
-render.textureFilter       Trilinear + Aniso
+render.textureFilter       Bilinear
 render.shadow.radius       2
 render.shadow.bias         0.001
 render.shadow.scale        0.0005
 render.sun.enable          true
 render.sun.intensity       1
-render.sun.fill            0.42
-render.sun.warmth          1
+render.sun.fill            0.4564
+render.sun.warmth          0.7476
 render.sun.shadows         true
 render.sun.shadowRange     8000
-render.sun.shadowSize      2048
+render.sun.shadowSize      1024
+render.shadow.maxLights    2
+render.shadow.period       2
 render.vsync               false
 lighting.ambientEnv        1.35
 lighting.specular          0.35
+render.planet.sunScale     1.007
+render.planet.envAmbient   1.754
+render.planet.atmoGlow     0.756
 ssao.enable                false
 ssao.quality               Half
 ssao.radius                500

@@ -7,6 +7,8 @@
 #autovar samplerCube irMap
 #autovar vec3 eye
 #autovar vec3 starDir
+#autovar vec3 sunColor
+#autovar float sunFill
 
 in vec3 worldOrigin;
 in vec3 worldDir;

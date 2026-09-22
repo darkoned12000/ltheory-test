@@ -99,7 +99,9 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue)
             local extZ = baseExtent * (0.6 + hash32(icx, icy, icz, s, off + 12) * 0.8)
 
             local density = (0.8 + hash32(icx, icy, icz, s, off + 5) * 2.2) * cover
-            local scale   = 0.0003 + hash32(icx, icy, icz, s, off + 6) * 0.0012
+            -- Noise frequency: kept coarse enough that the ~290-unit march
+            -- step resolves it (finer scales aliased into speckle).
+            local scale   = 0.0002 + hash32(icx, icy, icz, s, off + 6) * 0.0006
             local warp    = hash32(icx, icy, icz, s, off + 7) * 450.0
 
             -- Palette Coupling: If sectorHue is provided, center plume hues around the skybox!

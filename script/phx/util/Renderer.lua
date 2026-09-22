@@ -40,7 +40,7 @@ local SETTINGS = {
   { kind = 'float', key = 'postfx.aberration.strength', label = ' - Strength',  default = 1, min = 0, max = 1, gpu = 'aberrationStrength' },
 
   { kind = 'bool',  key = 'postfx.bloom.enable',        label = 'Bloom',        default = true,  gpu = 'bloom' },
-  { kind = 'float', key = 'postfx.bloom.radius',        label = ' - Radius',    default = 48, min = 4, max = 64, gpu = 'bloomRadius' },
+  { kind = 'float', key = 'postfx.bloom.radius',        label = ' - Radius',    default = 20, min = 4, max = 64, gpu = 'bloomRadius' },
   { kind = 'float', key = 'postfx.bloom.intensity',     label = ' - Intensity', default = 1, min = 0, max = 4, gpu = 'bloomIntensity' },
   { kind = 'float', key = 'postfx.bloom.threshold',     label = ' - Threshold', default = 1, min = 0, max = 8, gpu = 'bloomThreshold' },
 
@@ -53,7 +53,7 @@ local SETTINGS = {
   { kind = 'float', key = 'postfx.radialblur.scanlines', label = ' - Scanlines', default = 1, min = 0, max = 1, gpu = 'radialblurScanlines' },
 
   { kind = 'bool',  key = 'postfx.tonemap.enable',    label = 'Tonemap',       default = true, gpu = 'tonemap' },
-  { kind = 'enum',  key = 'postfx.tonemap.operator',  label = ' - Operator',   default = 1,
+  { kind = 'enum',  key = 'postfx.tonemap.operator',  label = ' - Operator',   default = 2,
     options = { 'AgX', 'ACES', 'Filmic', 'Khronos' }, gpu = 'tonemapOperator' },
   { kind = 'float', key = 'postfx.exposure.ev',       label = ' - Exposure EV', default = 0, min = -4, max = 4, gpu = 'exposureEV' },
 
@@ -70,7 +70,7 @@ local SETTINGS = {
   { kind = 'float', key = 'postfx.autoexposure.speed',  label = ' - Adapt (s)',     default = 0.5, min = 0.05, max = 3, gpu = 'autoExposureSpeed' },
 
   { kind = 'bool',  key = 'postfx.vignette.enable',   label = 'Vignette',    default = true, gpu = 'vignette' },
-  { kind = 'float', key = 'postfx.vignette.strength', label = ' - Strength', default = 0.25, min = 0, max = 1, gpu = 'vignetteStrength' },
+  { kind = 'float', key = 'postfx.vignette.strength', label = ' - Strength', default = 0.5, min = 0, max = 1, gpu = 'vignetteStrength' },
   { kind = 'float', key = 'postfx.vignette.hardness', label = ' - Hardness', default = 20.0, min = 2, max = 32, gpu = 'vignetteHardness' },
 
   { kind = 'bool',  key = 'postfx.grain.enable',   label = 'Film Grain', default = false, gpu = 'grain' },
@@ -84,17 +84,17 @@ local SETTINGS = {
   { kind = 'float', key = 'postfx.fog.g',       label = ' - Color G',    default = 0.06, min = 0, max = 1, gpu = 'fogG' },
   { kind = 'float', key = 'postfx.fog.b',       label = ' - Color B',    default = 0.13, min = 0, max = 1, gpu = 'fogB' },
 
-  { kind = 'bool',  key = 'nebula.enable',  label = 'Nebula Volume', default = false, gpu = 'nebulaEnabled' },
+  { kind = 'bool',  key = 'nebula.enable',  label = 'Nebula Volume', default = true, gpu = 'nebulaEnabled' },
   { kind = 'enum',  key = 'nebula.quality', label = ' - Quality',    default = 2,
     options = { 'Off', 'Low', 'Medium', 'High' }, gpu = 'nebulaQuality' },
   { kind = 'enum',  key = 'nebula.debug',   label = ' - Debug View', default = 1,
     options = { 'Off', 'Density', 'Transmittance', 'Lighting', 'Steps', 'Anchors' }, gpu = 'nebulaDebug' },
-  { kind = 'float', key = 'nebula.density', label = ' - Density',    default = 1, min = 0, max = 4, gpu = 'nebulaDensity' },
+  { kind = 'float', key = 'nebula.density', label = ' - Density',    default = 1.5, min = 0, max = 4, gpu = 'nebulaDensity' },
   { kind = 'float', key = 'nebula.jitter',  label = ' - Ray Jitter', default = 0.05, min = 0, max = 1, gpu = 'nebulaJitter' },
-  { kind = 'float', key = 'nebula.background', label = ' - Background', default = 1, min = 0, max = 1.5, gpu = 'nebulaBackground' },
-  { kind = 'float', key = 'nebula.coverage', label = ' - Coverage',  default = 1, min = 0.25, max = 2.5, gpu = 'nebulaCoverage' },
-  { kind = 'float', key = 'nebula.radius',  label = ' - Radius',     default = 12000, min = 500, max = 40000, gpu = 'nebulaRadius' },
-  { kind = 'float', key = 'nebula.g',       label = ' - Phase g',    default = 0, min = -1, max = 1, gpu = 'nebulaG' },
+  { kind = 'float', key = 'nebula.background', label = ' - Background', default = 0.2, min = 0, max = 1.5, gpu = 'nebulaBackground' },
+  { kind = 'float', key = 'nebula.coverage', label = ' - Coverage',  default = 2, min = 0.25, max = 2.5, gpu = 'nebulaCoverage' },
+  { kind = 'float', key = 'nebula.radius',  label = ' - Radius',     default = 14000, min = 500, max = 40000, gpu = 'nebulaRadius' },
+  { kind = 'float', key = 'nebula.g',       label = ' - Phase g',    default = 0.4, min = -1, max = 1, gpu = 'nebulaG' },
   { kind = 'float', key = 'nebula.tint',    label = ' - Glow Tint',  default = 0.0, min = 0, max = 1, gpu = 'nebulaTint' },
   { kind = 'float', key = 'nebula.tintR',   label = '   Color R',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintR' },
   { kind = 'float', key = 'nebula.tintG',   label = '   Color G',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintG' },
@@ -109,22 +109,24 @@ local SETTINGS = {
 
   -- Lightning storm flash (fog-nebula Phase 4, local volumetric point-light) ----
   { kind = 'bool',  key = 'lightning.enable',        label = 'Lightning',    default = false, gpu = 'lightningEnable' },
-  { kind = 'enum',  key = 'lightning.quality',       label = ' - Quality',   default = 1,
+  { kind = 'enum',  key = 'lightning.quality',       label = ' - Quality',   default = 2,
     options = { 'Low', 'High' }, gpu = 'lightningQuality' },
-  { kind = 'float', key = 'lightning.energy',        label = ' - Energy',    default = 15, min = 0, max = 40, gpu = 'lightningEnergy' },
-  { kind = 'float', key = 'lightning.radius',        label = ' - Radius',    default = 3500, min = 100, max = 12000, gpu = 'lightningRadius' },
-  { kind = 'float', key = 'lightning.rate',          label = ' - Storm Rate', default = 1, min = 0.25, max = 3, gpu = 'lightningRate' },
+  { kind = 'float', key = 'lightning.energy',        label = ' - Energy',    default = 22, min = 0, max = 40, gpu = 'lightningEnergy' },
+  { kind = 'float', key = 'lightning.radius',        label = ' - Radius',    default = 6000, min = 100, max = 12000, gpu = 'lightningRadius' },
+  { kind = 'float', key = 'lightning.rate',          label = ' - Storm Rate', default = 2, min = 0.25, max = 3, gpu = 'lightningRate' },
   { kind = 'enum',  key = 'lightning.debug',         label = ' - Debug View', default = 1,
     options = { 'Off', 'Region', 'Energy' }, gpu = 'lightningDebug' },
 
   -- Core render -----------------------------------------------------------
-  { kind = 'float', key = 'render.fovY',        label = 'FOV',           default = 70, min = 50, max = 100 },
-  { kind = 'enum',  key = 'render.superSample', label = 'SuperSampling', default = 2,
+  { kind = 'float', key = 'render.fovY',        label = 'FOV',           default = 75, min = 50, max = 100, gpu = 'fovY' },
+  { kind = 'enum',  key = 'render.superSample', label = 'SuperSampling', default = 1,
     options = { 'Off', '2x', '4x' }, gpu = 'superSample' },
+  { kind = 'enum',  key = 'render.resolutionScale', label = 'Render Scale', default = 1,
+    options = { '100%', '85%', '75%', '67%', '50%' }, gpu = 'resolutionScale', optKey = strKey },
   { kind = 'bool',  key = 'render.wireframe',   label = 'Wireframe',             default = false },
   { kind = 'bool',  key = 'render.cullface',    label = 'Backface Culling',      default = true },
   { kind = 'bool',  key = 'render.showBuffers', label = 'Show Deferred Buffers', default = false },
-  { kind = 'enum',  key = 'render.textureFilter', label = 'Texture Filter', default = 3,
+  { kind = 'enum',  key = 'render.textureFilter', label = 'Texture Filter', default = 1,
     options = { 'Bilinear', 'Trilinear', 'Trilinear + Aniso' }, gpu = 'filtering',
     optKey = function (v)
       if v == 'Aniso' or v == 'Anisotropic' then return 'Trilinear + Aniso' end
@@ -136,17 +138,24 @@ local SETTINGS = {
 
   { kind = 'bool',  key = 'render.sun.enable',    label = 'Sun Light',       default = true, gpu = 'sunLight' },
   { kind = 'float', key = 'render.sun.intensity', label = ' - Intensity',    default = 1, min = 0, max = 6, gpu = 'sunIntensity' },
-  { kind = 'float', key = 'render.sun.fill',      label = ' - Ambient Fill', default = 0.30, min = 0, max = 1, gpu = 'sunAmbientFill' },
-  { kind = 'float', key = 'render.sun.warmth',    label = ' - Warmth',       default = 1, min = 0, max = 1, gpu = 'sunWarmth' },
+  { kind = 'float', key = 'render.sun.fill',      label = ' - Ambient Fill', default = 0.4564, min = 0, max = 1, gpu = 'sunAmbientFill' },
+  { kind = 'float', key = 'render.sun.warmth',    label = ' - Warmth',       default = 0.7476, min = 0, max = 1, gpu = 'sunWarmth' },
   { kind = 'bool',  key = 'render.sun.shadows',   label = ' - Shadows',      default = true, gpu = 'sunShadows' },
   { kind = 'float', key = 'render.sun.shadowRange', label = ' - Shadow Range', default = 8000, min = 500, max = 20000, gpu = 'sunShadowRange' },
-  { kind = 'enum',  key = 'render.sun.shadowSize',  label = ' - Shadow Res',   default = 4,
+  { kind = 'enum',  key = 'render.sun.shadowSize',  label = ' - Shadow Res',   default = 3,
     options = { '256', '512', '1024', '2048' }, gpu = 'sunShadowSize', optKey = strKey },
+  { kind = 'float', key = 'render.shadow.maxLights', label = ' - Shadow Lights', default = 2, min = 0, max = 8 },
+  { kind = 'float', key = 'render.shadow.period',    label = ' - Shadow Update', default = 2, min = 1, max = 4 },
 
   { kind = 'bool',  key = 'render.vsync', label = 'VSync', default = true },
 
   { kind = 'float', key = 'lighting.ambientEnv', label = 'Environment Light',   default = 1.35, min = 0, max = 3, gpu = 'ambientEnv' },
   { kind = 'float', key = 'lighting.specular',   label = 'Dielectric Specular', default = 0.35, min = 0, max = 1, gpu = 'dielectricSpec' },
+
+  -- Planet self-lighting (planets are Material_NoShade; see material/planet.glsl).
+  { kind = 'float', key = 'render.planet.sunScale',   label = 'Planet Sun Scale',   default = 1.0,   min = 0, max = 4, gpu = 'planetSunScale' },
+  { kind = 'float', key = 'render.planet.envAmbient', label = 'Planet Nebula Fill', default = 1.75,  min = 0, max = 10, gpu = 'planetEnvAmbient' },
+  { kind = 'float', key = 'render.planet.atmoGlow',   label = 'Planet Atmosphere',  default = 0.756, min = 0, max = 3,  gpu = 'planetAtmoGlow' },
 
   -- SSAO / GTAO -------------------------------------------------------------
   { kind = 'bool',  key = 'ssao.enable',      label = 'Ambient Occlusion', default = false, gpu = 'aoEnabled' },
@@ -716,9 +725,9 @@ end
 function Renderer:volume (med)
   local q = Settings.get('nebula.quality') or 1
   if q <= 1 then return end
-  local steps = { 8, 16, 32 }
+  local steps = { 10, 20, 48 }
   local evals = { 2, 2, 3 }
-  local stepF = steps[q - 1] or 16
+  local stepF = steps[q - 1] or 20
   local evalF = evals[q - 1] or 2
 
   local shaderH = Cache.Shader('worldray', 'filter/volume')

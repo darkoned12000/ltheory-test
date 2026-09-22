@@ -12,6 +12,8 @@ function Nebula:forceLoad ()
 end
 
 function Nebula:render (state)
+  -- The skybox never casts a shadow; skip it entirely in the shadow passes.
+  if state.pass == 'sunshadow' or state.pass == 'pointshadow' then return end
   self:forceLoad()
   if state.mode == BlendMode.Disabled then
     RenderState.PushDepthWritable(false)

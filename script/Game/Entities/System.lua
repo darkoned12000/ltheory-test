@@ -310,7 +310,7 @@ function System:spawnMoon (planet, index)
     parent      = planet,
     orbitRadius = radius,
   })
-  moon:setScale(planet:getScale() * cfg.scale(rng))
+  moon:setScale(math.max(planet:getScale() * cfg.scale(rng), cfg.minRadius or 0))
   moon:setName(planet:getName() .. ' ' .. (kRoman[index] or tostring(index)))
   moon:setPos(planet:getPos() + Vec3f(radius, 0, 0))
   -- Parent the moon to its PLANET (not the system) so the map groups it under

@@ -31,6 +31,7 @@ uniform mat4  sShadowProj;
 uniform float sShadowBias;
 uniform float sShadowScale;
 uniform float sShadowRadius;
+uniform float shadowEnable;   // 0 = this light has no shadow map; skip sampling
 
 const float kMinDistance = 0.0001;
 const float kPointLightMult = 16.0;
@@ -94,12 +95,13 @@ void main () {
     return;
   }
 
-  vec4 sp = sShadowProj * vec4(p, 1.0);
-  vec2 suv = (sp.xy * 0.5) + 0.5;
-
   float shadowAmt = 1.0;
-  float bias = sShadowBias + sShadowScale * dist;
-  shadowAmt = PCFSamplePoisson(texShadow, suv, dist, bias, sShadowRadius);
+  if (shadowEnable > 0.5) {
+    vec4 sp = sShadowProj * vec4(p, 1.0);
+    vec2 suv = (sp.xy * 0.5) + 0.5;
+    float bias = sShadowBias + sShadowScale * dist;
+    shadowAmt = PCFSamplePoisson(texShadow, suv, dist, bias, sShadowRadius);
+  }
 
   vec3 light = vec3(0.0);
 

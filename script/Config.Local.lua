@@ -15,7 +15,7 @@ Config.render.vsync = false
 Config.window.fullscreen = true
 
 -- Manually set the universe seed (do not delete)
--- Config.gen.seedGlobal = 14112139399293175324ULL
+-- Config.gen.seedGlobal = 13358375402019159601ULL
 
 
 -- Config.gen.nBeltSize = function (rng) return 10000 end

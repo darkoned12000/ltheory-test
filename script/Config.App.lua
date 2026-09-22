@@ -138,34 +138,36 @@ Config.render = {
     --   hue/sat/light = palette ranges (light ramps toward peaks)
     -- forceType = 'terrestrial' pins every planet's type for auditioning
     -- (override in Config.Local.lua); nil = weighted per-seed pick.
-    forceType = 'desert', -- default is nil
+    forceType = 'terrestrial', -- default is nil
     types = {
       { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 },
-        hue = { 0.18, 0.46 }, sat = { 0.12, 0.34 }, light = { 0.11, 0.40 }, crater = 0.45 },
+        hue = { 0.18, 0.46 }, sat = { 0.12, 0.34 }, light = { 0.11, 0.40 }, crater = 0.45, relief = 10.0 },
       { name = 'ocean',       weight = 14, gen = 'gen/planet', ocean = { 0.62, 0.92 }, atmo = 1.15, weather = 0.70, mountain = 0.45, atmoTint = { 0.90, 1.00, 1.10 },
-        hue = { 0.50, 0.62 }, sat = { 0.18, 0.40 }, light = { 0.14, 0.30 }, crater = 0.08 },
+        hue = { 0.50, 0.62 }, sat = { 0.18, 0.40 }, light = { 0.14, 0.30 }, crater = 0.08, relief = 4.0 },
       { name = 'desert',      weight = 14, gen = 'gen/planet', ocean = { 0.00, 0.03 }, atmo = 1.03, weather = 0.08, mountain = 0.70, atmoTint = { 1.40, 0.95, 0.55 },
-        hue = { 0.04, 0.12 }, sat = { 0.20, 0.45 }, light = { 0.10, 0.44 }, crater = 0.90 },
+        hue = { 0.04, 0.12 }, sat = { 0.20, 0.45 }, light = { 0.10, 0.44 }, crater = 0.90, relief = 14.0 },
       { name = 'ice',         weight = 14, gen = 'gen/planet', ocean = { 0.15, 0.55 }, atmo = 1.05, weather = 0.40, mountain = 0.70, atmoTint = { 0.90, 0.98, 1.12 },
-        hue = { 0.55, 0.66 }, sat = { 0.05, 0.18 }, light = { 0.22, 0.55 }, crater = 0.55 },
+        hue = { 0.55, 0.66 }, sat = { 0.05, 0.18 }, light = { 0.22, 0.55 }, crater = 0.55, relief = 7.0 },
       { name = 'barren',      weight = 18, gen = 'gen/moon',   ocean = { 0.00, 0.00 }, atmo = 0.0,  weather = 0.00,
         hue = { 0.05, 0.10 }, sat = { 0.02, 0.16 }, light = { 0.06, 0.22 },
         freqBase = 6, powerBase = 1.0, powerVar = 1.0 },
       { name = 'lava',        weight =  8, gen = 'gen/planet', ocean = { 0.00, 0.00 }, atmo = 1.04, weather = 0.15, mountain = 1.00, atmoTint = { 1.60, 0.60, 0.32 },
-        hue = { 0.00, 0.04 }, sat = { 0.25, 0.55 }, light = { 0.05, 0.14 }, crater = 0.30 },
+        hue = { 0.00, 0.04 }, sat = { 0.25, 0.55 }, light = { 0.05, 0.14 }, crater = 0.30, relief = 14.0,
+        emissive = { 1.00, 0.28, 0.05 }, emissiveAmt = 1.3 },
     },
 
     -- Moons (Phase B). Sizes/radii are multiples of the PARENT radius, so big
     -- planets get big, distant moons. Speeds are slow: a full orbit takes
-    -- minutes, not seconds.
+    -- minutes, not seconds. Orbits lie in the planet's EQUATORIAL plane, so
+    -- they match the planet's spin axis (`inclination` tilts off it).
     moon = {
       orbitSpeed  = function (rng) return rng:getUniformRange(0.004, 0.018) end,  -- rad/s
       scale       = function (rng) return rng:getUniformRange(0.03, 0.14) end,    -- x parent radius
+      minRadius   = 800,      -- absolute floor so a small planet gets no pebble-moons
       orbit       = function (rng) return rng:getUniformRange(1.6, 3.2) end,      -- x parent radius
       orbitMax    = 220000,   -- absolute cap (world units): keeps moons clear of the
                               -- 1e6 far plane, so they can't clip out as you fly
-      inclination = function (rng) return rng:getUniformRange(-0.6, 0.6) end,     -- rad
-      roll        = function (rng) return rng:getUniform() * 2 * math.pi end,     -- rad
+      inclination = function (rng) return rng:getUniformRange(-0.35, 0.35) end,   -- rad off the equator
     },
   },
 }
@@ -196,14 +198,14 @@ Config.gpu = {
   -- Post chain. Each switch enables one pass; its optional tunables follow it
   -- and are only applied when present (nil = keep the default).
   bloom              = true,   -- Karis exponentially-weighted bloom
-  bloomRadius        = 48,     --   blur spread (4..64)
+  bloomRadius        = 20,     --   blur spread (4..64)
   bloomIntensity     = 1,      --   contribution (0..4)
   bloomThreshold     = 1,      --   soft-knee floor (0..8)
   sharpen            = true,   -- unsharp high-pass sharpen
   sharpenStrength    = 1,      --   unsharp amount (0..3)
   sharpenRadius      = 2,      --   blur radius for the high-pass mask (1..6)
-  tonemap            = true,   -- HDR -> display (AgX) + sRGB; false = raw clamp
-  tonemapOperator    = 'AgX',  --   AgX | ACES | Filmic | Khronos
+  tonemap            = true,   -- HDR -> display (ACES) + sRGB; false = raw clamp
+  tonemapOperator    = 'ACES', --   AgX | ACES | Filmic | Khronos
   exposureEV         = 0,      --   exposure stops (-4..4)
   autoExposure       = false,  --   keyed auto-exposure; manual EV becomes a bias
   autoExposureKey    = 0.18,   --     mid-gray key (linear) maps to 0 stops
@@ -211,7 +213,7 @@ Config.gpu = {
   autoExposureMaxEV  = 2,      --     bright-ceiling cap
   autoExposureSpeed  = 0.5,    --     adaptation time constant (s)
   vignette           = true,   -- cinematic darkened corners
-  vignetteStrength   = 0.25,   --   (0..1)
+  vignetteStrength   = 0.5,    --   (0..1)
   vignetteHardness   = 20,     --   falloff toward center (2..32)
   grain              = false,  -- animated film grain, final pass
   grainStrength      = 1,      --   (0..4)
@@ -240,15 +242,15 @@ Config.gpu = {
   -- Volumetric nebula/dust (nebula.*, fog-nebula Phase 1). World-space banks,
   -- correct transmittance (star occlusion), single-scatter inscatter (HG phase
   -- + irMap ambient), depth-aware reconstruction. Off = renderer never invoked.
-  nebulaEnabled  = false,
-  nebulaQuality  = 'High',     -- Off | Low | Medium | High (steps 8/16/24, evals 2/2/3)
-  nebulaDebug    = 'Composite',      -- Off | Density | Transmittance | Lighting | Steps | Anchors
-  nebulaDensity  = 1,          --   medium master gain (0..4)
+  nebulaEnabled  = true,
+  nebulaQuality  = 'Low',      -- Off | Low | Medium | High (10/20/48 march steps)
+  nebulaDebug    = 'Off',            -- Off | Density | Transmittance | Lighting | Steps | Anchors
+  nebulaDensity  = 1.5,        --   medium master gain (0..4)
   nebulaJitter   = 0.05,       --   ray-start dither in steps (0 = none; speckle knob)
-  nebulaBackground = 1,        --   everywhere-field presence (0..1.5, anchors unaffected)
-  nebulaCoverage = 1,          --   bank size/density multiplier (0.25..2.5)
-  nebulaRadius   = 12000,      --   max march distance, world units
-  nebulaG        = 0,          --   Henyey-Greenstein phase (phase 1.5 tune-up)
+  nebulaBackground = 0.2,      --   everywhere-field presence (0..1.5, anchors unaffected)
+  nebulaCoverage = 2,          --   bank size/density multiplier (0.25..2.5)
+  nebulaRadius   = 14000,      --   max march distance, world units
+  nebulaG        = 0.4,        --   Henyey-Greenstein phase (phase 1.5 tune-up)
   nebulaTint     = 0.0,       --   inscatter tint mix (0..1)
   nebulaTintR    = 1.0,          --     1 = warm (1, .6, .2)
   nebulaTintG    = 1.0,
@@ -266,10 +268,10 @@ Config.gpu = {
   -- point-light flash inside the volume march; storm schedule + bolt ribbon
   -- is LightningStorm.lua. Off = controller no-op, shader loop stays zero-cost.
   lightningEnable  = false,     -- master switch
-  lightningQuality = 'Low',     -- Low (2 concurrent) | High (4)
-  lightningEnergy  = 15,        -- nominal flash energy at nucleus (attenuated by 1/(d²+1))
-  lightningRadius  = 3500,      -- per-event radius cutoff, world units
-  lightningRate    = 1,         -- storm rate multiplier (bolt count × rate, intervals ÷ rate)
+  lightningQuality = 'High',    -- Low (2 concurrent) | High (4)
+  lightningEnergy  = 22,        -- nominal flash energy at nucleus (attenuated by 1/(d²+1))
+  lightningRadius  = 6000,      -- per-event radius cutoff, world units
+  lightningRate    = 2,         -- storm rate multiplier (bolt count × rate, intervals ÷ rate)
   lightningDebug   = 'Off',     -- Off | Region | Energy
 
   -- Sun: the warm directional light + ambient fill that makes asteroid fields /
@@ -277,18 +279,24 @@ Config.gpu = {
   -- hardcoded starColor (1, 0.5, 0.1) used by planet atmospheric scattering.
   sunLight        = true,  -- directional + dust backlight contribution
   sunIntensity    = 1,     --   direct/ambient brightness (0..6)
-  sunAmbientFill  = 0.42,  --   hemisphere fill so shadows aren't pure black; lifted
+  sunAmbientFill  = 0.4564,--   hemisphere fill so shadows aren't pure black; lifted
                            --   from 0.12 so GTAO (ambient-only) has visible contrast
                            --   (ao_on==ao_off composite measured 2026-09-10)
-  sunWarmth       = 1,     --   1 = warm orange (matching starColor), 0 = white
+  sunWarmth       = 0.7476,--   1 = warm orange (matching starColor), 0 = white
   sunShadows      = true,  -- directional shadow map from the sun
   sunShadowRange  = 8000,  --   half-size of the ortho shadow box (world units)
-  sunShadowSize   = '2048',--   shadow map resolution (256/512/1024/2048)
+  sunShadowSize   = '1024',--   shadow map resolution (256/512/1024/2048)
+  shadowMaxLights = 2,     -- max point lights that cast shadows (nearest to camera)
+  shadowPeriod    = 2,     -- update shadow maps every N frames (1 = every frame)
 
   -- PBR finishing: dielectric specular intensity (0..1) and IBL intensity
   -- (scales the irMap/envMap ambient in light/global).
   dielectricSpec = 0.35,
   ambientEnv     = 1.35,  -- IBL scale; lifted 1->1.35 so ambient-only AO reads
+  planetSunScale   = 1.0,   -- planets' sun-term brightness (Material_NoShade; 0 = nebula only)
+  planetAtmoGlow   = 0.756, -- planets' atmospheric-scattering brightness (0..3)
+  planetEnvAmbient = 1.75,  -- planets' nebula-skybox fill; separate from `ambientEnv`,
+                          -- which is the deferred-material IBL the ship/asteroids use
 
   -- GTAO screen-space ambient occlusion (see ssao-gtao-implementation.md).
   -- Opt-in: kept OFF by default until a mid-tier GPU measurement proves the
@@ -305,8 +313,11 @@ Config.gpu = {
   aoBlur        = 1,     -- bilateral denoise passes (0/1/2)
 
   -- Texture / edge quality.
-  filtering     = 'Aniso', -- Bilinear | Trilinear | Aniso (texture filter quality)
+  fovY          = 75,       -- camera vertical FOV (deg)
+  filtering     = 'Bilinear', -- Bilinear | Trilinear | Aniso (texture filter quality)
   superSample   = 'Off',    -- Off | 2x | 4x (SSAA: renders the frame over-res)
+  resolutionScale = '100%', -- render 3D below window size, upscale on present
+                            -- (100%|85%|75%|67%|50%; big perf lever at 4K)
 
   -- Future: antiAlias = 'TAA' — temporal AA (planned, not yet wired).
 }

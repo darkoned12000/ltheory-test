@@ -4,6 +4,7 @@ setmetatable(GameView, UI.Container)
 
 GameView.name = 'Game View'
 local ssTable = { 1, 2, 4 }
+local rsTable = { 1.0, 0.85, 0.75, 0.67, 0.50 }
 local Batcher = require('Game.Batcher')
 local NebulaVolumes = require('Game.NebulaVolumes')
 local LightningStorm = require('Game.LightningStorm')
@@ -159,7 +160,27 @@ function GameView:renderShadows (world, lights)
   self.shadowTexts = self.shadowTexts or {}
   self.shadowProjs = self.shadowProjs or {}
 
-  for i, light in ipairs(lights) do
+  -- Each shadow-casting point light costs a full scene render, so cap the set to
+  -- the N nearest the camera (render.shadow.maxLights). The rest still light the
+  -- scene, just without a shadow map. `light.shadow` marks which lights have a
+  -- valid map (maps persist across amortized updates; see render.shadow.period).
+  local maxLights = math.max(0, math.floor(Settings.get('render.shadow.maxLights') or 2))
+  for i = 1, #lights do lights[i].shadow = nil end
+  local casters = lights
+  if maxLights < #lights then
+    local scored = {}
+    for i = 1, #lights do
+      local p = lights[i].lp
+      local dx, dy, dz = eye.x - p.x, eye.y - p.y, eye.z - p.z
+      scored[i] = { light = lights[i], dist = dx * dx + dy * dy + dz * dz }
+    end
+    table.sort(scored, function (a, b) return a.dist < b.dist end)
+    casters = {}
+    for i = 1, maxLights do casters[i] = scored[i].light end
+  end
+
+  for i, light in ipairs(casters) do
+    light.shadow = true
     local tex = self.shadowTexts[light.entity]
 
     if not tex then
@@ -187,7 +208,7 @@ function GameView:renderShadows (world, lights)
 
     Draw.ClearDepth(1)
 
-    world:render(Event.Render(BlendMode.Disabled, eye))
+    world:render(Event.Render(BlendMode.Disabled, eye, 'pointshadow'))
 
     RenderState.PopDepthWritable()
     RenderState.PopDepthTest()
@@ -238,7 +259,7 @@ function GameView:renderSunShadow (world)
 
   Draw.ClearDepth(1)
 
-  world:render(Event.Render(BlendMode.Disabled, self.sunShadowCenter))
+  world:render(Event.Render(BlendMode.Disabled, self.sunShadowCenter, 'sunshadow'))
 
   RenderState.PopDepthWritable()
   RenderState.PopDepthTest()
@@ -377,6 +398,7 @@ function GameView:draw (focus, active)
   self.camera:push()
 
   local ss = ssTable[Settings.get('render.superSample')]
+  local rs = rsTable[Settings.get('render.resolutionScale') or 1] or 1.0
   local x, y, sx, sy = self:getRectGlobal()
   ClipRect.PushDisabled()
   RenderState.PushAllDefaults()
@@ -410,6 +432,20 @@ function GameView:draw (focus, active)
   ShaderVar.PushFloat3('sunColor', sunCol.x, sunCol.y, sunCol.z)
   ShaderVar.PushFloat ('sunFill',  sunFill)
 
+  -- Shadow cadence: every shadow map is a full scene render, so update them only
+  -- every Nth frame (render.shadow.period). Maps + projs persist between updates
+  -- and the passes reuse them.
+  do
+    local period = math.max(1, math.floor(Settings.get('render.shadow.period') or 1))
+    if (self.shadowTick or 0) <= 0 then
+      self.updateShadows = true
+      self.shadowTick = period - 1
+    else
+      self.updateShadows = false
+      self.shadowTick = self.shadowTick - 1
+    end
+  end
+
   do -- Texture-filter quality
     local tf = Settings.get('render.textureFilter')
     if tf ~= self.appliedTextureFilter then
@@ -424,10 +460,10 @@ function GameView:draw (focus, active)
   Profiler.Begin('Render.Submit')
   do -- Opaque Pass
     Profiler.Begin('Render.Opaque')
-    self.renderer:start(self.sx, self.sy, ss)
+    self.renderer:start(math.max(1, math.floor(self.sx * rs)), math.max(1, math.floor(self.sy * rs)), ss)
     Batcher.begin()
     RenderState.PushWireframe(Settings.get('render.wireframe'))
-    world:render(Event.Render(BlendMode.Disabled, eye))
+    world:render(Event.Render(BlendMode.Disabled, eye, 'gbuffer'))
     Batcher.replay()
     RenderState.PopWireframe()
     self.renderer:stop()
@@ -497,7 +533,7 @@ function GameView:draw (focus, active)
       if sUn then
         local shader = Cache.Shader('worldray', 'light/dir')
         if shader then
-          if Settings.get('render.sun.shadows') then
+          if Settings.get('render.sun.shadows') and self.updateShadows then
             self:renderSunShadow(world)
           end
           self.renderer.buffer2:push()
@@ -524,7 +560,7 @@ function GameView:draw (focus, active)
     end
 
     do -- Local lighting
-      self:renderShadows(world, lights)
+      if self.updateShadows then self:renderShadows(world, lights) end
       local shader = Cache.Shader('worldray', 'light/point')
       if shader then
         self.renderer.buffer2:push()
@@ -532,8 +568,8 @@ function GameView:draw (focus, active)
         shader:start()
         for i, v in ipairs(lights) do
           local lightPos = v.lp
-          local stex = self.shadowTexts[v.entity]
-          local sproj = self.shadowProjs[v.entity]
+          local stex = v.shadow and self.shadowTexts[v.entity]
+          local sproj = v.shadow and self.shadowProjs[v.entity]
 
           Shader.SetFloat3('lightColor', v.color.x, v.color.y, v.color.z)
           Shader.SetFloat3('lightPos', lightPos.x, lightPos.y, lightPos.z)
@@ -544,6 +580,11 @@ function GameView:draw (focus, active)
             Shader.SetFloat  ('sShadowBias',   Settings.get('render.shadow.bias') or 0.001)
             Shader.SetFloat  ('sShadowScale',  Settings.get('render.shadow.scale') or 0.0005)
             Shader.SetFloat  ('sShadowRadius', Settings.get('render.shadow.radius') or 2.0)
+            Shader.SetFloat  ('shadowEnable', 1)
+          else
+            -- Keep a valid 2D texture bound; shadowEnable=0 makes the shader skip it.
+            Shader.SetTex2D('texShadow', self.sunShadowTex or self.renderer.zBufferL)
+            Shader.SetFloat  ('shadowEnable', 0)
           end
           Shader.SetTex2D('texDepth', self.renderer.zBufferL)
           Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
@@ -631,14 +672,17 @@ function GameView:draw (focus, active)
 
   -- Composited UI Pass
   self.renderer:startUI(self.renderer.uiBuffer)
-  Viewport.Push(0, 0, ss * self.sx, ss * self.sy, true)
-  ClipRect.PushTransform(0, 0, ss, ss)
-  local uiScale = Matrix.Scaling(ss, ss, 1)
+  -- UI renders into the (possibly scaled) render buffer; present upscales it.
+  local uiKx = self.renderer.sx / math.max(1, self.sx)
+  local uiKy = self.renderer.sy / math.max(1, self.sy)
+  Viewport.Push(0, 0, self.renderer.sx, self.renderer.sy, true)
+  ClipRect.PushTransform(0, 0, uiKx, uiKy)
+  local uiScale = Matrix.Scaling(uiKx, uiKy, 1)
   ShaderVar.PushMatrix('mViewUI', uiScale)
   for i = 1, #self.children do self.children[i]:draw(focus, active) end
+  self:drawLightningUI()   -- same widget-space transform as the HUD
   ShaderVar.Pop('mViewUI')
   uiScale:free()
-  self:drawLightningUI()
   ClipRect.PopTransform()
   Viewport.Pop()
   self.renderer:endUI()

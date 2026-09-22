@@ -34,12 +34,15 @@ float mediumDensity (vec3 p) {
   // Wrap the phase and sway within a bounded range instead.
   float driftT = mod(volTime, 300.0);
   p += volFlow * (10.0 * sin(driftT * 0.02) + 6.0 * sin(driftT * 0.0071 + 1.7));
-  float a = valueNoise(p * 0.0004);
-  float b = valueNoise(p * 0.002);
-  float d = smoothstep(0.42, 0.62, 0.66 * a + 0.34 * b);
+  float a = smoothNoise(p * 0.0004);
+  // March step = radius/steps (~290 units at High). Any noise feature below
+  // ~2x that aliases into the "green speckle". Keep the finest octave well
+  // above it (0.0008 = 1250-unit features).
+  float b = smoothNoise(p * 0.0008);
+  float d = smoothstep(0.30, 0.72, 0.66 * a + 0.34 * b);
   if (volEvals >= 2.5) {
-    float m = valueNoise(p * 0.0016 + b * 3.0);
-    d *= smoothstep(0.35, 0.8, m);
+    float m = smoothNoise(p * 0.0006 + b * 3.0);
+    d *= smoothstep(0.25, 0.9, m);
   }
   return volDensity * volBackground * d;
 }
@@ -57,8 +60,8 @@ float anchorEnvelope (vec3 p) {
     if (dist >= 1.0) continue;
     float env = smoothstep(1.0, 0.0, dist);
 
-    float n = valueNoise(p * d.y + vec3(d.z));
-    rho += d.x * env * smoothstep(0.45, 0.8, n);
+    float n = smoothNoise(p * d.y + vec3(d.z));
+    rho += d.x * env * smoothstep(0.30, 0.9, n);
   }
   return rho;
 }
@@ -111,8 +114,8 @@ vec4 mediumCloud (vec3 p) {
     if (dist >= 1.0) continue;
     float env = smoothstep(1.0, 0.0, dist);
 
-    float n = valueNoise(p * d.y + vec3(d.z));
-    float ri = d.x * env * smoothstep(0.45, 0.8, n);
+    float n = smoothNoise(p * d.y + vec3(d.z));
+    float ri = d.x * env * smoothstep(0.30, 0.9, n);
     rho += ri;
     alb += ri * texelFetch(texAnchors, ivec2(2, i), 0).xyz;
   }

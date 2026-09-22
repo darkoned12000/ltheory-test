@@ -83,6 +83,9 @@ local Planet = subclass(Entity, function (self, seed, opts)
   self.atmoScale  = t.atmo > 0 and t.atmo or 1.0
   self.hasAtmo    = t.atmo > 0
   self.atmoTint   = t.atmoTint or { 1, 1, 1 }
+  self.relief     = t.relief or 1.0
+  self.emissive   = t.emissive or { 0, 0, 0 }
+  self.emissiveAmt = t.emissiveAmt or 0.0
 
   -- 4-stop biome ramp: low -> mid -> high -> peak (snow/ice caps etc.).
   self.oceanLevel = t.ocean[1] + (t.ocean[2] - t.ocean[1]) * rng:getUniform()
@@ -117,7 +120,6 @@ local Planet = subclass(Entity, function (self, seed, opts)
     self.orbitPhase   = rng:getUniform() * 2 * math.pi
     self.orbitSpeed   = cfg.orbitSpeed(rng) * (rng:getUniform() < 0.5 and -1 or 1)
     self.orbitIncl    = cfg.inclination(rng)
-    self.orbitRoll    = cfg.roll(rng)
     self:setKinematic(true)
   end
 
@@ -131,17 +133,19 @@ function Planet:update (state)
     self.orbitPhase = self.orbitPhase + self.orbitSpeed * state.dt
     local pp = self.parentPlanet:getPos()
     local r  = self.orbitRadius
-    -- Circular orbit in a tilted + rolled plane. Radius is preserved exactly
-    -- (roll about Y, then inclination about X); roll/incl are per-moon so
-    -- sibling orbits don't line up.
-    local ox = math.cos(self.orbitPhase) * r
-    local oz = math.sin(self.orbitPhase) * r
-    local cr, sr = math.cos(self.orbitRoll), math.sin(self.orbitRoll)
-    local x = ox * cr + oz * sr
-    local z = -ox * sr + oz * cr
+    -- Orbit in the PLANET'S equatorial plane: a fixed basis perpendicular to
+    -- the planet's spin axis, so moons orbit its equator rather than a world
+    -- plane. `orbitIncl` tilts off the equator; radius is preserved exactly.
+    local axis = self.parentPlanet.spinAxis or Vec3f(0, 1, 0)
+    local ref  = (math.abs(axis.y) < 0.9) and Vec3f(0, 1, 0) or Vec3f(1, 0, 0)
+    local e1 = axis:cross(ref):normalize()
+    local e2 = axis:cross(e1):normalize()
+    local ca, sa = math.cos(self.orbitPhase), math.sin(self.orbitPhase)
     local ci, si = math.cos(self.orbitIncl), math.sin(self.orbitIncl)
-    local y = -z * si
-    z = z * ci
+    local a1, a2, a3 = ca, sa * ci, sa * si
+    local x = (e1.x * a1 + e2.x * a2 + axis.x * a3) * r
+    local y = (e1.y * a1 + e2.y * a2 + axis.y * a3) * r
+    local z = (e1.z * a1 + e2.z * a2 + axis.z * a3) * r
     self:setPos(Vec3f(pp.x + x, pp.y + y, pp.z + z))
     self:setRot(Quat.FromLookUp(Vec3f(-x, -y, -z):normalize(), Vec3f(0, 1, 0)))
     return
@@ -155,12 +159,22 @@ function Planet:update (state)
 end
 
 function Planet:render (state)
+  -- The planet shader is heavy (fbm + scattering); it contributes nothing to a
+  -- thruster's point-light shadow map, so skip it there. It still goes into the
+  -- sun map so it can occlude the ship/asteroids.
+  if state.pass == 'pointshadow' then return end
   if state.mode == BlendMode.Disabled then
     local shader = Cache.Shader('wvp', 'material/planet')
     shader:start()
     Shader.SetFloat('heightMult', 1.0)
     Shader.SetFloat('oceanLevel', self.oceanLevel)
     Shader.SetFloat('hasAtmo', self.hasAtmo and 1.0 or 0.0)
+    Shader.SetFloat('relief', self.relief)
+    Shader.SetFloat3('emissive', self.emissive[1], self.emissive[2], self.emissive[3])
+    Shader.SetFloat('emissiveAmt', self.emissiveAmt)
+    Shader.SetFloat('envAmbient', Settings.get('render.planet.envAmbient') or 2.0)
+    Shader.SetFloat('sunScale',   Settings.get('render.planet.sunScale') or 1.0)
+    Shader.SetFloat('atmoGlow',   Settings.get('render.planet.atmoGlow') or 1.0)
     Shader.SetFloat3('atmoTint', self.atmoTint[1], self.atmoTint[2], self.atmoTint[3])
     Shader.SetFloat('rPlanet', self:getScale())
     Shader.SetFloat('rAtmo', self:getScale() * self.atmoScale)
@@ -201,6 +215,7 @@ function Planet:render (state)
     Shader.SetFloat3('scale', scale, scale, scale)
     Shader.SetFloat3('starColor', 1.0, 0.5, 0.1)
     Shader.SetFloat3('atmoTint', self.atmoTint[1], self.atmoTint[2], self.atmoTint[3])
+    Shader.SetFloat('atmoGlow', Settings.get('render.planet.atmoGlow') or 1.0)
     self.meshAtmo:draw()
     shader:stop()
     BlendMode.Pop()
