@@ -716,7 +716,7 @@ function GameView:draw (focus, active)
         if self.volCellKey ~= NebulaVolumes.cellKey(self.camera.pos) then
           self.volCellKey = NebulaVolumes.cellKey(self.camera.pos)
           self.volumes = NebulaVolumes.build(self.ltheory.seed, self.camera.pos,
-            Settings.get('nebula.radius') or 12000)
+            Settings.get('nebula.radius') or 12000, neb.hue)
         end
         ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
         ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
@@ -805,6 +805,7 @@ function GameView:draw (focus, active)
         (Settings.get('postfx.sharpen.radius') or 2) * 0.5,
         Settings.get('postfx.sharpen.strength') or 1)
     end
+    if Settings.get('postfx.fxaa.enable') then self.renderer:fxaa() end
     if Settings.get('postfx.grain.enable') then
       self.renderer:grain(Settings.get('postfx.grain.strength') or 1)
     end

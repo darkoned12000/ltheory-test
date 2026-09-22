@@ -1,4 +1,5 @@
 local Generator = require('Gen.Generator')
+local Palette   = require('Gen.Nebula.Palette')
 
 local function generateNebulaIFS (rng, res, starDir)
   Profiler.Begin('Nebula.Generate.IFS')
@@ -8,6 +9,8 @@ local function generateNebulaIFS (rng, res, starDir)
 
   do -- Nebula color
     local h = rng:getUniform()
+    -- Publish the sector hue so the volumetric plumes can match it.
+    Palette.hue = h
     local s = rng:getUniformRange(0.2, 0.8)
     local l = rng:getUniformRange(0.2, 0.8)
     local color = Color.FromHSL(h, s, l)

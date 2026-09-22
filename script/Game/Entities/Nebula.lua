@@ -1,3 +1,5 @@
+local Palette = require('Gen.Nebula.Palette')
+
 local Nebula = class(function (self, seed, starDir)
   self.seed = seed
   self.starDir = starDir
@@ -5,8 +7,14 @@ end)
 
 function Nebula:forceLoad ()
   if self.envMap then return end
+  -- Deterministic sector hue. Nebula1 (the IFS skybox, 90% of systems) refines
+  -- this to the exact hue it generates; Nebula2 (light-transport) has no single
+  -- hue, so this seed-derived value stands. Either way the plumes and the sky
+  -- share one palette instead of the plumes picking random wheel hues.
+  Palette.hue = RNG.Create(self.seed + 0x517E5ULL):managed():getUniform()
   local rng = RNG.Create(self.seed + 0xC0104FULL):managed()
   self.envMap = Gen.Generator.Get('Nebula', rng)(rng, Config.gen.nebulaRes, self.starDir):managed()
+  self.hue = Palette.hue
   self.irMap = self.envMap:genIRMap(256):managed()
   self.stars = Gen.Starfield(rng, Config.gen.nStars(rng)):managed()
 end

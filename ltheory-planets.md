@@ -178,6 +178,46 @@ the moving node. (See the node-UI doc for the map's own design.)
 
 ### 11.1 Green speckle — PRIORITY 1
 
+### ✅ RESOLVED 2026-09-22 — root cause: misaligned anchor upload
+
+`Renderer:volume` packed `texAnchors` with a **record layout that was stale by
+three fields**: `extX/extY/extZ` were added to `NebulaVolumes.build`'s record
+(upstream commit `b552ab4`) and the upload was never updated. So `medium.glsl`
+actually read:
+
+| shader wants | got |
+|---|---|
+| `d.x` = density | **extY** (~thousands) |
+| `d.y` = noise scale | **extZ** (~thousands) |
+| `d.z` = warp | density |
+| albedo | `(scale, warp, core.r)` |
+
+Two consequences: the noise was evaluated at `p * extZ` ≈ 1e9, where
+`fract(sin(x)*c)` is pure garbage — the per-pixel chromatic stipple the author
+had already written a warning about ("finer scales aliased into speckle") — and
+the medium came out effectively opaque (density ~1e3), which is why the nebula
+read as a flat green wash.
+
+**How it was pinned:** pixel forensics showed the noise was *chromatic*
+(σ≈2/255 in R/B, flat in G) and not luminance; `nebula.palette = 0` (which
+bypasses the albedo) removed it, while step count / jitter / density coarsening
+/ the composite denoise never could — because it was never in the density.
+
+**Fix:** `Renderer.lua` now writes `col1 = (density, scale, warp)`,
+`col2 = (core.rgb, -)`. Validator 137/0, clean boot; the nebula now renders as
+structured plumes rather than a wash, and **the speckle is gone** on the repro.
+
+**Follow-ups found while fixing — two half-wired features:**
+- **Palette coupling is not wired.** `NebulaVolumes.build` accepts `sectorHue`
+  to centre plume hues on the skybox, but GameView calls it without one, so
+  plumes take `0.02 + hash*0.95` = the whole colour wheel → clashing red/green
+  plumes against a differently-hued sky.
+- **Rim colour + ellipsoid extents are computed but never consumed** (`rr,rg,rb`
+  unused; the falloff is spherical on `extX` only), despite the
+  "dual-tone / non-uniform stretching" header.
+
+**Superseded investigation** (kept for the record):
+
 A fine **stipple/mottle** in the volumetric nebula, visible only where the scene
 behind it is **smooth and bright** (a planet disc / limb) — against the busy sky
 it's invisible. Composited as `scene * T + inscatter`, so it's grain in the
@@ -192,6 +232,73 @@ transmittance `T`.
 - **Not feature size.** Coarsening the finest octaves (background `0.002 →
   0.0008`, anchors `0.0015 → 0.0008`), widening the density `smoothstep`
   thresholds, and switching `valueNoise → smoothNoise` (C1) did not remove it.
+
+**Ruled out (2026-09-22):** the **half-res `volView` + upsample**. Upgrading the
+composite gather to a **5×5 Gaussian-weighted, depth-aware, *bilinear*** gather
+(was 3×3 nearest) did not remove it — a per-half-res-texel grain would have
+averaged away. Pixel forensics confirms the feature size is ~3–7 screen px
+(300 px crop @4×), *coarser* than one half-res texel.
+
+**Gating verified with instrumentation (2026-09-22):** `nebula.enable = false`
+(the "Nebula Volume" toggle) **or** `nebula.quality = Off` ⇒ `Renderer:volume` is
+**never called** (`[NEB] GameView gate enable=false quality=1`, no
+`Renderer:volume called`). `nebula.density` has exactly two consumers
+(`Renderer:volume`, `Renderer:godrays`) — both raymarches, both gated. So a
+`density = 0` that removes the speckle **proves the volume was running**: the
+speckle *is* the volumetric **inscatter**, not the skybox/ambient.
+
+**Deduction — it cannot be the march.** The grain survives both step count and
+jitter, so it is not sampling of the density. In `filter/volume.glsl` the only
+per-pixel quantities **independent of the march** are those forming the per-step
+`light`:
+
+```
+light = (sunColor * hgPhase(dot(rd, starDir)) + textureLod(irMap, rd, 6.0))
+        * albedo * tintFilter
+```
+
+Every step scales this same `light`, so a per-pixel wobble in it reads as a
+speckle regardless of step count — immune to jitter/coarsening/steps, exactly as
+observed.
+
+**Prime suspect — the irradiance cube is a noisy, nondeterministic MC estimate.**
+`libphx/src/TexCube_GenIRMap.cpp` + `fragment/compute/irmap.glsl`:
+- `RNG_FromTime()` → the sample set (hence `irMap`) is **different every boot**;
+  the lighting is not reproducible and the pattern "moves" between runs.
+- `float w = 1.0;` → GGX-distributed samples averaged with **uniform weight**
+  (no PDF weighting) → a cone-average, not a proper convolution.
+- every sample is `textureLod(src, L, 0.0)` → **always LOD 0**, so the coarse mips
+  (cone ≈ whole hemisphere) are 256 LOD-0 samples of a point-lit env → high
+  variance.
+
+**Pixel measurement of a live repro (2026-09-22, `screenshot/2026-09-22 02.png`):**
+- the bright green wash is **smooth in luminance**: high-pass σ ≈ 0.3–0.6 %
+  (≈1 LSB) — there is no brightness grain;
+- the residual is **chromatic**: σ ≈ 2/255 in R and B with G flat (a hue/sat
+  wobble), and it scales with wash brightness; dark regions don't show it.
+
+⇒ Not density/transmittance grain but the **colour of the medium's illumination**.
+Two *coloured*, march-independent inputs to `light` match: `albedo = mc.yzw`
+(the per-sample palette) and `ambient = textureLod(irMap, rd, 6.0)`. Both are
+immune to steps/jitter/coarsening/composite-denoise — exactly the observed
+behaviour. Knobs added for the A/B: **`nebula.ambient`** (irMap scale) and
+**`nebula.palette`** (albedo mix, 1 = palette, 0 = flat tint).
+
+**Decisive A/B (1 click, knob added 2026-09-22):** `nebula.ambient` (panel
+" - Ambient", `volume.glsl` `volAmbient`) scales **only** the `irMap` term in the
+inscatter.
+- Speckle **gone at 0** → confirmed MC-irradiance noise → fix 11.1a.
+- Speckle **remains** → it is the sun/phase term → suspect `worldDir`/`hgPhase`.
+
+**11.1a — refactor (candidate).** The nebula has **three** representations with no
+shared source of truth: the `envMap` cube + `irMap` (skybox + all ambient),
+`NebulaVolumes.lua` CPU anchors (rebuilt per cell, pop at boundaries), and
+`medium.glsl`'s own sin-hash field on the GPU. Tuning one does not move the
+others and the "off" switches are ambiguous. Proposal: (1) deterministic
+low-discrepancy (Hammersley) MC + LOD-matched sampling + proper weighting for
+`irMap`; (2) one integer hash shared CPU/GPU, replacing `fract(sin(x)*c)`;
+(3) derive skybox + anchors + medium from one seed field; (4) band-limit the
+medium to the march step.
 
 **Where that leaves us** — the grain is likely generated *upstream* of the
 march, or is spatial rather than sampling:

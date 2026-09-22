@@ -1,0 +1,13 @@
+-- Palette -- the sector's nebula hue, shared between the skybox generator and
+-- the volumetric plumes.
+--
+-- Nebula1 (the skybox IFS generator) picks the sector's hue from its RNG. The
+-- volumetric plumes (Game/Entities/Nebula -> Game/NebulaVolumes.build) must
+-- centre their hues on that same value. Without it they fall back to
+-- `0.02 + hash*0.95` -- the entire colour wheel -- and read as unrelated
+-- red/green patches sitting in front of a differently-coloured sky.
+--
+-- A cached module is the simplest thing both sides can agree on: `require`
+-- returns the same table everywhere in the process, and it is written during
+-- Nebula:forceLoad, which always precedes the volume pass.
+return { hue = 0.5 }

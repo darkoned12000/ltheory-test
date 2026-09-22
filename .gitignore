@@ -24,3 +24,8 @@
 *.swp
 *~
 .DS_Store
+
+# Runtime artifacts
+log/settings_dump.txt
+dump_*.png
+screenshot/

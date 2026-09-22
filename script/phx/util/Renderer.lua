@@ -45,6 +45,10 @@ local SETTINGS = {
   { kind = 'float', key = 'postfx.bloom.threshold',     label = ' - Threshold', default = 1, min = 0, max = 8, gpu = 'bloomThreshold' },
 
   { kind = 'bool',  key = 'postfx.sharpen.enable',      label = 'Sharpen',      default = true, gpu = 'sharpen' },
+  -- Cheap post-AA alternative to supersampling (wired to the existing
+  -- filter/fxaa shader). At 4K, SS 2x/4x cost ~4x/16x the pixels; FXAA is one
+  -- full-res pass.
+  { kind = 'bool',  key = 'postfx.fxaa.enable',         label = 'FXAA',         default = false, gpu = 'fxaa' },
   { kind = 'float', key = 'postfx.sharpen.strength',    label = ' - Strength',  default = 1, min = 0, max = 3, gpu = 'sharpenStrength' },
   { kind = 'float', key = 'postfx.sharpen.radius',      label = ' - Radius',    default = 2, min = 1, max = 6, gpu = 'sharpenRadius' },
 
@@ -91,6 +95,8 @@ local SETTINGS = {
     options = { 'Off', 'Density', 'Transmittance', 'Lighting', 'Steps', 'Anchors' }, gpu = 'nebulaDebug' },
   { kind = 'float', key = 'nebula.density', label = ' - Density',    default = 1.5, min = 0, max = 4, gpu = 'nebulaDensity' },
   { kind = 'float', key = 'nebula.jitter',  label = ' - Ray Jitter', default = 0.05, min = 0, max = 1, gpu = 'nebulaJitter' },
+  { kind = 'float', key = 'nebula.ambient', label = ' - Ambient',    default = 1.0, min = 0, max = 3, gpu = 'nebulaAmbient' },
+  { kind = 'float', key = 'nebula.palette', label = ' - Palette',     default = 1.0, min = 0, max = 1, gpu = 'nebulaPalette' },
   { kind = 'float', key = 'nebula.background', label = ' - Background', default = 0.2, min = 0, max = 1.5, gpu = 'nebulaBackground' },
   { kind = 'float', key = 'nebula.coverage', label = ' - Coverage',  default = 2, min = 0.25, max = 2.5, gpu = 'nebulaCoverage' },
   { kind = 'float', key = 'nebula.radius',  label = ' - Radius',     default = 14000, min = 500, max = 40000, gpu = 'nebulaRadius' },
@@ -153,6 +159,7 @@ local SETTINGS = {
   { kind = 'float', key = 'lighting.specular',   label = 'Dielectric Specular', default = 0.35, min = 0, max = 1, gpu = 'dielectricSpec' },
 
   -- Planet self-lighting (planets are Material_NoShade; see material/planet.glsl).
+  { kind = 'float', key = 'render.planet.relief',    label = 'Planet Relief',      default = 1.0,   min = 0, max = 3, gpu = 'planetRelief' },
   { kind = 'float', key = 'render.planet.sunScale',   label = 'Planet Sun Scale',   default = 1.0,   min = 0, max = 4, gpu = 'planetSunScale' },
   { kind = 'float', key = 'render.planet.envAmbient', label = 'Planet Nebula Fill', default = 1.75,  min = 0, max = 10, gpu = 'planetEnvAmbient' },
   { kind = 'float', key = 'render.planet.atmoGlow',   label = 'Planet Atmosphere',  default = 0.756, min = 0, max = 3,  gpu = 'planetAtmoGlow' },
@@ -248,6 +255,13 @@ function Renderer:applyFilter (frag, onSetVars)
   shader:stop()
   self.buffer1:pop()
   self:swap()
+end
+
+function Renderer:fxaa ()
+  Draw.Color(1, 1, 1, 1)
+  self:applyFilter('fxaa', function ()
+    Shader.SetFloat2('viewportSize', self.sx, self.sy)
+  end)
 end
 
 function Renderer:aberration (strength)
@@ -764,12 +778,21 @@ function Renderer:volume (med)
 
     local bytes = self.anchorBytes
     local p = ffi.cast('float*', bytes:getData())
+    -- Packing contract with include/medium.glsl:
+    --   col0 = (pos.xyz, extent)            -> c.xyz / c.w
+    --   col1 = (density, scale, warp, -)    -> d.x / d.y / d.z
+    --   col2 = (coreColor.rgb, -)           -> the per-anchor albedo
+    -- The record in NebulaVolumes.build is {px,py,pz, extX,extY,extZ, density,
+    -- scale, warp, core.rgb, rim.rgb}. This offset was stale by the three extent
+    -- fields: `scale` landed in the density slot and the colour was read from
+    -- (scale, warp, core.r), so the noise was sampled at p*extZ (~1e9, where the
+    -- sin hash is pure garbage) -> the per-pixel "green speckle".
     for i = 1, volCount do
       local a = anchors[i]
       local o = (i - 1) * 12
       p[o + 0], p[o + 1], p[o + 2], p[o + 3]  = a[1], a[2], a[3], a[4]
-      p[o + 4], p[o + 5], p[o + 6], p[o + 7]  = a[5], a[6], a[7], 0
-      p[o + 8], p[o + 9], p[o + 10], p[o + 11] = a[8], a[9], a[10], 0
+      p[o + 4], p[o + 5], p[o + 6], p[o + 7]  = a[7], a[8], a[9], 0
+      p[o + 8], p[o + 9], p[o + 10], p[o + 11] = a[10], a[11], a[12], 0
     end
     self.texAnchors:setDataBytes(bytes, PixelFormat.RGBA, DataFormat.Float)
   end
@@ -840,10 +863,13 @@ function Renderer:volume (med)
       Shader.SetFloat('volDist',    volDist)
       Shader.SetFloat('volEvals',   evalF)
       Shader.SetFloat('volJitter',  Settings.get('nebula.jitter') or 0.05)
+      Shader.SetFloat('volAmbient', Settings.get('nebula.ambient') or 1.0)
+      Shader.SetFloat('volPalette', Settings.get('nebula.palette') or 1.0)
       Shader.SetFloat3('volFlow', 40 * fx / fl, 40 * fy / fl, 40 * fz / fl)
       Shader.SetFloat('volTime',    volTime)
       Shader.SetFloat('volCount',   volCount)
-      if volCount > 0 and self.texAnchors then Shader.SetTex2D('texAnchors', self.texAnchors) end
+      if volCount > 0 and self.texAnchors then Shader.SetTex2D('texAnchors', self.texAnchors)
+      end
       Shader.SetFloat('volAniso',   volAniso)
       Shader.SetFloat3('volTint', tintR, tintG, tintB)
       Shader.SetFloat('volTintAmt', tintAmt)

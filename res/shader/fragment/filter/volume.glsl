@@ -19,6 +19,8 @@ uniform sampler2D texNoise;  /* 64x64 blue-noise LUT */
 uniform vec3      sunColor;  /* sun radiance */
 uniform float     volAniso;  /* Henyey-Greenstein g (-1..1) */
 uniform float     volJitter; /* ray-start jitter, in steps (0 = none) */
+uniform float     volAmbient;/* irMap ambient scale (0 = sun-term only) */
+uniform float     volPalette;/* medium albedo mix: 1 = per-sample palette, 0 = flat volTint */
 
 /* Lightning storm flash sources (fog-nebula Phase 4). Bounded 2D float table
  * mirroring texAnchors, ≤ lightningCount rows:
@@ -90,8 +92,8 @@ void main () {
       // each one to a dot on screen -> dots landed on planets ("light shining
       // through the planet"). A blurred LOD gives a smooth ambient instead.
       // (GenIRMap mipmaps, so this is well-defined.)
-      vec3 ambient = textureLod(irMap, rd, 6.0).xyz;
-      vec3 light = (sunColor * hgPhase(ndl) + ambient) * mc.yzw * tintFilter;
+      vec3 ambient = textureLod(irMap, rd, 6.0).xyz * volAmbient;
+      vec3 light = (sunColor * hgPhase(ndl) + ambient) * mix(volTint, mc.yzw, volPalette) * tintFilter;
       // Also bound the per-sample radiance so no direction can spike.
       light = min(light, vec3(3.0));
 

@@ -262,6 +262,8 @@ Config.gpu = {
   nebulaQuality  = 'Low',      -- Off | Low | Medium | High (10/20/48 march steps)
   nebulaDebug    = 'Off',            -- Off | Density | Transmittance | Lighting | Steps | Anchors
   nebulaDensity  = 1.5,        --   medium master gain (0..4)
+  nebulaAmbient  = 1.0,        --   irMap ambient scale in the inscatter (0 = sun-term only)
+  nebulaPalette  = 1.0,        --   medium albedo mix (1 = palette, 0 = flat tint)
   nebulaJitter   = 0.05,       --   ray-start dither in steps (0 = none; speckle knob)
   nebulaBackground = 0.2,      --   everywhere-field presence (0..1.5, anchors unaffected)
   nebulaCoverage = 2,          --   bank size/density multiplier (0.25..2.5)

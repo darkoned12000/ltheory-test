@@ -15,7 +15,7 @@ Config.render.vsync = false
 Config.window.fullscreen = true
 
 -- Manually set the universe seed (do not delete)
--- Config.gen.seedGlobal = 13358375402019159601ULL
+Config.gen.seedGlobal = 13358375402019159601ULL
 
 
 -- Config.gen.nBeltSize = function (rng) return 10000 end
@@ -45,7 +45,13 @@ end
 Config.gpu.nebulaEnabled  = true
 Config.gpu.nebulaQuality  = 'High'    -- 24 march steps (needs a real GPU)
 Config.gpu.nebulaDensity  = 2.2       -- medium gain (panel: 0..4)
-Config.gpu.nebulaBackground = 0.4     -- everywhere-field presence (kills sky wash, keeps banks)
+-- Everywhere-field presence. `density` scales sigma_t AS WELL AS the medium
+-- density, so the sky veil is quadratic in it:
+--   OD = 5e-5 * density^2 * background * radius
+-- at density 2.2 / radius 14k: background 0.4 -> OD 1.36 (the sky is only 26%
+-- transmissive = the "wash over everything"); 0.10 -> OD ~0.34 (~71%
+-- transmissive), so the anchor-span banks read against a mostly clear sky.
+Config.gpu.nebulaBackground = 0.10    -- everywhere-field presence (banks are anchor-driven)
 Config.gpu.nebulaCoverage = 2.0       -- bank size + core density (panel: 0.25..2.5, Freelancer-thick)
 Config.gpu.nebulaRadius   = 14000     -- march + storm-host sight range
 Config.gpu.nebulaG        = 0.4       -- forward-scatter rims on sun-side banks (panel: -1..1)
