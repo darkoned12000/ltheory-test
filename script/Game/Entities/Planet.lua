@@ -78,10 +78,13 @@ local Planet = subclass(Entity, function (self, seed, opts)
     power = (t.powerBase or 1.0) + (t.powerVar or 0.5) * rng:getExp(),
     coef  = (rng:getVec4(0.05, 1.00) ^ Vec4f(2, 2, 2, 2)):normalize()
   }
-  -- Only gen/planet declares `mountain`; setting a uniform a shader lacks aborts.
+  -- Only gen/planet declares `mountain`/`crater`/`valley`; setting a uniform a
+  -- shader lacks aborts.
   if t.gen == 'gen/planet' then
     params.mountain = t.mountain or 0.0
     params.crater   = t.crater or 0.0
+    params.valley   = t.valley or 0.0
+    params.crack    = t.crack or 0.0
   end
   self.texSurface = Gen.GenUtil.ShaderToTexCube(cubeRes, TexFormat.RGBA16F, t.gen, params):managed()
 

@@ -154,21 +154,21 @@ Config.render = {
     --   hue/sat/light = palette ranges (light ramps toward peaks)
     -- forceType = 'terrestrial' pins every planet's type for auditioning
     -- (override in Config.Local.lua); nil = weighted per-seed pick.
-    forceType = 'terrestrial', -- default is nil
+    forceType = 'lava', -- default is nil
     types = {
       { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 },
-        hue = { 0.18, 0.46 }, sat = { 0.12, 0.34 }, light = { 0.11, 0.40 }, crater = 0.45, relief = 10.0 },
+        hue = { 0.18, 0.46 }, sat = { 0.12, 0.34 }, light = { 0.11, 0.40 }, crater = 0.45, relief = 10.0, valley = 0.35, crack = 0.25 },
       { name = 'ocean',       weight = 14, gen = 'gen/planet', ocean = { 0.62, 0.92 }, atmo = 1.15, weather = 0.70, mountain = 0.45, atmoTint = { 0.90, 1.00, 1.10 },
-        hue = { 0.50, 0.62 }, sat = { 0.18, 0.40 }, light = { 0.14, 0.30 }, crater = 0.08, relief = 4.0 },
+        hue = { 0.50, 0.62 }, sat = { 0.18, 0.40 }, light = { 0.14, 0.30 }, crater = 0.08, relief = 4.0, valley = 0.25, crack = 0.15 },
       { name = 'desert',      weight = 14, gen = 'gen/planet', ocean = { 0.00, 0.03 }, atmo = 1.03, weather = 0.08, mountain = 0.70, atmoTint = { 1.40, 0.95, 0.55 },
-        hue = { 0.04, 0.12 }, sat = { 0.20, 0.45 }, light = { 0.10, 0.44 }, crater = 0.90, relief = 14.0 },
+        hue = { 0.04, 0.12 }, sat = { 0.20, 0.45 }, light = { 0.10, 0.44 }, crater = 0.90, relief = 14.0, valley = 0.50, crack = 0.45 },
       { name = 'ice',         weight = 14, gen = 'gen/planet', ocean = { 0.15, 0.55 }, atmo = 1.05, weather = 0.40, mountain = 0.70, atmoTint = { 0.90, 0.98, 1.12 },
-        hue = { 0.55, 0.66 }, sat = { 0.05, 0.18 }, light = { 0.22, 0.55 }, crater = 0.55, relief = 7.0 },
+        hue = { 0.55, 0.66 }, sat = { 0.05, 0.18 }, light = { 0.22, 0.55 }, crater = 0.55, relief = 7.0, valley = 0.30, crack = 0.35 },
       { name = 'barren',      weight = 18, gen = 'gen/moon',   ocean = { 0.00, 0.00 }, atmo = 0.0,  weather = 0.00,
         hue = { 0.05, 0.10 }, sat = { 0.02, 0.16 }, light = { 0.06, 0.22 },
         freqBase = 6, powerBase = 1.0, powerVar = 1.0 },
       { name = 'lava',        weight =  8, gen = 'gen/planet', ocean = { 0.00, 0.00 }, atmo = 1.04, weather = 0.15, mountain = 1.00, atmoTint = { 1.60, 0.60, 0.32 },
-        hue = { 0.00, 0.04 }, sat = { 0.25, 0.55 }, light = { 0.05, 0.14 }, crater = 0.30, relief = 14.0,
+        hue = { 0.00, 0.04 }, sat = { 0.25, 0.55 }, light = { 0.05, 0.14 }, crater = 0.30, relief = 14.0, valley = 0.45, crack = 0.40,
         emissive = { 1.00, 0.28, 0.05 }, emissiveAmt = 1.3 },
     },
 

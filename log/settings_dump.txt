@@ -1,11 +1,11 @@
 ==== Debug Panel Snapshot ====
-time:    2026-09-21 21:46:22
+time:    2026-09-21 23:32:51
 window:  3840x2160
-frame:   7.28 ms  (avg 137.4 fps, 1% low 7.86 ms)
-render:  submit 0.55 | postfx 0.48 | present 0.00 ms
+frame:   9.48 ms  (avg 105.5 fps, 1% low 10.29 ms)
+render:  submit 0.64 | postfx 0.56 | present 0.00 ms
 pools:   2 objects / 0 rigidbodies | entities 94 | textures 4
-lua:     10.36 kb | gc 59.34 kb/s | passes 628 | freq 1.02 Hz
-hdr:     avg 0.1528 max 14.2500 over1 0.88% lit 0.1528 autoEV +0.00
+lua:     8.80 kb | gc 59.65 kb/s | passes 78 | freq 0.95 Hz
+hdr:     avg 0.2952 max 22.7031 over1 5.13% lit 0.2966 autoEV +0.00
 
 -- settings --
 postfx.aberration.enable   false
@@ -45,11 +45,11 @@ postfx.fog.r               0.04
 postfx.fog.g               0.06
 postfx.fog.b               0.13
 nebula.enable              true
-nebula.quality             Low
+nebula.quality             High
 nebula.debug               Off
-nebula.density             1.505
-nebula.jitter              0.05195
-nebula.background          0.2013
+nebula.density             2.2
+nebula.jitter              0.05
+nebula.background          0.4
 nebula.coverage            2
 nebula.radius              1.4e+04
 nebula.g                   0.4
@@ -61,13 +61,13 @@ postfx.godrays.enable      false
 postfx.godrays.strength    1
 postfx.godrays.g           0.92
 postfx.godrays.debug       Off
-lightning.enable           false
+lightning.enable           true
 lightning.quality          High
 lightning.energy           22
 lightning.radius           6000
 lightning.rate             2
 lightning.debug            Off
-render.fovY                74.96
+render.fovY                75
 render.superSample         Off
 render.resolutionScale     100%
 render.wireframe           false
@@ -89,8 +89,8 @@ render.shadow.period       2
 render.vsync               false
 lighting.ambientEnv        1.35
 lighting.specular          0.35
-render.planet.sunScale     1.007
-render.planet.envAmbient   1.754
+render.planet.sunScale     1
+render.planet.envAmbient   1.75
 render.planet.atmoGlow     0.756
 ssao.enable                false
 ssao.quality               Half

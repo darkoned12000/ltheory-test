@@ -11,6 +11,8 @@ uniform float power;
 uniform vec4 coef;
 uniform float mountain;   // ridge amplitude (0 = featureless, 1 = strong ranges)
 uniform float crater;     // impact-crater amplitude (0 = none)
+uniform float valley;     // valley depth (0 = none; carves low ground down)
+uniform float crack;      // crack/rift amplitude (0 = none; narrow deep grooves)
 
 float genClouds(vec3 p) {
   p += 0.5 * vec3(
@@ -67,6 +69,23 @@ float genCraters (vec3 p) {
   return c;
 }
 
+// Surface cracks / rifts: NARROW, deep grooves along smooth-noise contours.
+// `valley` above only lowers broad basins; this is what reads as a crack you
+// look down into. `1-|2v-1|` is a thin ridge along the contour `v==0.5`; the
+// power narrows it, and the frequency is higher than the base terrain so the
+// lines are distinct rather than just smoother slopes.
+float genCracks (vec3 p) {
+  float acc = 0.0, amp = 1.0, f = max(1.0, freq) * 2.5;
+  for (int i = 0; i < 3; ++i) {
+    float v = fSmoothNoise(p * f, 3, 2.0);
+    float line = pow(1.0 - abs(2.0 * v - 1.0), 6.0);
+    acc += amp * line;
+    amp *= 0.55;
+    f *= 2.1;
+  }
+  return clamp(acc, 0.0, 1.0);
+}
+
 float genHeight(vec3 p) {
   // Pre-scaled initial vector
   vec4 z = vec4(p * 0.25 + 0.75, 0.3);
@@ -91,7 +110,12 @@ float genHeight(vec3 p) {
   // larger mountain lifts ridges toward the top of the range WITHOUT exceeding
   // it (so raising the amplitude adds relief instead of clipping flat peaks).
   float ridge = genRidge(p);
-  float h = base + mountain * ridge * (1.0 - base);
+  // Ridges lift toward the top of the range; `valley` carves the LOW ground
+  // down instead (mountain already saturates at 1, so this is the only way to
+  // deepen relief). Scaled by `base` so it deepens continental interiors, and
+  // by (1-ridge) so crests are untouched.
+  float h = base + mountain * ridge * (1.0 - base) - valley * (1.0 - ridge) * base;
+  h -= crack * genCracks(p);
   h += crater * genCraters(p);
   return clamp(h, 0.0, 1.0);
 }
