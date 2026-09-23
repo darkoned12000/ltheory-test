@@ -27,6 +27,7 @@ uniform float envAmbient;   // skybox irradiance scale for the night side
 uniform vec3  sunColor;     // engine sun colour (Sun Light enable/intensity/warmth baked in)
 uniform float sunScale;     // extra per-planet sun brightness scale
 uniform float atmoGlow;     // atmosphere scattering brightness (0 = no glow, 1 = default)
+uniform float atmoSun;      // engine sun intensity x scattering gain (see atmosphereDefault)
 
 const float kSpecular = 1.0;
 const vec3 kOceanColor = vec3(0.01, 0.13, 0.20);
@@ -128,10 +129,10 @@ void main() {
   color = surface * (sunLit + amb * mix(1.0, 1.0 - 0.85 * sun, sunOn));
 
   if (hasAtmo > 0.5) {
-    vec4 atmo = atmosphereDefault(V, eye - origin);
-    // scattering2 is a SECOND, hardcoded sun (iSun=22, its own starColor) and
-    // ignores render.sun.*. Gate its colour with the engine sun so 'Sun Light'
-    // off actually darkens the planet instead of leaving a glowing atmosphere.
+    vec4 atmo = atmosphereDefault(V, eye - origin, atmoSun);
+    // starColor (hue) and atmoSun (intensity) are mirrored from render.sun.*,
+    // then gated by the engine sun colour so 'Sun Light' off darkens the planet
+    // instead of leaving a glowing shell.
     atmo.xyz *= sunOn * atmoGlow;
     color = atmo.xyz + color * (1.0 - atmo.w);
   }

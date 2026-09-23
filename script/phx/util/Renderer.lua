@@ -108,7 +108,7 @@ local SETTINGS = {
 
   -- God-rays (fog-nebula Phase 3, independent A/B product) ---------------
   { kind = 'bool',  key = 'postfx.godrays.enable',   label = 'God Rays',      default = false, gpu = 'godraysEnabled' },
-  { kind = 'float', key = 'postfx.godrays.strength', label = ' - Strength',   default = 1, min = 0, max = 4, gpu = 'godraysStrength' },
+  { kind = 'float', key = 'postfx.godrays.strength', label = ' - Strength',   default = 8, min = 0, max = 32, gpu = 'godraysStrength' },
   { kind = 'float', key = 'postfx.godrays.g',        label = ' - Anisotropy', default = 0.92, min = 0, max = 0.98, gpu = 'godraysG' },
   { kind = 'enum',  key = 'postfx.godrays.debug',    label = ' - Debug View', default = 1,
     options = { 'Off', 'Shaft' }, gpu = 'godraysDebug' },
@@ -146,6 +146,7 @@ local SETTINGS = {
   { kind = 'float', key = 'render.sun.intensity', label = ' - Intensity',    default = 1, min = 0, max = 6, gpu = 'sunIntensity' },
   { kind = 'float', key = 'render.sun.fill',      label = ' - Ambient Fill', default = 0.4564, min = 0, max = 1, gpu = 'sunAmbientFill' },
   { kind = 'float', key = 'render.sun.warmth',    label = ' - Warmth',       default = 0.7476, min = 0, max = 1, gpu = 'sunWarmth' },
+  { kind = 'bool',  key = 'render.sun.marker',    label = ' - Direction Marker', default = false, gpu = 'sunMarker' },
   { kind = 'bool',  key = 'render.sun.shadows',   label = ' - Shadows',      default = true, gpu = 'sunShadows' },
   { kind = 'float', key = 'render.sun.shadowRange', label = ' - Shadow Range', default = 8000, min = 500, max = 20000, gpu = 'sunShadowRange' },
   { kind = 'enum',  key = 'render.sun.shadowSize',  label = ' - Shadow Res',   default = 3,

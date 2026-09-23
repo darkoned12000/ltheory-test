@@ -154,7 +154,7 @@ Config.render = {
     --   hue/sat/light = palette ranges (light ramps toward peaks)
     -- forceType = 'terrestrial' pins every planet's type for auditioning
     -- (override in Config.Local.lua); nil = weighted per-seed pick.
-    forceType = 'lava', -- default is nil
+    forceType = nil, -- default is nil
     types = {
       { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 },
         hue = { 0.18, 0.46 }, sat = { 0.12, 0.34 }, light = { 0.11, 0.40 }, crater = 0.45, relief = 10.0, valley = 0.35, crack = 0.25 },
@@ -278,7 +278,7 @@ Config.gpu = {
   -- pass from starDir: its own on/off + strength, forward-scatter lobe + A/B
   -- debug view. Off = renderer never invoked.
   godraysEnabled  = false,
-  godraysStrength = 1,          -- additive shaft gain (0..4)
+  godraysStrength = 8,          -- additive shaft gain (0..32; bloom-thresholded, ~6-16 is the visible band)
   godraysG        = 0.92,       --   shaft HG phase g (tight forward lobe)
   godraysDebug    = 'Off',      --   Off | Shaft
 
@@ -301,6 +301,7 @@ Config.gpu = {
                            --   from 0.12 so GTAO (ambient-only) has visible contrast
                            --   (ao_on==ao_off composite measured 2026-09-10)
   sunWarmth       = 0.7476,--   1 = warm orange (matching starColor), 0 = white
+  sunMarker       = false, --   draw a crosshair where starDir projects (analysis aid)
   sunShadows      = true,  -- directional shadow map from the sun
   sunShadowRange  = 8000,  --   half-size of the ortho shadow box (world units)
   sunShadowSize   = '1024',--   shadow map resolution (256/512/1024/2048)

@@ -28,6 +28,20 @@ function Nebula:render (state)
     local shader = Cache.Shader('farplane', 'skybox')
     CullFace.Push(CullFace.None)
     shader:start()
+    do -- Visible star at starDir, mirroring the engine sun (see skybox.glsl).
+       -- Same hue mix GameView uses to build the scene's sunColor, times
+       -- intensity, so 'Sun Light' off takes the star with it.
+      local sd = self.starDir
+      local len = math.sqrt(sd.x * sd.x + sd.y * sd.y + sd.z * sd.z)
+      if len < 1e-6 then sd = Vec3f(0, 1, 0); len = 1 end
+      local sw = (Settings and Settings.get and Settings.get('render.sun.warmth')) or 1
+      local si = (Settings and Settings.get and Settings.get('render.sun.intensity')) or 1
+      local on = (not Settings) or (not Settings.get) or Settings.get('render.sun.enable')
+      local gain = (on and si) or 0.0
+      Shader.SetFloat3('sunStarDir', sd.x / len, sd.y / len, sd.z / len)
+      Shader.SetFloat3('sunStarColor', 1.0, 1.0 - 0.4 * sw, 1.0 - 0.8 * sw)
+      Shader.SetFloat('sunStarGain', gain)
+    end
     Draw.Box3(Box3f(-1, -1, -1, 1, 1, 1))
     shader:stop()
     CullFace.Pop()

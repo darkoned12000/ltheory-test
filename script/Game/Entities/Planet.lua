@@ -172,6 +172,17 @@ function Planet:render (state)
   -- thruster's point-light shadow map, so skip it there. It still goes into the
   -- sun map so it can occlude the ship/asteroids.
   if state.pass == 'pointshadow' then return end
+  -- Engine sun, mirrored so the atmosphere tracks render.sun.* like every other
+  -- surface term. starColor carries the hue (the same warmth mix GameView uses
+  -- to build the scene's sunColor) and atmoSun the intensity x the scattering
+  -- gain (historically a fixed 22x). These were a hardcoded (1, 0.5, 0.1) star
+  -- at a constant 22x, so the limb glow ignored the sun controls and lit the
+  -- planet from a direction with no visible source in the sky.
+  local sw = Settings.get('render.sun.warmth') or 1
+  local si = Settings.get('render.sun.intensity') or 1
+  local starR, starG, starB = 1.0, 1.0 - 0.4 * sw, 1.0 - 0.8 * sw
+  local atmoSun = 22.0 * si
+
   if state.mode == BlendMode.Disabled then
     local shader = Cache.Shader('wvp', 'material/planet')
     shader:start()
@@ -193,7 +204,8 @@ function Planet:render (state)
     Shader.SetFloat3('color4', self.color4.x, self.color4.y, self.color4.z)
     local pos = self:getPos()
     Shader.SetFloat3('origin', pos.x, pos.y, pos.z)
-    Shader.SetFloat3('starColor', 1.0, 0.5, 0.1)
+    Shader.SetFloat3('starColor', starR, starG, starB)
+    Shader.SetFloat('atmoSun', atmoSun)
     Shader.SetMatrix('mWorld', self:getToWorldMatrix())
     Shader.SetMatrixT('mWorldIT', self:getToLocalMatrix())
     Shader.SetTexCube('surface', self.texSurface)
@@ -222,7 +234,8 @@ function Planet:render (state)
     local pos = self:getPos()
     Shader.SetFloat3('origin', pos.x, pos.y, pos.z)
     Shader.SetFloat3('scale', scale, scale, scale)
-    Shader.SetFloat3('starColor', 1.0, 0.5, 0.1)
+    Shader.SetFloat3('starColor', starR, starG, starB)
+    Shader.SetFloat('atmoSun', atmoSun)
     Shader.SetFloat3('atmoTint', self.atmoTint[1], self.atmoTint[2], self.atmoTint[3])
     Shader.SetFloat('atmoGlow', Settings.get('render.planet.atmoGlow') or 1.0)
     self.meshAtmo:draw()

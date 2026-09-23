@@ -199,13 +199,18 @@ const float hRayleigh = 0.1;
 const float hMie = 0.03;
 const float pMie = 0.758;
 
-vec4 atmosphereDefault(vec3 rd, vec3 ro) {
+/* iSun is the engine sun intensity (render.sun.intensity) x the scattering
+ * gain, and starColor carries the engine hue (render.sun.warmth). The
+ * atmosphere has to track the sun like every other surface term; it used to
+ * pass a fixed 22.0 and a literal star colour, so the limb glow stayed bright
+ * no matter what the sun controls said -- a light with no visible source. */
+vec4 atmosphereDefault(vec3 rd, vec3 ro, float iSun) {
   float atmoScale = (rAtmo - rPlanet) / rAtmo;
   return atmosphere(
     rd,
     (ro / rPlanet),
     starDir,
-    22.0,
+    iSun,
     1.0,
     rAtmo / rPlanet,
     kRayleigh * atmoTint,

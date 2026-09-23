@@ -687,6 +687,7 @@ function GameView:draw (focus, active)
   ShaderVar.PushMatrix('mViewUI', uiScale)
   for i = 1, #self.children do self.children[i]:draw(focus, active) end
   self:drawLightningUI()   -- same widget-space transform as the HUD
+  self:drawSunMarker()     -- where the scene light actually comes from
   ShaderVar.Pop('mViewUI')
   uiScale:free()
   ClipRect.PopTransform()
@@ -755,7 +756,10 @@ function GameView:draw (focus, active)
         -- Fade to exactly 0 once the sun goes one rim-depth past the edge of the
         -- frame, so shafts ease in/out at the frustum edge instead of popping.
         local rim = math.min(cx, cy) * 0.98
-        local sunFade = math.max(0.0, 1.0 - (len - rim) / rim)
+        -- Clamp to [0,1]: inside the frame this is 1.0, and it only ramps down
+        -- as the sun leaves. Without the min() it reaches 2.0 at screen centre,
+        -- so shafts were boosted toward the middle instead of faded.
+        local sunFade = math.max(0.0, math.min(1.0, 1.0 - (len - rim) / rim))
         local k = math.min(1.0, rim / len)
         local sunUv = { x = (cx + dx * k) / self.sx, y = (cy + dy * k) / self.sy }
         if sunFade > 1e-3 or godDbg > 0 then
@@ -828,6 +832,41 @@ function GameView:draw (focus, active)
   RenderState.PopAll()
   ClipRect.Pop()
   self.camera:pop()
+end
+
+-- Sun direction marker (render.sun.marker, default off). The scene is lit from
+-- starDir; before the skybox star existed nothing was drawn there, so a planet
+-- could read as lit by a phantom. A crosshair at starDir's screen position turns
+-- a seed sweep into "is the light coming from somewhere visible?". Uses the same
+-- projection the god-rays call does, and the same UI-pass idiom as the lightning
+-- ribbons, so it lines up with what is on screen.
+function GameView:drawSunMarker ()
+  if not Settings.get('render.sun.marker') then return end
+  local sys = self.ltheory and self.ltheory.system
+  local neb = sys and sys.nebula
+  if not (neb and neb.starDir) then return end
+  local sd = Vec3f(neb.starDir.x, neb.starDir.y, neb.starDir.z)
+  if sd:length() < 1e-6 then return end
+  sd = sd:normalize()
+  local ndc = self.camera:worldToNDC(self.camera.pos + sd:muls(1e5))
+  if not (ndc and ndc.z and ndc.z > 0) then return end
+  local s = self.camera:ndcToScreen(ndc)
+  local cx, cy = tonumber(s and s.x), tonumber(s and s.y)
+  if not (cx and cy and cx == cx and cy == cy) then return end
+
+  local r = 14
+  Draw.Color(0, 0, 0, 0.55)                      -- backing: reads on sky + planet
+  for i = 0, 15 do
+    local t0 = (i / 16) * 6.2831853
+    local t1 = ((i + 1) / 16) * 6.2831853
+    Draw.Line(cx + math.cos(t0) * r, cy + math.sin(t0) * r,
+              cx + math.cos(t1) * r, cy + math.sin(t1) * r)
+  end
+  Draw.Color(1.0, 0.75, 0.25, 0.95)
+  Draw.Line(cx - r - 6, cy, cx - r + 2, cy)
+  Draw.Line(cx + r - 2, cy, cx + r + 6, cy)
+  Draw.Line(cx, cy - r - 6, cx, cy - r + 2)
+  Draw.Line(cx, cy + r - 2, cx, cy + r + 6)
 end
 
 -- Decorative storm visuals, drawn in the UI pass (screen-pixel space):

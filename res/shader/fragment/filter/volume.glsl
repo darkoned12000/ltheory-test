@@ -93,7 +93,13 @@ void main () {
       // through the planet"). A blurred LOD gives a smooth ambient instead.
       // (GenIRMap mipmaps, so this is well-defined.)
       vec3 ambient = textureLod(irMap, rd, 6.0).xyz * volAmbient;
-      vec3 light = (sunColor * hgPhase(ndl) + ambient) * mix(volTint, mc.yzw, volPalette) * tintFilter;
+      // The medium's own albedo/tint, applied to EVERY radiance term so the
+      // local cloud keeps a single colour. The lightning used to be added after
+      // this multiply, so a strike lit its plume with the bare blue-white lamp
+      // colour -> a small cloud in a shade that didn't match the surrounding
+      // nebula. A bolt is blue-white; the gas it lights is mauve.
+      vec3 albedo = mix(volTint, mc.yzw, volPalette) * tintFilter;
+      vec3 light = (sunColor * hgPhase(ndl) + ambient) * albedo;
       // Also bound the per-sample radiance so no direction can spike.
       light = min(light, vec3(3.0));
 
@@ -119,7 +125,7 @@ void main () {
         float soft = clamp(1.0 - norm, 0.0, 1.0);
         soft *= soft;
         float att = (lc.w * flash) / (norm * norm * 64.0 + 1.0) * soft * exp(-dL * volSigmaT);
-        light += lc.rgb * att;
+        light += lc.rgb * att * albedo;
       }
 
       float stepTr = exp(-volSigmaT * rho * step);
