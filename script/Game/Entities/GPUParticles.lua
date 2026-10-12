@@ -26,6 +26,7 @@
 ]]
 
 local Entity = require('Game.Entity')
+local Seed = require('Game.Seed')
 
 local ffi = require('ffi')
 local GPUBuffer = require('ffi.GPUBuffer')
@@ -50,7 +51,9 @@ local queue = {}
 local spawnData = ffi.new('float[?]', MAX_SPAWNS_PER_FRAME * RECORD_FLOATS)
 local metaData = ffi.new('uint32_t[4]', { 0, 0, 0, 0 }) -- {count, tail(gpu), -}
 
-local rng = RNG.FromTime()
+-- Burst counter: each explode() gets its own stream, seeded from the world seed
+-- plus this ordinal, so a replayed session throws the same sparks (Game.Seed).
+local burstCount = 0
 
 -- PHX_SELFTEST_PARTICLES=1 : boot-time burst + pool readback verification.
 local selfTestArmed = os.getenv('PHX_SELFTEST_PARTICLES') ~= nil
@@ -129,6 +132,9 @@ end
   size together so big rocks pop bigger than small ones.
 ]]
 function GPUParticles.explode (pos, baseVel, scale)
+  burstCount = burstCount + 1
+  local rng = Seed.rng('particles.burst', burstCount):managed()
+
   -- Audio: one-shot boom sized with the burst (one-shot voices free themselves).
   local sfx = Config.audio.sfx.explosion
   local sound = Sound.Load(sfx.sound, false, true)

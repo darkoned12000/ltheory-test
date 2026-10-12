@@ -1,3 +1,5 @@
+local Seed = require('Game.Seed')
+
 local kFleckDistance = 1024
 local kCloudDistance = 1024
 
@@ -5,7 +7,9 @@ local Dust = class(function (self) end)
 
 function Dust:forceLoad ()
   if self.clouds then return end
-  local rng = RNG.FromTime():managed()
+  -- Loaded lazily on first render, well after Seed.setWorld, so the dust field
+  -- is part of the reproducible world.
+  local rng = Seed.rng('dust'):managed()
 
   do -- Dust clouds mesh
     local mesh = Mesh.Create():managed()

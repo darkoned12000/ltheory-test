@@ -1,13 +1,15 @@
 local Entity = require('Game.Entity')
+local Seed = require('Game.Seed')
 
 local mesh
 local meshJet
-local rng = RNG.FromTime()
 
 local Thruster
 Thruster = subclass(Entity, function (self)
   if not mesh then
-    mesh = Gen.ShipFighter.EngineSingle(rng)
+    -- Created on first construction (never at module load), so the shared mesh
+    -- is already reproducible from the world seed.
+    mesh = Gen.ShipFighter.EngineSingle(Seed.rng('thruster.mesh'))
     mesh:computeNormals()
     mesh:computeAO(0.1)
     meshJet = Gen.Primitive.Billboard(-1, 0, 1, 1)
@@ -20,7 +22,10 @@ Thruster = subclass(Entity, function (self)
   self.activationT = 0
   self.boost = 0
   self.boostT = 0
-  self.time = rng:getUniformRange(0, 1000)
+  -- Per-entity flame phase. Seeded from the entity id rather than a shared
+  -- stream, so it does not depend on how many thrusters happened to be built
+  -- before this one.
+  self.time = Seed.rng('thruster.time', self.id):managed():getUniformRange(0, 1000)
 
   self:register(Event.Render, Thruster.render)
   self:register(Event.Update, Thruster.update)

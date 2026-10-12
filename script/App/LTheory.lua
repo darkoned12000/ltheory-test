@@ -1,17 +1,23 @@
 local Entities = requireAll('Game.Entities')
+local Seed = require('Game.Seed')
 local DebugControl = require('Game.Controls.DebugControl')
 
 local LTheory = Application()
-local rng = RNG.FromTime()
 
 function LTheory:generate ()
+  -- Resolve the world seed FIRST and publish it: everything created below --
+  -- and later, by entities -- derives its randomness from it, so this boot's
+  -- "Seed:" line reproduces the whole world, not just the sector (Game.Seed).
   if Config.gen.seedGlobal then
     self.seed = Config.gen.seedGlobal
   else
-    self.seed = rng:get64()
+    self.seed = RNG.FromTime():managed():get64()
   end
+  Seed.setWorld(self.seed)
   printf('Seed: %s', self.seed)
   printf('Resolution: %dx%d', self.resX, self.resY)
+
+  local rng = Seed.rng('ltheory.generate'):managed()
 
   if self.system then self.system:delete() end
   self.system = Entities.System(self.seed)

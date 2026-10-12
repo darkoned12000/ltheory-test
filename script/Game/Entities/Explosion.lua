@@ -17,12 +17,10 @@ end)
 
 local cache
 local mesh
-local rng
 local shader
 
 Preload.Add (function ()
   mesh = Gen.Primitive.Billboard(-1, -1, 1, 1)
-  rng = RNG.FromTime()
   shader = Cache.Shader('billboard/quadpos', 'effect/explosion')
   cache = ShaderVarCache(shader, { 'color', 'origin', 'up', 'age', 'seed', 'size' })
 end)

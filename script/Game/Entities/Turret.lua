@@ -1,5 +1,6 @@
 local Entity = require('Game.Entity')
 local Components = requireAll('Game.Components')
+local Seed = require('Game.Seed')
 
 -- TODO : Constraints
 
@@ -8,13 +9,13 @@ local material
 local shader
 local shared
 local varCache
-local rng = RNG.FromTime()
 
 local Turret
 Turret = subclass(Entity, function (self)
   if not shared then
+    -- First construction, not module load, so the world seed is already known.
     shared = {}
-    shared.mesh = Gen.ShipFighter.TurretSingle(rng)
+    shared.mesh = Gen.ShipFighter.TurretSingle(Seed.rng('turret.mesh'))
     shared.mesh:computeNormals()
     shared.mesh:computeAO(0.1)
     mesh = Gen.Primitive.Billboard(-1, -1, 1, 1)
@@ -49,6 +50,9 @@ Turret = subclass(Entity, function (self)
   self.projSpeed = Config.game.pulseSpeed
   self.projLife = self.projRange / self.projSpeed
   self.projSpread = Config.game.pulseSpread
+  -- Per-turret shot-spread stream (see Thruster: seeded from the entity id, not
+  -- a process-wide stream, so turret N always shoots the same way).
+  self.rng = Seed.rng('turret.fire', self.id):managed()
 
   self:register(Event.Update, Turret.updateTurret)
 end)
@@ -90,7 +94,7 @@ end
 function Turret:fire ()
   if not self:canFire() then return end
   local e = self:getRoot():addProjectile(self:getParent())
-  local dir = (self:getForward() + rng:getDir3():scale(self.projSpread * rng:getExp())):normalize()
+  local dir = (self:getForward() + self.rng:getDir3():scale(self.projSpread * self.rng:getExp())):normalize()
   e.pos = self:toWorld(Vec3f(0, 0, 0))
   e.vel = dir:scale(self.projSpeed) + self:getParent():getVelocity()
   e.dir = dir

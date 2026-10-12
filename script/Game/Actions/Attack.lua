@@ -1,10 +1,15 @@
 local Action = require('Game.Action')
+local Seed = require('Game.Seed')
+
+local nextId = 0
 
 local Attack = subclass(Action, function (self, target)
   self.target = target
+  -- See MoveTo: per-instance stream instead of one shared clock-seeded one, so
+  -- an NPC's re-target jitter does not depend on what the other NPCs drew.
+  nextId = nextId + 1
+  self.rng = Seed.rng('action.attack', nextId):managed()
 end)
-
-local rng = RNG.FromTime()
 
 function Attack:getName ()
   return format('Attack %s', self.target:getName())
@@ -31,13 +36,13 @@ function Attack:onUpdateActive (e, dt)
 
   self.timer = self.timer - dt
   if self.timer <= 0 or self.dist < e:getSpeed() then
-    self.offset = rng:getDir3()
+    self.offset = self.rng:getDir3()
     self.offset:iscale(Math.Sign(self.offset:dot(e:getPos() - self.target:getPos())))
-    self.timer = rng:getUniformRange(5, 10)
+    self.timer = self.rng:getUniformRange(5, 10)
     self.radius = Math.Lerp(
       self.radiusMin,
       self.radiusMax,
-      rng:getUniformRange(0, 1) ^ 2.0)
+      self.rng:getUniformRange(0, 1) ^ 2.0)
   end
 
   local targetPos =
@@ -59,7 +64,7 @@ end
 function Attack:onUpdatePassive (e, dt)
   local align = (self.target:getPos() - e:getPos()):normalize():dot(e:getForward())
   if align < 0.25 then return end
-  local firing = Config.game.aiFire(dt, rng)
+  local firing = Config.game.aiFire(dt, self.rng)
   local SocketType = require('Game.SocketKind')
 for turret in e:iterSocketsByType(SocketType.Turret) do
     turret:aimAtTarget(self.target, self.target:getPos())

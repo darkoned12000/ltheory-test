@@ -1,10 +1,15 @@
 local Action = require('Game.Action')
+local Seed = require('Game.Seed')
 
 local kJobIterations = 100
+local nextId = 0
 
 local Think = subclass(Action, function (self)
   self.timer = 0
-  self.rng = RNG.FromTime()
+  -- Per-instance stream (was clock-seeded): two NPCs thinking in the same tick
+  -- no longer interleave draws from one sequence.
+  nextId = nextId + 1
+  self.rng = Seed.rng('action.think', nextId):managed()
 end)
 
 function Think:clone ()
