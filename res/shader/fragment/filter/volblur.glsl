@@ -99,13 +99,21 @@ void main () {
   if (dC < 1e-4) { fragData0 = vec4(0.0); return; }
   float tCap = (dC >= 900000.0) ? volDist : min(dC, volDist);
   vec2 sec = cloudSection(worldOrigin, normalize(worldDir), tCap);
+  // Missed every anchor -> empty interval. Never march it: ds would be negative
+  // and the samples would walk backwards out of the section.
+  if (sec.y <= sec.x) { fragData0 = vec4(0.0); return; }
+  float span = sec.y - sec.x;
   float od = 0.0;
-  float ds = (sec.y - sec.x) / max(1.0, volSteps);
+  float ds = span / max(1.0, volSteps);
   for (int i = 0; i < 48; ++i) {
     if (float(i) + 0.5 >= volSteps) break;
     od += anchorEnvelope(worldOrigin + normalize(worldDir) * (sec.x + (float(i) + 0.5) * ds)) * ds;
   }
+  // Display scale: MEAN density along the section, not raw OD. Raw OD grows with
+  // the section span and the step count, so it saturated to solid white and
+  // told you nothing about where the anchors actually are.
+  float meanRho = od / max(1.0, span);
   vec2 g = fract(gl_FragCoord.xy * 0.5);
   float grid = step(0.96, max(g.x, g.y));
-  fragData0 = vec4(vec3(clamp(od / 4000.0, 0.0, 1.0)) * 0.85 + vec3(0.15) * grid, 1.0);
+  fragData0 = vec4(vec3(1.0 - exp(-meanRho * 0.5)) * 0.85 + vec3(0.15) * grid, 1.0);
 }

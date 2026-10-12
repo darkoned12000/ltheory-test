@@ -768,32 +768,37 @@ function Renderer:volume (med)
   local volCount = anchors and #anchors or 0
   if volCount > 0 then
     if not self.texAnchors then
-      self.texAnchors = Tex2D.Create(3, 16, TexFormat.RGBA32F)
+      self.texAnchors = Tex2D.Create(4, 16, TexFormat.RGBA32F)
       self.texAnchors:setMagFilter(TexFilter.Linear)
       self.texAnchors:setMinFilter(TexFilter.Linear)
       self.texAnchors:setWrapMode(TexWrapMode.Clamp)
     end
     if not self.anchorBytes then
-      self.anchorBytes = Bytes.Create(48 * 16)
+      self.anchorBytes = Bytes.Create(64 * 16)
     end
 
     local bytes = self.anchorBytes
     local p = ffi.cast('float*', bytes:getData())
     -- Packing contract with include/medium.glsl:
-    --   col0 = (pos.xyz, extent)            -> c.xyz / c.w
-    --   col1 = (density, scale, warp, -)    -> d.x / d.y / d.z
-    --   col2 = (coreColor.rgb, -)           -> the per-anchor albedo
+    --   col0 = (pos.xyz, extX)            -> c.xyz / c.w
+    --   col1 = (density, scale, warp, extY)
+    --   col2 = (coreColor.rgb, extZ)      -> the per-anchor core albedo + z extent
+    --   col3 = (rimColor.rgb, -)          -> the per-anchor rim albedo
     -- The record in NebulaVolumes.build is {px,py,pz, extX,extY,extZ, density,
-    -- scale, warp, core.rgb, rim.rgb}. This offset was stale by the three extent
-    -- fields: `scale` landed in the density slot and the colour was read from
-    -- (scale, warp, core.r), so the noise was sampled at p*extZ (~1e9, where the
-    -- sin hash is pure garbage) -> the per-pixel "green speckle".
+    -- scale, warp, core.rgb, rim.rgb} (1..15, plus a named d2). This offset was
+    -- stale by the three extent fields at one point: `scale` landed in the
+    -- density slot and the colour was read from (scale, warp, core.r), so the
+    -- noise was sampled at p*extZ (~1e9, where the sin hash is pure garbage) ->
+    -- the per-pixel "green speckle". The extents and the rim colour were dropped
+    -- entirely: every plume was a sphere of extX with one flat colour, though
+    -- NebulaVolumes authors all three extents and a second tone per plume.
     for i = 1, volCount do
       local a = anchors[i]
-      local o = (i - 1) * 12
+      local o = (i - 1) * 16
       p[o + 0], p[o + 1], p[o + 2], p[o + 3]  = a[1], a[2], a[3], a[4]
-      p[o + 4], p[o + 5], p[o + 6], p[o + 7]  = a[7], a[8], a[9], 0
-      p[o + 8], p[o + 9], p[o + 10], p[o + 11] = a[10], a[11], a[12], 0
+      p[o + 4], p[o + 5], p[o + 6], p[o + 7]  = a[7], a[8], a[9], a[5]
+      p[o + 8], p[o + 9], p[o + 10], p[o + 11] = a[10], a[11], a[12], a[6]
+      p[o + 12], p[o + 13], p[o + 14], p[o + 15] = a[13], a[14], a[15], 0
     end
     self.texAnchors:setDataBytes(bytes, PixelFormat.RGBA, DataFormat.Float)
   end

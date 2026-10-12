@@ -11,12 +11,18 @@ and tint, emissive lava, skybox night-ambient, planet↔map integration, names,
 and an engine-driven sun/nebula lighting pass are all in.
 
 **Focus now (in order):**
-1. **Green speckle** — a volumetric-nebula grain artifact (NOT a planet bug).
-2. **FPS** — find headroom and cut the expensive paths.
+1. **Green speckle** — ✅ root cause found + fixed (misaligned anchor upload).
+2. **Deterministic lighting** — ✅ done 2026-10-12 (seeded, prefiltered irMap).
+3. **Reproducible world streams** — ✅ done 2026-10-12 (`Game.Seed`).
+4. **Nebula medium actually using its own data** — ✅ done 2026-10-12 (W3).
+5. **W4 look fixes → W5 density/god-rays → W6 FPS.**
 
 **Deferred:** clouds, gas giants (both expected to be FPS-expensive — defer
 until the perf budget is understood). Rings / biomes / atmosphere-entry are
 further out; see §11.
+
+**Status: planet work is parked, not finished.** W1–W3 are in; the rest of the
+ordered dependency list is in **§11.0** — pick it up there.
 
 ---
 
@@ -31,6 +37,10 @@ further out; see §11.
 | `res/shader/fragment/material/atmosphere.glsl` | Forward atmosphere shell (self-lit scattering). |
 | `res/shader/include/scattering2.glsl` | Rayleigh+Mie scattering; `atmoTint`; the (disabled) `CLOUDS_ENABLED` path. |
 | `script/Game/Entities/System.lua` | `spawnPlanet` / `spawnMoon`; the console report. |
+| `script/Game/Seed.lua` | One source of truth for "which world is this?" — `setWorld` / `rng(name, salt)`. Every clock-seeded stream goes through it (W2). |
+| `script/Game/Entities/Nebula.lua` | Skybox `envMap` + the irradiance cube (`genIRMap(samples, seed)`) + starfield; owns the visible star. |
+| `libphx/src/TexCube_GenIRMap.cpp`, `libphx/include/TexCube.h` | The irradiance convolution: Hammersley sample set, per-level cone-matched `srcLod`, **seeded** (§11.0 W1). |
+| `res/shader/fragment/compute/irmap.glsl` | The per-texel convolution loop (cap average over `sampleBuffer` at `srcLod`). |
 | `script/Game/GUI/GameView.lua` | Sun/dir + global lighting; the volumetric nebula + god-rays call sites; the composite. |
 | `script/UI/GraphProvider.lua`, `script/UI/NodeGraph.lua` | F10 map integration (moons under their planet; true-radius rings). |
 
@@ -176,9 +186,173 @@ the moving node. (See the node-UI doc for the map's own design.)
 
 ## 11. Open work
 
-### 11.1 Green speckle — PRIORITY 1
+### 11.0 Wrap-up plan — the dependency order (START HERE)
 
-### ✅ RESOLVED 2026-09-22 — root cause: misaligned anchor upload
+Planet work is **parked**, not finished. This is the ordered list of what is left,
+with the dependency that makes the order *the* order. The rule behind it: **you
+cannot A/B anything until the lighting is reproducible** (W1), and **you cannot
+tune a look against a frame that will change shape under you** (W3–W5 before W6).
+
+| # | Item | Depends on | Effort | State |
+|---|------|-----------|--------|-------|
+| W1 | Deterministic + prefiltered `irMap` | — | done | ✅ 2026-10-12 |
+| W2 | Remaining `RNG_FromTime` (particles, dust, NPC AI) | — | S | ✅ 2026-10-12 |
+| W3 | Nebula medium: consume the rim colour + ellipsoid extents it already computes | W1 | M | ✅ 2026-10-12 |
+| W4 | Small look fixes (star in haze, marker rim clamp, integer-hash medium) | W1 | S | open |
+| W5 | Re-tune density ⇒ god-rays gain together | W3, W4 | S | open |
+| W6 | FPS: profile on the *final* W5 settings | W5 | M | open |
+| W7 | Deferred features (clouds, gas giants, rings, biomes, atmosphere entry) | W6 | L | §11.3 |
+| W8 | Planet scale vs `kSystemScale` (planets can engulf the system) | — | M | §11.4 |
+| S1 | Speckle watch — verify on seeds beyond the repro | W1 | S | open |
+
+Two **pending decisions** (not tasks — someone has to pick a side): §11.5's
+`Material.Metal` ship hull and the albedo-clamped lava emission.
+
+**W1 — deterministic, prefiltered irradiance cube. ✅ DONE 2026-10-12.**
+The last known nondeterminism in the *renderer*. `TexCube_GenIRMap` took its
+sample set from `RNG_FromTime()`, so the irradiance cube — every ambient term in
+the scene — was different on every boot. Two runs of "the same" world were not
+comparable, which silently invalidated several measurements during the speckle
+hunt.
+- **Now:** `TexCube_GenIRMap(self, samples, seed)` — a world-derived seed, a
+  Hammersley (stratified + radical-inverse) sample set instead of iid taps, and a
+  **cone-matched source LOD** per mip so the wide-cap levels are prefiltered
+  instead of 256 sharp taps. Every level still convolves from the original
+  source, so noise does not accumulate down the chain.
+- **Verified:** two boots at the same `Config.gen.seedGlobal` produce
+  **byte-identical** `irMap` faces (sha256 per face). Deviation from a
+  16384-sample converged reference, mean |Δ| in 8-bit units:
+
+  | level | 1 | 2 | 3 | 4 | 5 |
+  |-------|---|---|---|---|---|
+  | old (iid + LOD 0) | 0.147 | 0.616 | 0.838 | 0.921 | 1.602 |
+  | **new** | **0.030** | **0.068** | **0.090** | **0.082** | **0.063** |
+
+  i.e. ~10–25× quieter, and now **below the 8-bit quantisation of its own
+  reference** at every level.
+- **Side effects to expect:** the coarse mips are now genuinely blurred, so
+  `render.planet.envAmbient` (1.75) and `nebula.ambient` (1.0) may want a small
+  nudge — a darker, smoother night side and a slightly less grainy nebula wash.
+  Re-check them before touching anything else (that is W5's job).
+- **Follow-ups deliberately NOT taken:** the estimator is still a **uniform-weight
+  spherical-cap average**, not a cosine-weighted irradiance integral (that would
+  change the energy by ~π and invalidate every ambient tuning above), and the
+  level-0 chain is still a plain mip chain. Both are documented, not bugs.
+
+**W2 — the rest of `RNG_FromTime`. ✅ DONE 2026-10-12.** Only ever affected
+**full-frame pixel equality**, not lighting: `GPUParticles.explode`, `Dust`,
+`Thruster`, `Turret`, the legacy `Explosion`, the NPC actions and `LTheory.lua`
+all seeded from the clock.
+- **Now:** one new module, `script/Game/Seed.lua`, is the single source of
+  truth. `LTheory:generate()` resolves the world seed *first* and calls
+  `Seed.setWorld(seed)`, so everything created afterwards — and by entities
+  later — derives from the printed boot-log `Seed:`. Streams are **named**
+  (`Seed.rng('dust')`, `Seed.rng('turret.fire', self.id)`), never positional, so
+  adding a generator can't reshuffle the existing ones. Per-entity streams are
+  salted with the entity id / a spawn ordinal instead of sharing one
+  process-wide sequence — the NPC actions previously all drew from a *single*
+  shared clock-seeded stream, so one NPC's re-target jitter advanced another's.
+  With no seed known (unpinned boot) `Seed.rng` still returns `RNG_FromTime()`,
+  i.e. exactly the old behaviour.
+- **Verified:** a temporary `PHX_DEBUG_W2=1` probe inside `Seed.rng` (logging
+  name/salt/first-3-draws, reverted afterwards) run twice with
+  `seedGlobal` pinned → **all 1614 stream creations identical** across the two
+  boots, every stream distinct from every other. Note the AI paths only appear
+  if NPCs are spawned — `LTheory.lua`'s `spawnAI` loop is hardcoded `for i = 1,
+  0`, so `Config.gen.nNPCs` is dead config and AI actions are unreachable in
+  normal play. Enabling it for the test is what produced an audible constant hum
+  on the dev machine (two idling NPC engines inside `sfx.engine`'s 60-unit
+  full-volume radius), so mute audio before any headless verification boot.
+- **Still time-seeded, deliberately:** the world-seed draw itself
+  (`RNG.FromTime():get64()` when `seedGlobal` is unset — that *is* the "new
+  world each boot" feature), and the test apps under `script/App/`
+  (`TestImGui`, `TestHmGui`, `GenTex2D`, …).
+- **Not claimed:** physics is Bullet's own integrator, so two runs still differ
+  in the last digits once real collisions happen. Reproducible *world
+  generation and streams*, not a bit-exact simulation.
+
+**W3 — the nebula medium ignores two things it already computes. ✅ DONE
+2026-10-12.** `NebulaVolumes.build` emits a **rim colour** (`rr,rg,rb`) and
+**non-uniform ellipsoid extents** (`extX/extY/extZ`), and the file header
+advertises "dual-tone gradients and non-uniform ellipsoid stretching" — but
+`medium.glsl` read neither (the falloff was spherical, on `extX` only). The
+*upload* bug of §11.1 was exactly this class of error: CPU writes a field, GPU
+never asks for it, nobody notices.
+- **Now:** `texAnchors` is 4 texels wide instead of 3 — `col1.w = extY`,
+  `col2.w = extZ`, `col3 = rim.rgb` — and the medium uses them. The envelope,
+  the ray-AABB early-out (`cloudSection`) and the albedo all read the same
+  per-axis extents, and the albedo is a **dual-tone gradient**: core colour
+  through the body, the authored rim colour (`hsl(s, 0.65, 0.35)` — deliberately
+  darker than the core's `hsl(s, 0.80, 0.60)`) on the outer shell.
+- **The rim is keyed on RADIUS, not on the envelope.** First attempt mixed on
+  `env` — which *is* the density — and the rim tone swallowed most of the
+  plume's volume (volume goes as r³, so everything past 0.65R is 72% of it) and
+  dimmed the whole field by roughly half. Keyed on `dist` instead, the second
+  tone rides on density that is already falling, so the body keeps its
+  brightness. Worth remembering: on a volumetric, "the edge" is most of the
+  volume unless you key it on radius.
+- **Expected brightness change (for W5):** an ellipsoid of the authored extents
+  has ~**30% less volume** than the old sphere of `extX` (mean extY multiplier
+  0.7, extZ 1.0, extX 1.0), so plumes are genuinely thinner per bank. Part of
+  that is offset by the rim now being brighter in the mid-body than a full-rim
+  mix would be. Do the density/god-ray re-tune with this in mind rather than
+  assuming the sliders are lying.
+- **Verified:** `nebula.debug = Anchors` (the view that draws anchor geometry
+  directly) shows stretched ellipsoids, and the beauty pass reads as structured
+  banks instead of a uniform magenta veil over the whole frame.
+- **Also fixed en route — the `Anchors` debug view was broken, pre-existing.**
+  `cloudSection` folded the anchors together with min/max the *wrong* way round,
+  computing an **intersection** of up to 16 slabs spread over a 12k lattice —
+  empty almost everywhere. Callers got `sec.y < sec.x`, computed a **negative**
+  step, and marched *backwards* out of the section: hard diagonal seams and
+  screen-filling white slabs. It now returns the union bound (earliest entry →
+  latest exit, clamped to `tCap`), the view bails on an empty interval, and it
+  displays **mean density along the section** instead of raw optical depth
+  (raw OD scales with span × steps and saturated to solid white). Side effect:
+  that view went from 12.6 ms to 7.5 ms, since it no longer walks off the end.
+
+**W4 — three small look fixes.** All independent of each other, all cheap.
+- The **star is missing from the distance-haze pass**: `filter/fogw.glsl` samples
+  the nebula `envMap` along the view ray, and the star is drawn in `skybox.glsl`,
+  so a star behind haze dims with the cube instead of punching through. Either
+  add the star disc to the haze pass or exclude it there.
+- The **sun marker is not rim-clamped**: off-screen markers are simply not drawn.
+  Clamp to the viewport edge with a distance/opacity falloff so you can still fly
+  toward an off-screen sun.
+- The **parked integer-hash medium variant** (the fix for `fract(sin(x)*c)`
+  precision loss, §12) is in the tree but its thresholds were never re-tuned, so
+  it is not usable. Re-tune or delete it — do not leave it looking live.
+- **Depends on W1** for the same reason as W3.
+
+**W5 — density and god-rays are coupled.** `nebula.density` feeds both the
+volume and `Renderer:godrays`, and the god-ray default gain (**8**) was tuned
+against the *old* medium calibration. The nebula veil is **quadratic** in density
+(`OD = 5e-5 · density² · background · radius`), so any density change moves the
+wash and the rays non-linearly. Tune them **together, last**, after W3/W4 have
+stopped changing the medium.
+- **Done when:** `nebula.{density, background, coverage}` and
+  `render.godrays.gain` reach a look you like with no wash-over-everything and
+  no rays that vanish.
+
+**W6 — FPS.** Keep it **after** W5: the frame cost depends on the final density
+and god-ray settings, so profiling before them means profiling the wrong frame.
+Existing levers and their costs are in §11.2.
+
+**S1 — speckle watch.** The green-speckle fix (§11.1) was verified on the repro
+seed only. If the grain reappears elsewhere it is a *different* cause — capture
+the boot-log `Seed:` value and the repro frame and start from §11.1's forensics
+method (it is a good one), not from the old conclusion.
+
+**Two caveats for anyone play-testing this state:**
+- The star is **occluded whenever the sun is behind a planet** — correct, but it
+  means the crosshair can sit on a bright limb with no visible disc.
+- `render.sun.marker` **defaults off**.
+
+---
+
+### 11.1 Green speckle — RESOLVED (see 11.0 W1 for the follow-on)
+
+#### ✅ RESOLVED 2026-09-22 — root cause: misaligned anchor upload
 
 `Renderer:volume` packed `texAnchors` with a **record layout that was stale by
 three fields**: `extX/extY/extZ` were added to `NebulaVolumes.build`'s record
@@ -211,10 +385,12 @@ structured plumes rather than a wash, and **the speckle is gone** on the repro.
 - **Palette coupling is not wired.** `NebulaVolumes.build` accepts `sectorHue`
   to centre plume hues on the skybox, but GameView calls it without one, so
   plumes take `0.02 + hash*0.95` = the whole colour wheel → clashing red/green
-  plumes against a differently-hued sky.
+  plumes against a differently-hued sky. ✅ **Fixed** in `95405ab` — the sector
+  seed now drives `Palette.hue`, and both generators publish it
+  (`script/Gen/Nebula/Palette.lua`).
 - **Rim colour + ellipsoid extents are computed but never consumed** (`rr,rg,rb`
   unused; the falloff is spherical on `extX` only), despite the
-  "dual-tone / non-uniform stretching" header.
+  "dual-tone / non-uniform stretching" header. ✅ **Fixed** — see §11.0 W3.
 
 **Superseded investigation** (kept for the record):
 
@@ -263,13 +439,15 @@ observed.
 
 **Prime suspect — the irradiance cube is a noisy, nondeterministic MC estimate.**
 `libphx/src/TexCube_GenIRMap.cpp` + `fragment/compute/irmap.glsl`:
-- `RNG_FromTime()` → the sample set (hence `irMap`) is **different every boot**;
-  the lighting is not reproducible and the pattern "moves" between runs.
+- `RNG_FromTime()` → the sample set (hence `irMap`) was **different every boot**;
+  the lighting was not reproducible and the pattern "moved" between runs.
+  ✅ fixed (§11.0 W1 — seeded, and verified byte-identical across boots).
 - `float w = 1.0;` → GGX-distributed samples averaged with **uniform weight**
-  (no PDF weighting) → a cone-average, not a proper convolution.
-- every sample is `textureLod(src, L, 0.0)` → **always LOD 0**, so the coarse mips
-  (cone ≈ whole hemisphere) are 256 LOD-0 samples of a point-lit env → high
-  variance.
+  (no PDF weighting) → a cone-average, not a proper convolution. ⏳ **deliberately
+  left as-is** (see W1: changing it rescales all ambient by ~π).
+- every sample was `textureLod(src, L, 0.0)` → **always LOD 0**, so the coarse
+  mips (cone ≈ whole hemisphere) were 256 LOD-0 samples of a point-lit env → high
+  variance. ✅ fixed (cone-matched `srcLod`).
 
 **Pixel measurement of a live repro (2026-09-22, `screenshot/2026-09-22 02.png`):**
 - the bright green wash is **smooth in luminance**: high-pass σ ≈ 0.3–0.6 %
@@ -290,28 +468,45 @@ inscatter.
 - Speckle **gone at 0** → confirmed MC-irradiance noise → fix 11.1a.
 - Speckle **remains** → it is the sun/phase term → suspect `worldDir`/`hgPhase`.
 
-**11.1a — refactor (candidate).** The nebula has **three** representations with no
-shared source of truth: the `envMap` cube + `irMap` (skybox + all ambient),
-`NebulaVolumes.lua` CPU anchors (rebuilt per cell, pop at boundaries), and
-`medium.glsl`'s own sin-hash field on the GPU. Tuning one does not move the
-others and the "off" switches are ambiguous. Proposal: (1) deterministic
-low-discrepancy (Hammersley) MC + LOD-matched sampling + proper weighting for
-`irMap`; (2) one integer hash shared CPU/GPU, replacing `fract(sin(x)*c)`;
-(3) derive skybox + anchors + medium from one seed field; (4) band-limit the
-medium to the march step.
+**Outcome:** the irMap term was *a* contributor (it is now seeded, prefiltered
+and ~10–25× quieter — §11.0 W1), but the visible speckle was the anchor-layout
+bug at the top of this section. Both knobs (`nebula.ambient`, `nebula.palette`)
+are still in the panel and are still the fastest way to bisect the inscatter.
 
-**Where that leaves us** — the grain is likely generated *upstream* of the
-march, or is spatial rather than sampling:
-1. **Half-res `volView` + upsample** (leading candidate). The volume is
-   rendered at half res; the composite (`filter/volblur.glsl`) does a depth-aware
-   3×3 gather but **falls back to a half-res tap at a depth boundary**, so the
-   half-res grain shows magnified — worst against a planet disc. A **smooth+sharp
-   surface** is exactly the case that reveals it.
-2. **A fixed density feature** (not sampling): if true, no step/jitter change
-   touches it.
+**11.1a — refactor. ✅ Part 1 done 2026-10-12 (→ §11.0 W1); the rest is open.**
+The nebula has **three** representations with no shared source of truth: the
+`envMap` cube + `irMap` (skybox + all ambient), `NebulaVolumes.lua` CPU anchors
+(rebuilt per cell, pop at boundaries), and `medium.glsl`'s own sin-hash field on
+the GPU. Tuning one does not move the others and the "off" switches are
+ambiguous.
+- (1) ✅ deterministic low-discrepancy (Hammersley) MC + LOD-matched sampling for
+  `irMap`, seeded from the sector (`TexCube_GenIRMap(self, samples, seed)`).
+  Proper **PDF weighting** was deliberately left out — see W1's side-effects note.
+- (2) ⏳ one integer hash shared CPU/GPU, replacing `fract(sin(x)*c)` — the
+  variant exists but is parked with stale thresholds (→ W4).
+- (3) ⏳ derive skybox + anchors + medium from one seed field.
+- (4) ⏳ band-limit the medium to the march step.
 
-**Next decisive test (1 click):** on one fixed frame with a planet filling the
-view, toggle `render.superSample` **Off vs 2×**.
+**Superseded investigation** (kept for the record — all of these hypotheses were
+measured and **disproved**, so don't re-run them):
+
+**The "next decisive test" below was never needed** — the anchor-layout bug was
+found first (see the top of §11.1) and it explained every observation. Kept only
+because the two-pass volblur + 5×5 gather changes it proposes are still the right
+ideas *if* a grain ever reappears. **Superseded**, not disproved.
+
+**Where that leaves us** — the grain was generated *upstream* of the march:
+1. ~~Half-res `volView` + upsample.~~ Not the cause — the composite gather was
+   upgraded to 5×5 Gaussian/depth-aware/bilinear and the grain stayed, which a
+   per-half-res-texel grain could not survive.
+2. ~~A fixed density feature.~~ Not the cause — coarsening octaves, widening
+   `smoothstep`s and `valueNoise → smoothNoise` all failed to move it.
+3. ✅ **The actual cause:** `medium.glsl` reading a misaligned anchor record, so
+   the noise was evaluated at `p * extZ ≈ 1e9` where `fract(sin(x)*c)` is garbage.
+
+**Next decisive test (1 click)** — *only if grain returns, per §11.0 S1:* on one
+fixed frame with a planet filling the view, toggle `render.superSample` **Off vs
+2×**.
 - Grain **~halves** with 2× → it scales with sample count → **temporal
   accumulation** (jitter + reprojected history blend) is the proper fix.
 - Grain **unchanged** → it's a fixed pattern (the half-res upsample) → **filter
@@ -319,9 +514,10 @@ view, toggle `render.superSample` **Off vs 2×**.
   samples.
 
 **Repro seeds:** `14112139399293175324`, `5742763467356266433`,
-`11396275097720600019`, `12368961037346951482`.
+`11396275097720600019`, `12368961037346951482`. Only the first was re-verified
+after the fix; the rest are untested (→ §11.0 S1).
 
-### 11.2 FPS — PRIORITY 2
+### 11.2 FPS — see §11.0 W6 (do it *after* the density/god-ray re-tune)
 
 Frame is ~7–12 ms at 4K (occasionally ~17 in the full-res Density debug view).
 Known costs / levers:
@@ -337,7 +533,11 @@ Known costs / levers:
 - Ideas worth profiling: cull/step-scale by view, drop the volume to quarter-res
   when the camera is inside a planet's atmosphere bubble, gate per-type work.
 
-### 11.3 Deferred features
+### 11.3 Deferred features (= §11.0 W7)
+
+**Gate: do not start any of these until W6 has a measured perf budget.** Two of
+them are explicitly expected to be the expensive ones, and the reason they were
+deferred is that we never established the budget.
 
 - **Clouds (Phase C).** The research doc called this "a one-line toggle" — it is
   not. Needs: a **seeded** `cloudCube` (`gen/clouds_cube.glsl` hardcodes
@@ -357,7 +557,7 @@ Known costs / levers:
   drag/lift coupling → landing-zone detection (see the old research recipes,
   folded here).
 
-### 11.4 Scale / universe-gen
+### 11.4 Scale / universe-gen (= §11.0 W8)
 
 - **`spawnPlanet` uses `scale = 1e5 * erlang(2)`** and does not wire
   `Config.gen.scalePlanet` as the base. Planets are therefore huge relative to
@@ -365,6 +565,11 @@ Known costs / levers:
   `Overflow in AABB`, non-fatal). Latest work caps/⌈tunes⌉ radius — keep that in
   mind. Taming it fully means capping scale or placing planets outside
   `kSystemScale`.
+- **Done when:** `Config.gen.scalePlanet` is actually honoured as the base (it
+  is currently dead config in `Config.Local.lua`), and no seed produces a planet
+  that swallows the belt/station cluster. Independent of W1–W6 — it is a
+  gameplay/streaming question, not a lighting one, so it can be picked up in
+  parallel.
 
 ### 11.5 Look decisions
 
@@ -391,16 +596,53 @@ Known costs / levers:
   are now guarded, but the pattern is live.
 - **Moving a per-primitive program change into a batched run breaks the batch**
   (the flat immediate batch flushes on program change — see the node-ui doc).
+- **A CPU→GPU record field that the shader never reads is invisible.** The green
+  speckle (§11.1) was `extX/extY/extZ` added to `NebulaVolumes.build` and never
+  uploaded: the medium read a shifted record, evaluated noise at `p * extZ ≈ 1e9`
+  and looked like a render bug. When you add a field to a packed buffer, assert
+  the *shader* consumes it — and note `NebulaVolumes` still has two such fields
+  (§11.0 W3).
+- **Never seed a render path from the clock.** `TexCube_GenIRMap` did
+  (`RNG_FromTime()`), which made every boot's lighting differ and quietly
+  invalidated A/B measurements for a week (§11.0 W1). Anything that ends up in a
+  uniform, a texture or a matrix takes a **world-derived seed** — and so does
+  anything that ends up on screen (W2 added `Game.Seed` for the second class).
+- **A module-scope RNG is a global.** Several AI actions and entities shared one
+  `local rng = RNG.FromTime()` at file scope, so their draws interleaved in file
+  order and one entity's behaviour shifted when an unrelated one changed. Give
+  each instance its own stream (`Game.Seed`, salted by entity id).
+- **A wide-angle average of a sharp environment is a noisy one.** Sampling a
+  cube at LOD 0 no matter how wide the averaging cap is gives a 256-tap estimate
+  with visible variance; prefilter the source to the cap (`srcLod`) instead of
+  buying more taps.
 
 ## 13. Verification workflow
 
 1. Edit.
-2. `./configure.py test` → 137/0 shaders + suite + node checks.
+2. `python3 configure.py test` → 137/0 shaders + suite + node checks.
+   (`./configure.py` is not executable in this checkout — prefix with `python3`.)
 3. Headless boot with a dump; grep for `FATAL` / `attempt to` / `Shader_Get`.
 4. For behaviour, env-gated probes (always reverted before commit).
 5. For look/perf, the debug panel + `Config.gen.seedGlobal` to pin the world.
+6. **Determinism check** (do this whenever you touch a generated texture — it is
+   cheap and it is the check that catches seeded-from-the-clock bugs):
+   pin `Config.gen.seedGlobal`, boot twice with an env-gated
+   `TexCube_Save/SaveLevel` dump of the generated cube, and `sha256sum` the two
+   sets. Identical ⇒ deterministic. This is how W1 was verified.
 
 ## 14. Non-goals (this pass)
 
 Rings, gas-giant rendering, true biomes, atmosphere entry/landing — see §11.3;
-each is a separate, larger effort.
+each is a separate, larger effort, and each is gated behind §11.0 W6.
+
+---
+
+## 15. Resuming this work
+
+1. Read **§11.0** first — it is the ordered list, and the order is the point.
+2. Pin the world (`Config.gen.seedGlobal = <n>ULL`) before any measurement.
+   Lighting is reproducible as of W1; particle/NPC jitter is not (§11.0 W2).
+3. Take the next item off the table, not the next interesting idea. W2/W3/W4/W8
+   are independent of each other and can be done in any order; W5 must follow
+   W3+W4, W6 must follow W5, W7 follows W6.
+
