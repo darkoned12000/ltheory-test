@@ -8,6 +8,7 @@ uniform vec3 cubeUp;
 uniform samplerCube src;
 uniform sampler2D sampleBuffer;
 uniform float angle;
+uniform float srcLod;
 uniform int samples;
 
 vec3 cubeMapDir(vec2 uv) {
@@ -39,8 +40,15 @@ void main() {
       sin(pitch) * sin(yaw) * T +
       sin(pitch) * cos(yaw) * B;
 
+    /* Uniform weights: the estimator is the average of the environment over a
+     * spherical cap of angular radius ~pitch, NOT a cosine-weighted irradiance
+     * integral -- callers scale it (envAmbient / nebula.ambient). srcLod is the
+     * mip whose texel footprint matches that cap (computed CPU-side from the
+     * cube size), so each tap is already prefiltered to the scale it is
+     * averaged at. That is what keeps the coarse levels smooth; sampling LOD 0
+     * here made the wide caps a noisy 256-tap average of a point-lit env. */
     float w = 1.0;
-    c += w * textureLod(src, L, 0.0);
+    c += w * textureLod(src, L, srcLod);
     tw += w;
   }
 

@@ -16,7 +16,13 @@ PHX_API void       TexCube_Free          (TexCube*);
 
 PHX_API void       TexCube_Clear         (TexCube*, float r, float g, float b, float a);
 PHX_API void       TexCube_Generate      (TexCube*, ShaderState*);
-PHX_API TexCube*   TexCube_GenIRMap      (TexCube*, int samples);
+/* Convolves 'self' into a progressively-wider-cap average (a "GGX mip" chain).
+ * DETERMINISTIC: the result depends only on (self, samples, seed). Pass a
+ * world-derived seed -- never a clock -- or scene lighting will differ between
+ * boots. Sample taps are a Hammersley set (low discrepancy) and each level
+ * reads the source at a cone-matched LOD, so coarse levels are smooth by
+ * construction rather than noisy. */
+PHX_API TexCube*   TexCube_GenIRMap      (TexCube*, int samples, uint64 seed);
 PHX_API void       TexCube_GenMipmap     (TexCube*);
 PHX_API void       TexCube_GetData       (TexCube*, void*, CubeFace, int level, PixelFormat, DataFormat);
 PHX_API Bytes*     TexCube_GetDataBytes  (TexCube*, CubeFace, int level, PixelFormat, DataFormat);

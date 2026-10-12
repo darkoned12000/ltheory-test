@@ -11,7 +11,7 @@ do -- C Definitions
     void      TexCube_Free         (TexCube*);
     void      TexCube_Clear        (TexCube*, float r, float g, float b, float a);
     void      TexCube_Generate     (TexCube*, ShaderState*);
-    TexCube*  TexCube_GenIRMap     (TexCube*, int samples);
+    TexCube*  TexCube_GenIRMap     (TexCube*, int samples, uint64 seed);
     void      TexCube_GenMipmap    (TexCube*);
     void      TexCube_GetData      (TexCube*, void*, CubeFace, int level, PixelFormat, DataFormat);
     Bytes*    TexCube_GetDataBytes (TexCube*, CubeFace, int level, PixelFormat, DataFormat);

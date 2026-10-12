@@ -15,7 +15,11 @@ function Nebula:forceLoad ()
   local rng = RNG.Create(self.seed + 0xC0104FULL):managed()
   self.envMap = Gen.Generator.Get('Nebula', rng)(rng, Config.gen.nebulaRes, self.starDir):managed()
   self.hue = Palette.hue
-  self.irMap = self.envMap:genIRMap(256):managed()
+  -- Deterministic irradiance convolution: same sector seed => byte-identical
+  -- lighting every boot (this used to be RNG_FromTime(), the last nondeterminism
+  -- in the render path -- see ltheory-planets.md 11.1a). Separate sub-seed from
+  -- the envMap's so a change to one does not reshuffle the other.
+  self.irMap = self.envMap:genIRMap(256, self.seed + 0x1A11EDULL):managed()
   self.stars = Gen.Starfield(rng, Config.gen.nStars(rng)):managed()
 end
 
