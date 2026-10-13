@@ -849,24 +849,61 @@ function GameView:drawSunMarker ()
   if sd:length() < 1e-6 then return end
   sd = sd:normalize()
   local ndc = self.camera:worldToNDC(self.camera.pos + sd:muls(1e5))
+  -- Only bail when the star is genuinely behind the camera (or the projection
+  -- returned something non-finite). An off-screen star in FRONT of us must
+  -- still get a marker -- see the rim clamp below.
   if not (ndc and ndc.z and ndc.z > 0) then return end
   local s = self.camera:ndcToScreen(ndc)
   local cx, cy = tonumber(s and s.x), tonumber(s and s.y)
   if not (cx and cy and cx == cx and cy == cy) then return end
 
-  local r = 14
-  Draw.Color(0, 0, 0, 0.55)                      -- backing: reads on sky + planet
+  local w, h = self.camera.sx, self.camera.sy
+  if not (w and h and w > 1 and h > 1) then return end
+
+  -- Rim clamp. The star sits on the sphere, so for most headings it is off
+  -- screen -- and an off-screen crosshair is simply clipped away, which made the
+  -- marker useless exactly when it was wanted ("turn toward the light").
+  -- Place it where the bearing to the star exits the view rect, inset by the
+  -- ring: clamping each axis independently would pin it to a corner and lose
+  -- the bearing as soon as both axes exceeded the rect.
+  local inset = 24
+  local mx, my = w * 0.5, h * 0.5
+  local dx, dy = cx - mx, cy - my
+  local halfW, halfH = mx - inset, my - inset
+  local scaleW = dx ~= 0 and (halfW / math.abs(dx)) or 1e30
+  local scaleH = dy ~= 0 and (halfH / math.abs(dy)) or 1e30
+  local edge = math.min(scaleW, scaleH)
+  local offScreen = edge < 1.0
+  if offScreen then
+    cx, cy = mx + dx * edge, my + dy * edge
+  end
+
+  -- Off-screen: smaller and dimmer, so it reads as a bearing hint rather than
+  -- an assertion that the star is right there.
+  local r = offScreen and 8 or 14
+  local alpha = offScreen and 0.7 or 1.0
+  Draw.Color(0, 0, 0, 0.55 * alpha)              -- backing: reads on sky + planet
   for i = 0, 15 do
     local t0 = (i / 16) * 6.2831853
     local t1 = ((i + 1) / 16) * 6.2831853
     Draw.Line(cx + math.cos(t0) * r, cy + math.sin(t0) * r,
               cx + math.cos(t1) * r, cy + math.sin(t1) * r)
   end
-  Draw.Color(1.0, 0.75, 0.25, 0.95)
+  Draw.Color(1.0, 0.75, 0.25, 0.95 * alpha)
   Draw.Line(cx - r - 6, cy, cx - r + 2, cy)
   Draw.Line(cx + r - 2, cy, cx + r + 6, cy)
   Draw.Line(cx, cy - r - 6, cx, cy - r + 2)
   Draw.Line(cx, cy + r - 2, cx, cy + r + 6)
+  if offScreen then
+    -- A tick on the outward side: which way to turn.
+    local ux, uy = dx, dy
+    local len = math.sqrt(ux * ux + uy * uy)
+    if len > 1e-6 then
+      ux, uy = ux / len, uy / len
+      local t = r + 8
+      Draw.Line(cx + ux * t, cy + uy * t, cx + ux * (t + 7), cy + uy * (t + 7))
+    end
+  end
 end
 
 -- Decorative storm visuals, drawn in the UI pass (screen-pixel space):

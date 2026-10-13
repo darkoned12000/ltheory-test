@@ -15,7 +15,9 @@ and an engine-driven sun/nebula lighting pass are all in.
 2. **Deterministic lighting** — ✅ done 2026-10-12 (seeded, prefiltered irMap).
 3. **Reproducible world streams** — ✅ done 2026-10-12 (`Game.Seed`).
 4. **Nebula medium actually using its own data** — ✅ done 2026-10-12 (W3).
-5. **W4 look fixes → W5 density/god-rays → W6 FPS.**
+5. **W4 look fixes** — ✅ done 2026-10-12 (marker clamped; the other two needed
+   no code — see §11.0).
+6. **W5 density + god-rays re-tune** — next; see §11.0.
 
 **Deferred:** clouds, gas giants (both expected to be FPS-expensive — defer
 until the perf budget is understood). Rings / biomes / atmosphere-entry are
@@ -198,7 +200,7 @@ tune a look against a frame that will change shape under you** (W3–W5 before W
 | W1 | Deterministic + prefiltered `irMap` | — | done | ✅ 2026-10-12 |
 | W2 | Remaining `RNG_FromTime` (particles, dust, NPC AI) | — | S | ✅ 2026-10-12 |
 | W3 | Nebula medium: consume the rim colour + ellipsoid extents it already computes | W1 | M | ✅ 2026-10-12 |
-| W4 | Small look fixes (star in haze, marker rim clamp, integer-hash medium) | W1 | S | open |
+| W4 | Small look fixes (star in haze, marker rim clamp, integer-hash medium) | W1 | S | ✅ 2026-10-12 |
 | W5 | Re-tune density ⇒ god-rays gain together | W3, W4 | S | open |
 | W6 | FPS: profile on the *final* W5 settings | W5 | M | open |
 | W7 | Deferred features (clouds, gas giants, rings, biomes, atmosphere entry) | W6 | L | §11.3 |
@@ -311,18 +313,41 @@ never asks for it, nobody notices.
   (raw OD scales with span × steps and saturated to solid white). Side effect:
   that view went from 12.6 ms to 7.5 ms, since it no longer walks off the end.
 
-**W4 — three small look fixes.** All independent of each other, all cheap.
-- The **star is missing from the distance-haze pass**: `filter/fogw.glsl` samples
-  the nebula `envMap` along the view ray, and the star is drawn in `skybox.glsl`,
-  so a star behind haze dims with the cube instead of punching through. Either
-  add the star disc to the haze pass or exclude it there.
-- The **sun marker is not rim-clamped**: off-screen markers are simply not drawn.
-  Clamp to the viewport edge with a distance/opacity falloff so you can still fly
-  toward an off-screen sun.
-- The **parked integer-hash medium variant** (the fix for `fract(sin(x)*c)`
-  precision loss, §12) is in the tree but its thresholds were never re-tuned, so
-  it is not usable. Re-tune or delete it — do not leave it looking live.
-- **Depends on W1** for the same reason as W3.
+**W4 — three small look fixes. ✅ DONE 2026-10-12 — two of the three needed no
+code, and one of those turned out not to exist.** Recording that honestly, because
+the next person would otherwise re-investigate all three.
+- **The star in the distance-haze pass: already correct, no change needed.**
+  The worry was that `filter/fogw.glsl` samples `envMap` along the view ray while
+  the star is drawn in `skybox.glsl`, so the star would dim with the cube. It
+  does not: `fogw.glsl` gates `fogF` to **0** for anything at or past 950k linear
+  depth, and the skybox writes ~1e6 (`farPlane * vertPos`), so `mix(c, bg, 0) = c`
+  and the star passes through untouched. Only *real geometry* hazes, which is the
+  point of the gate. What can dim a star is the volumetric nebula in front of it
+  — correct behaviour, and not this pass.
+- **The parked integer-hash medium variant: it does not exist.** That item was
+  wrong in this doc before this pass. There has never been an integer-hash variant
+  of the medium in `res/shader` (`git log -S` over the tree finds nothing, and
+  there is no such branch in `medium.glsl`). What actually protects the medium
+  from `fract(sin(x)*c)` losing precision is (a) the **bounded drift** —
+  `mod(volTime, 300)` plus a sway, so sample coordinates never grow without limit
+  — and (b) the anchor-layout fix, which removed the `p * extZ ≈ 1e9` coordinates
+  that were the real source. If the drift ever has to grow again, the models to
+  copy are the CPU-side `NebulaVolumes.hash32` or the GLSL uint hash in
+  `filter/exposure.glsl` — not a half-finished variant to re-tune.
+- **The sun marker rim clamp: implemented.** An off-screen marker was simply
+  clipped away, which made it useless exactly when you wanted it ("turn toward
+  the light") — and the star is off screen for most headings. It now places the
+  crosshair where the bearing to the star exits the view rect, inset 24 px:
+  clamping each axis independently would pin it to a corner and lose the bearing
+  as soon as *both* axes exceeded the rect, so the exit point is computed by
+  scaling the centre→star vector by `min(halfW/|dx|, halfH/|dy|)`. Off-screen it
+  draws smaller (r 8 vs 14) and dimmer (0.7×) with a tick on the outward side, so
+  it reads as a bearing hint rather than an assertion that the star is there.
+  `render.sun.marker` still defaults **off**.
+  - Verified: the clamp math exactly (7 synthetic positions — every clamped point
+    lands on the inset rect and is collinear with the bearing to ~1e-14; on-screen
+    positions pass through untouched), plus live captures with the marker on:
+    on the star when in view, and pinned at the left rim when forced off screen.
 
 **W5 — density and god-rays are coupled.** `nebula.density` feeds both the
 volume and `Renderer:godrays`, and the god-ray default gain (**8**) was tuned
@@ -588,7 +613,10 @@ deferred is that we never established the budget.
   past ~1e4 and degenerates into a stipple. `mediumDensity`'s drift used to be
   `volFlow * volTime` with **absolute** `volTime` (~1.79e6 s) → sample coords
   ~6e7 → the original stipple. Now bounded (`mod(volTime,300)` + a sway). Any
-  future sampler that grows a coordinate without bound hits this.
+  future sampler that grows a coordinate without bound hits this. There is **no**
+  integer-hash variant of the medium to switch on — if the bound ever has to
+  grow, copy `NebulaVolumes.hash32` (CPU) or the uint hash in
+  `filter/exposure.glsl` (GPU) rather than looking for a dormant branch (W4).
 - **`Renderer:free` nils lazily-created textures** (`volView`/`texAnchors`/
   `texLightning`/`godView`). Any pass binding one without recreating it in-pass
   can crash — that was the **F12** bug (god-rays bound `texAnchors`, created only
