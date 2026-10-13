@@ -17,7 +17,8 @@ and an engine-driven sun/nebula lighting pass are all in.
 4. **Nebula medium actually using its own data** — ✅ done 2026-10-12 (W3).
 5. **W4 look fixes** — ✅ done 2026-10-12 (marker clamped; the other two needed
    no code — see §11.0).
-6. **W5 density + god-rays re-tune** — next; see §11.0.
+6. **W5 density + god-rays re-tune** — ✅ done 2026-10-12 (density 2.2→3.0,
+   coverage 2.0→1.6, god-rays on at 8; measured, table in §11.0). W6 FPS next.
 
 **Deferred:** clouds, gas giants (both expected to be FPS-expensive — defer
 until the perf budget is understood). Rings / biomes / atmosphere-entry are
@@ -201,7 +202,7 @@ tune a look against a frame that will change shape under you** (W3–W5 before W
 | W2 | Remaining `RNG_FromTime` (particles, dust, NPC AI) | — | S | ✅ 2026-10-12 |
 | W3 | Nebula medium: consume the rim colour + ellipsoid extents it already computes | W1 | M | ✅ 2026-10-12 |
 | W4 | Small look fixes (star in haze, marker rim clamp, integer-hash medium) | W1 | S | ✅ 2026-10-12 |
-| W5 | Re-tune density ⇒ god-rays gain together | W3, W4 | S | open |
+| W5 | Re-tune density ⇒ god-rays gain together | W3, W4 | S | ✅ 2026-10-12 |
 | W6 | FPS: profile on the *final* W5 settings | W5 | M | open |
 | W7 | Deferred features (clouds, gas giants, rings, biomes, atmosphere entry) | W6 | L | §11.3 |
 | W8 | Planet scale vs `kSystemScale` (planets can engulf the system) | — | M | §11.4 |
@@ -295,10 +296,10 @@ never asks for it, nobody notices.
   volume unless you key it on radius.
 - **Expected brightness change (for W5):** an ellipsoid of the authored extents
   has ~**30% less volume** than the old sphere of `extX` (mean extY multiplier
-  0.7, extZ 1.0, extX 1.0), so plumes are genuinely thinner per bank. Part of
-  that is offset by the rim now being brighter in the mid-body than a full-rim
-  mix would be. Do the density/god-ray re-tune with this in mind rather than
-  assuming the sliders are lying.
+  0.7, extZ 1.0, extX 1.0). Measured in W5: the net cost was only **~15%** of sky
+  brightness (25.3 → 21.5 at identical settings) and structure *improved*
+  (2.58 → 2.81), because the rim is keyed on radius and the body keeps its core
+  colour. The analytic argument above over-counts — trust the measurement.
 - **Verified:** `nebula.debug = Anchors` (the view that draws anchor geometry
   directly) shows stretched ellipsoids, and the beauty pass reads as structured
   banks instead of a uniform magenta veil over the whole frame.
@@ -349,15 +350,68 @@ the next person would otherwise re-investigate all three.
     positions pass through untouched), plus live captures with the marker on:
     on the star when in view, and pinned at the left rim when forced off screen.
 
-**W5 — density and god-rays are coupled.** `nebula.density` feeds both the
-volume and `Renderer:godrays`, and the god-ray default gain (**8**) was tuned
-against the *old* medium calibration. The nebula veil is **quadratic** in density
-(`OD = 5e-5 · density² · background · radius`), so any density change moves the
-wash and the rays non-linearly. Tune them **together, last**, after W3/W4 have
-stopped changing the medium.
-- **Done when:** `nebula.{density, background, coverage}` and
-  `render.godrays.gain` reach a look you like with no wash-over-everything and
-  no rays that vanish.
+**W5 — density and god-rays, tuned together. ✅ DONE 2026-10-12.** `nebula.density`
+feeds both the volume and `Renderer:godrays`, and the veil is **quadratic** in it
+(`OD = 5e-5 · density² · background · radius`), so it had to move after W1 and W3.
+- **Method:** one muted boot per candidate, fixed `seedGlobal`, fixed dump frame,
+  lightning off (frame-timed → run-to-run noise) and the debug window off (it
+  covers the left third of the frame, which is where the sky crop is). Metrics
+  are display-referred on the dumped final frame: a **sky crop** (top-left, the
+  only reliably sky region in this composition), reported as mean luminance,
+  **structure** (p90/p50 — a flat veil pulls p90 down toward p50) and the
+  **whole-frame blown fraction** (>250/255, the bloom proxy).
+- **Result** (High quality, 960×600; density / background / coverage / rays):
+
+  | d / bg / cov / rays | sky mean | sky struct | frame blown |
+  |---|---|---|---|
+  | 2.2 / 0.10 / 2.0 / pre-W3 baseline | 25.3 | 2.58 | 0.000% |
+  | 2.2 / 0.10 / 2.0 / **off** (old preset) | 21.5 | 2.81 | 0.000% |
+  | 2.2 / 0.10 / 2.0 / 8 | 40.7 | 3.20 | 0.001% |
+  | 3.0 / 0.10 / 2.0 / 8 | 51.3 | 3.09 | 0.154% |
+  | 3.0 / 0.10 / 2.0 / 14 | 63.7 | 2.98 | 0.473% |
+  | 4.0 / 0.08 / 2.0 / 14 | 73.0 | 2.77 | 0.667% |
+  | 3.0 / 0.06 / 2.0 / 14 | 57.3 | 2.88 | 0.271% |
+  | 3.0 / 0.10 / 1.4 / 14 | 47.8 | 4.27 | 0.376% |
+  | **3.0 / 0.10 / 1.6 / 8** (chosen) | **47.5** | **3.54** | **0.121%** |
+  | 2.6 / 0.10 / 1.6 / 10 | 45.9 | 3.59 | 0.113% |
+
+  Three things came out of it:
+  1. **The rays are the dominant lever** — turning them on at unchanged density
+     nearly doubled the sky (21.5 → 40.7). They had been **off** in the machine
+     preset the whole time, so the "default strength 8" had never been seen at
+     this density.
+  2. **14 starts blooming** (~0.4–0.7% of the frame at/over threshold); 8 holds
+     under 0.13% for the same density and coverage.
+  3. **Lower coverage raises structure** (2.0 → 3.09, 1.6 → 3.54, 1.4 → 4.27) —
+     smaller banks stop merging into a veil. Hence the retune is *density up,
+     coverage down*, which is the opposite of "add everything".
+- **Corrections this pass produced:**
+  - **W3 cost ~15% of sky brightness, not the ~30% its own entry predicted**
+    (25.3 → 21.5 at identical settings). The rim-keyed-on-radius decision is why:
+    the volumetric argument over-counted, because the body keeps its core colour.
+  - Structure *improved* across W3 (2.58 → 2.81), so W3 traded a little
+    brightness for more contrast — not a straight loss.
+- **Cost:** flat. 3.02–3.19 ms across every variant at this window size, so these
+  settings are effectively free; the real perf question is W6 at 4K.
+- **Applied to:** `script/Config.Local.lua` (the machine preset — density 3.0,
+  background 0.10, coverage 1.6, god-rays **on** at 8), with the table in the
+  comment above the block so the numbers travel with the values.
+- **Deliberately NOT changed:** the **shipped** `Config.App` defaults
+  (1.5 / 0.2 / 2.0 at `nebulaQuality = 'Low'`). The calibration above is measured
+  at High, and Low marches differently, so shipping those numbers unvalidated
+  would be a guess. There is now a comment at the config saying so.
+- **The harness has a trap worth knowing (it invalidated two of my captures).**
+  Changing any medium setting changes frame time → changes the `dt` history →
+  changes Bullet's settling → **changes the camera attitude by the dump frame**.
+  With the sun near the planet's limb, that swamps the effect being measured: two
+  "equivalent" runs showed the sun fully visible in one and eclipsed in the other,
+  and a Low-quality run came out 2× brighter purely because the ship had drifted.
+  Comparisons are only valid *within* a family of identical frame cost (the table
+  above is one family — all High, same framing, checked). A trustworthy harness
+  needs a **fixed camera** (static/spectator, or dumping before physics runs);
+  that is a small piece of work and belongs with W6's measurement pass.
+- **Not verified:** taste. These are defensible numbers, not the final look —
+  play-testing it against the panel is the point.
 
 **W6 — FPS.** Keep it **after** W5: the frame cost depends on the final density
 and god-ray settings, so profiling before them means profiling the wrong frame.
@@ -609,7 +663,7 @@ deferred is that we never established the budget.
   ABORTS the process** (`Shader_GetVariable`). Hence `mountain`/`crater`/
   `valley`/`crack` are passed only to `gen/planet`, and `coef`/`atmoTint`/
   `hasAtmo` are kept genuinely used. **Never** declare a uniform "for symmetry".
-- **The medium noise hash is `fract(sin(x) * c)`** — it loses float precision
+- The **medium noise hash is `fract(sin(x) * c)`** — it loses float precision
   past ~1e4 and degenerates into a stipple. `mediumDensity`'s drift used to be
   `volFlow * volTime` with **absolute** `volTime` (~1.79e6 s) → sample coords
   ~6e7 → the original stipple. Now bounded (`mod(volTime,300)` + a sway). Any

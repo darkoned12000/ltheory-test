@@ -261,6 +261,11 @@ Config.gpu = {
   nebulaEnabled  = true,
   nebulaQuality  = 'Low',      -- Off | Low | Medium | High (10/20/48 march steps)
   nebulaDebug    = 'Off',            -- Off | Density | Transmittance | Lighting | Steps | Anchors
+  -- NOTE (W5, 2026-10-12): these shipped defaults were NOT re-tuned -- the
+  -- calibration in script/Config.Local.lua was measured at nebulaQuality 'High',
+  -- and these run 'Low', where the march (and so the veil) differs. Re-tune
+  -- with a fixed-camera harness before changing them; see ltheory-planets.md 11.0
+  -- W5 for why frame-timing drift makes the naive sweep untrustworthy.
   nebulaDensity  = 1.5,        --   medium master gain (0..4)
   nebulaAmbient  = 1.0,        --   irMap ambient scale in the inscatter (0 = sun-term only)
   nebulaPalette  = 1.0,        --   medium albedo mix (1 = palette, 0 = flat tint)
