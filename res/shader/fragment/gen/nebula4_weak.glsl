@@ -15,6 +15,15 @@ uniform sampler1D lutG;
 uniform sampler1D lutB;
 uniform float roughness;
 uniform float seed;
+uniform float starGlow;   /* Central Star brightness, baked into the cube.
+                             * Was hardcoded 8.0/4.0 = a 12x peak, i.e. clipped to
+                             * solid white across a broad patch of the sky cube
+                             * (measured: the +X face ran p99 254 while every
+                             * other face sat near 80). Because it is baked at
+                             * GENERATION time, no runtime toggle could remove it.
+                             * 0 = no baked glow (the skybox star alone),
+                             * 0.35 = a gentle brightening that does not clip,
+                             * 1.0+ = the old blown-out look. */
 
 const float kScale      = 0.040;
 const float kSamples    = 48.00;
@@ -59,8 +68,10 @@ vec4 generate(vec3 dir) {
   /* Central Star. */ {
     float d = max(0.0, 1.0 - dot(dir, starDir));
     float dd = 0.0;
-    dd += 8.0 * exp(-sqrt(4096.0 * d));
-    dd += 4.0 * exp(-sqrt(sqrt(1024.0 * d)));
+    // Shape preserved from the old 8.0 / 4.0 pair (the wide term is half the
+    // tight one); only the amplitude is now a knob.
+    dd += starGlow * exp(-sqrt(4096.0 * d));
+    dd += starGlow * 0.5 * exp(-sqrt(sqrt(1024.0 * d)));
     c += dd * color;
   }
 

@@ -3,8 +3,12 @@ Config.app = 'LTheory'
 Config.debug = {
   metrics         = true,
   window          = false, -- Debug window visible at launch? No: always opened via F9.
-  windowSection   = nil,  -- Set to the name of a debug window section to
-                          -- collapse all others by default
+  windowSection   = nil,  -- Open ONE debug-window section at launch (the rest stay
+                          -- collapsed). Name it by the setting key's first
+                          -- segment, or by its display label:
+                          --   genship ('Ship Generator') | nebula | lightning |
+                          --   godrays | postfx | lighting | render | ssao | exposure
+                          -- e.g. Config.debug.windowSection = 'genship'
   timeAccelFactor = 10,
   damageLog       = false, -- Print [DAMAGE] lines to console for every hit
 }
@@ -274,6 +278,11 @@ Config.gpu = {
   nebulaCoverage = 2,          --   bank size/density multiplier (0.25..2.5)
   nebulaRadius   = 14000,      --   max march distance, world units
   nebulaG        = 0.4,        --   Henyey-Greenstein phase (phase 1.5 tune-up)
+  nebulaStarGlow  = 0.35,      --   Central Star baked into the envMap cube at generation
+                          --   time. Was hardcoded 8.0/4.0 (a 12x peak that clipped
+                          -- to solid white over a broad patch of sky). Changing it
+                          -- needs a relaunch; the cube is generated once and
+                          -- also feeds irMap, so it moves ambient lighting too.
   nebulaTint     = 0.0,       --   inscatter tint mix (0..1)
   nebulaTintR    = 1.0,          --     1 = warm (1, .6, .2)
   nebulaTintG    = 1.0,
@@ -283,8 +292,22 @@ Config.gpu = {
   -- pass from starDir: its own on/off + strength, forward-scatter lobe + A/B
   -- debug view. Off = renderer never invoked.
   godraysEnabled  = false,
-  godraysStrength = 8,          -- additive shaft gain (0..32; bloom-thresholded, ~6-16 is the visible band)
-  godraysG        = 0.92,       --   shaft HG phase g (tight forward lobe)
+  godraysStrength = 1,          -- shaft gain. 1.0 = the pass IS the single-scatter
+                          -- integral, i.e. no amplification: 14k units of thin gas
+                          -- really do scatter only a little. Raising this is a
+                          -- STYLISTIC choice that makes the medium brighter than
+                          -- the light it is reflecting -- it was 8, which with g=0.92
+                          -- added ~190x the sun's own radiance dead ahead and read
+                          -- as a light source sitting on the planet's limb.
+  godraysG        = 0.7,        --   shaft HG phase g. The forward peak is
+                          --   (1-g^2)/(4*pi*(1+g^2-2g)^1.5): 23.9 at g=0.92 (300x
+                          --   isotropic), 1.5 at g=0.7. Tight values are what made the
+                          --   shafts read as a source rather than as scattering.
+  godraysCeiling  = 2.0,        --   soft ceiling on the added shaft. The shafts used to
+                          --   be added linearly at strength 8, so looking toward
+                          --   the star through the medium clipped to a flat white
+                          --   disc that read as a light source ON the planet. 0 =
+                          --   linear (old behaviour).
   godraysDebug    = 'Off',      --   Off | Shaft
 
   -- Lightning storm flash (lightning.*, fog-nebula Phase 4). Local volumetric
@@ -302,6 +325,14 @@ Config.gpu = {
   -- hardcoded starColor (1, 0.5, 0.1) used by planet atmospheric scattering.
   sunLight        = true,  -- directional + dust backlight contribution
   sunIntensity    = 1,     --   direct/ambient brightness (0..6)
+  -- The star DRAWN in the skybox at starDir (separate from the lighting above).
+  -- `sunStarHalo` is the one that matters for realism: at the old 120 it spread
+  -- the glow over ~20 degrees of sky, so a star sitting just beyond a planet's
+  -- limb read as a light source ON the planet. Higher = tighter.
+  sunStarTight    = 20000, --   disc exponent (higher = smaller disc)
+  sunStarDisc     = 30,    --   disc brightness (HDR, rolled off by the tonemap)
+  sunStarHalo     = 900,   --   halo exponent (higher = tighter halo)
+  sunStarGlow     = 0.35,  --   halo brightness
   sunAmbientFill  = 0.4564,--   hemisphere fill so shadows aren't pure black; lifted
                            --   from 0.12 so GTAO (ambient-only) has visible contrast
                            --   (ao_on==ao_off composite measured 2026-09-10)
@@ -321,6 +352,12 @@ Config.gpu = {
   planetAtmoGlow   = 0.756, -- planets' atmospheric-scattering brightness (0..3)
   planetEnvAmbient = 1.75,  -- planets' nebula-skybox fill; separate from `ambientEnv`,
                           -- which is the deferred-material IBL the ship/asteroids use
+  planetTerminator = 0.35, -- day/night falloff: 0 = cosine law (physical, dims
+                          -- toward the limb), 1 = the old flat wrap, which kept 37%
+                          -- brightness AT the limb and read as a glow on the edge.
+  planetClouds   = 1.0,     -- cloud-deck gain (0..1.5). Per-planet coverage is
+                          -- type.weather x this x a per-planet bias; airless bodies
+                          -- carry weather = 0 and never pay for it.
 
   -- GTAO screen-space ambient occlusion (see ssao-gtao-implementation.md).
   -- Opt-in: kept OFF by default until a mid-tier GPU measurement proves the

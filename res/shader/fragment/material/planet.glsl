@@ -28,6 +28,9 @@ uniform vec3  sunColor;     // engine sun colour (Sun Light enable/intensity/war
 uniform float sunScale;     // extra per-planet sun brightness scale
 uniform float atmoGlow;     // atmosphere scattering brightness (0 = no glow, 1 = default)
 uniform float atmoSun;      // engine sun intensity x scattering gain (see atmosphereDefault)
+uniform float clouds;       // cloud coverage: type.weather x panel knob x per-planet bias (0 = none)
+uniform float cloudTime;    // seconds; advects the cloud lookup (wind)
+uniform float terminator;   // 0 = cosine (physical), 1 = flat wrap (legacy)
 
 const float kSpecular = 1.0;
 const vec3 kOceanColor = vec3(0.01, 0.13, 0.20);
@@ -101,7 +104,17 @@ void main() {
   vec3 Np = normalize(N - relief * ((hU - hr) * T + (hV - hr) * B));
 
   float NL = dot(Np, L);
-  float light = mix(exp(-max(0.0, pow(1.0 - NL, 4.0))), 1.0, 0.01);
+  // Terminator shape. The old curve, exp(-(1-NL)^4), stays within 6% of full
+  // brightness until NL ~ 0.5 and STILL reads 37% at the geometric limb, so the
+  // lit hemisphere glows almost to the edge: the planet looks lit by a broad
+  // source, and the bright limb region reads as a light source sitting on it.
+  // Blend toward a true cosine law, which dims the limb and rounds the day side.
+  // `terminator` = 0 is pure Lambert (physically correct for a diffuse surface,
+  // with a hard day/night edge); 1 is the old flat wrap. Default 0.35 keeps a
+  // little softness for the atmosphere-lit twilight band.
+  float nlCos   = max(0.0, NL);
+  float nlSoft  = mix(exp(-max(0.0, pow(1.0 - NL, 4.0))), 1.0, 0.01);
+  float light = mix(nlCos, nlSoft, terminator);
 
   // 4-stop biome ramp: low -> mid -> high -> peak (snow/ice caps etc.).
   vec3 color = mix(color1, color2, smoothstep(0.0, 0.45, h1));
@@ -118,15 +131,59 @@ void main() {
   // through) — it must consume sunColor itself. sunColor is (0,0,0) when
   // 'Sun Light' is off, so the sun term goes dark and the nebula becomes a
   // UNIFORM fill instead of a hard addend that blew out the day side.
-  vec3 surface = color;
+  // NOTE: named `surfCol`, not `surface` -- a local `vec3 surface` here would
+  // shadow the samplerCube uniform of the same name for the rest of main(), so
+  // every later `texture(surface, ...)` would fail to compile. That is why the
+  // height-gradient fetches above all sit BEFORE this line.
+  vec3 surfCol = color;
   float sun = clamp(light, 0.0, 1.0);
   vec3 sunLit = sunColor * (sun * sunScale);
-  vec3 amb = linear(textureLod(irMap, N, 5.0).xyz) * envAmbient;
+  // Skybox fill on the night side. irMap is a progressive-blur chain (mip 0 =
+  // raw env, higher mips = wider-cap average), so a LOW mip is the directional
+  // answer. This was 5.0, which measured only ~4.8:1 contrast between the
+  // brightest and darkest directions on the 1024 nebula cube and lifted the
+  // darkest 5% of directions from 13 to 25 -- i.e. light arriving from
+  // everywhere. Mip 3 restores ~7.9:1 for a barely different median, so the
+  // night side gets darker where it faces empty sky and picks up the nebula
+  // where it actually is.
+  vec3 amb = linear(textureLod(irMap, N, 3.0).xyz) * envAmbient;
   float sunOn = clamp(max(max(sunColor.r, sunColor.g), sunColor.b), 0.0, 1.0);
   // Fill the side the sun isn't lighting. `mix` keeps the nebula UNIFORM when
   // the sun is off; the 0.85 floor leaves a touch of ambient in day-side
   // terrain shadows so they aren't pure black.
-  color = surface * (sunLit + amb * mix(1.0, 1.0 - 0.85 * sun, sunOn));
+  color = surfCol * (sunLit + amb * mix(1.0, 1.0 - 0.85 * sun, sunOn));
+
+  // Clouds (Phase C). genClouds() has baked a seeded, per-planet cloud field into
+  // the surface cube's BLUE channel since the generator was first written -- the
+  // material simply never read it, so every planet was paying to generate a field
+  // nobody saw. Wind is an advection of the sample point across that baked 3D
+  // field: the field is a fractal of the LOCAL direction, so sliding the lookup
+  // along the local tangents reads as a drifting deck with no extra texture, no
+  // second cube and no regeneration. Skipped entirely when clouds == 0, which is
+  // every airless body (barren type / moons carry weather = 0).
+  if (clouds > 0.001) {
+    vec3 nL = normalize(vertPos);
+    vec3 tL = normalize(cross(nL, (abs(nL.y) < 0.9) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+    vec3 bL = cross(nL, tL);
+    // Prevailing drift: mostly along tL with a little across it, so the deck does
+    // not read as a rigid rotation of the whole pattern.
+    vec3 drift = normalize(tL + bL * 0.4) * (cloudTime * 2.0e-4);
+    float cd = texture(surface, normalize(vertPos + drift)).z;
+    // Coverage window sits HIGH in the field's range: genClouds returns
+    // 0.5 + 0.5*sin(...), so a window centred near 0.5 blankets the planet and
+    // reads as a bleached shell with the surface only as dark blotches. Biomes
+    // should dominate and the deck band them.
+    float cov = smoothstep(0.70 - 0.20 * clouds, 0.95 - 0.20 * clouds, cd);
+    // Lit by the sphere's own day/night (a cloud deck has no terrain to cast on
+    // it), on the same sun + ambient terms the surface uses. 1.25x albedo, not
+    // more: the deck is bright, but pushing it past ~1.3 blows the disc out on a
+    // backlit planet where the atmosphere shell is already adding scatter.
+    float cNL = max(0.0, dot(N, L));
+    // 1.05 deck albedo, and the sun term scaled by the same terminator shape as
+    // the ground so the deck does not keep glowing out past the limb.
+    vec3 cloudLit = (sunColor * sunScale * (0.15 + 0.85 * cNL * (1.0 - 0.5 * terminator)) + amb) * 1.05;
+    color = mix(color, cloudLit, cov * clouds);
+  }
 
   if (hasAtmo > 0.5) {
     vec4 atmo = atmosphereDefault(V, eye - origin, atmoSun);

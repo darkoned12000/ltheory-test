@@ -45,6 +45,13 @@ function Nebula:render (state)
       Shader.SetFloat3('sunStarDir', sd.x / len, sd.y / len, sd.z / len)
       Shader.SetFloat3('sunStarColor', 1.0, 1.0 - 0.4 * sw, 1.0 - 0.8 * sw)
       Shader.SetFloat('sunStarGain', gain)
+      -- Star size/brightness. Defaults are a tight disc with a modest halo; the
+      -- halo is what used to smear light across ~20 degrees of sky and read as a
+      -- glow sitting on the planet's limb (see skybox.glsl).
+      Shader.SetFloat('sunStarTight', Settings.get('render.sun.starTight') or 20000.0)
+      Shader.SetFloat('sunStarDisc',  Settings.get('render.sun.starDisc')  or 30.0)
+      Shader.SetFloat('sunStarHalo',  Settings.get('render.sun.starHalo')  or 900.0)
+      Shader.SetFloat('sunStarGlow',  Settings.get('render.sun.starGlow')  or 0.35)
     end
     Draw.Box3(Box3f(-1, -1, -1, 1, 1, 1))
     shader:stop()

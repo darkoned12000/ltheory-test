@@ -741,7 +741,13 @@ function GameView:draw (focus, active)
     end
 
     local godDbg = Settings.get('postfx.godrays.debug') or 0
-    if Settings.get('postfx.godrays.enable') or godDbg > 0 then
+    -- Also gated on nebula.enable: the god-ray pass marches the SAME medium as
+    -- the volume pass (godrays.glsl calls mediumCloud), so 'Nebula Volume off'
+    -- used to leave the shafts marching a medium the player had just switched
+    -- off. That split also made the medium's inscatter impossible to A/B --
+    -- disabling either toggle alone removed only half of it, which is why the
+    -- glow at the planet's limb survived both.
+    if (Settings.get('postfx.godrays.enable') or godDbg > 0) and Settings.get('nebula.enable') then
       local sys = self.ltheory and self.ltheory.system
       local neb = sys and sys.nebula
       if neb and neb.starDir then

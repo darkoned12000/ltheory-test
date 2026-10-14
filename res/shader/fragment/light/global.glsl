@@ -49,6 +49,19 @@ void main () {
   float NdL = 0.5 + 0.5 * max(dot(N, Ls), 0.0);
   vec3 fill = sunColor * (sunFill * NdL);
 
+  // Diffuse environment LOD. irMap is a PROGRESSIVE-BLUR chain, not a plain
+  // irradiance map: mip 0 is the raw envMap (sharp), and each higher mip is a
+  // wider-cap average that converges on a hemispherical average. So for a
+  // *diffuse* lookup a LOW mip is the directional answer -- sampling high mips
+  // is literally "light from all degrees". Measured on the 1024 nebula cube
+  // (directional contrast p95/p05 across all directions): mip 2 = 9.1:1,
+  // mip 3 = 7.9:1, mip 5 = 4.8:1, mip 6 = 4.1:1, and mip 8 (4x4 per face) is
+  // effectively uniform. This was 8.0 -- omnidirectional fill on every lit
+  // surface. Mip 4 keeps most of the directionality without going sharp enough
+  // that a low-res nebula cube shows its own texels; the specular IBL below
+  // still uses roughnessToLOD(), which is correct (rougher = blurrier).
+  const float kDiffuseIBLLod = 4.0;
+
   vec3 light = vec3(0.0);
 
   float ao = texture(texAO, uv).r;
@@ -59,12 +72,12 @@ void main () {
     if (mat == Material_NoShade)
       fragData0 = vec4(vec3(1.0), 1.0);
     else
-      fragData0 = vec4((linear(textureLod(irMap, N, 8.0).xyz) * envScale) * aoF + fill * aoFill, 1.0);
+      fragData0 = vec4((linear(textureLod(irMap, N, kDiffuseIBLLod).xyz) * envScale) * aoF + fill * aoFill, 1.0);
     return;
   }
 
   if (mat == Material_Diffuse || mat == Material_Ice) {
-    light += (linear(textureLod(irMap, N, 8.0).xyz) * envScale) * aoF + fill * aoFill;
+    light += (linear(textureLod(irMap, N, kDiffuseIBLLod).xyz) * envScale) * aoF + fill * aoFill;
   }
 
   else if (mat == Material_Metal) {

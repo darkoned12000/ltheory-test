@@ -33,6 +33,10 @@ local function generateNebulaIFS (rng, res, starDir)
   ss:setTex1D('lutG', lutG)
   ss:setTex1D('lutB', lutB)
   ss:setFloat3('starDir', starDir.x, starDir.y, starDir.z)
+  -- Central Star brightness baked into the cube (see gen/nebula.glsl). Read at
+  -- generation time, so changing it needs a relaunch to re-bake the sky.
+  local glow = Settings.get('nebula.starGlow')
+  ss:setFloat('starGlow', glow or 0.35)
 
   self:generate(ss)
   self:genMipmap()

@@ -318,13 +318,31 @@ function DebugWindow:createSettingsSections ()
   end
 end
 
+-- Settings sections are keyed by the first dot-segment of a setting key, so the
+-- titles used to be raw identifiers ('genship'), which made them both hard to
+-- recognise and hard to name in Config.debug.windowSection. Display a label;
+-- keep the key working for anyone who already configured one.
+local kSectionLabels = {
+  genship   = 'Ship Generator',
+  nebula    = 'Nebula Volume',
+  lightning = 'Lightning',
+  godrays   = 'God Rays',
+  postfx    = 'Post FX',
+  lighting  = 'Lighting',
+  render    = 'Render',
+  ssao      = 'GTAO',
+  exposure  = 'Exposure',
+}
+
 function DebugWindow:getSection (name)
   local section = self.sections[name]
   if section then return section end
   section = UI.Grid():setCols(1):setPadCellX(8):setPad(2, 12, 2, 2)
+  local collapsible = UI.Collapsible(kSectionLabels[name] or name)
+  collapsible.sectionKey = name
   self.contents
     :add(UI.NavGroup()
-      :add(UI.Collapsible(name)
+      :add(collapsible
         :add(UI.Grid():setCols(1)
           :add(section)
         )
@@ -452,7 +470,8 @@ function DebugWindow.Create (ltheory)
   if Config.debug.windowSection then
     for i = 1, #self.contents.children do
       local child = self.contents.children[i]
-      child.expanded = (child.title == Config.debug.windowSection)
+      child.expanded = (child.sectionKey == Config.debug.windowSection
+                     or child.title == Config.debug.windowSection)
     end
   end
 

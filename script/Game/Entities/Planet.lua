@@ -89,6 +89,12 @@ local Planet = subclass(Entity, function (self, seed, opts)
   self.texSurface = Gen.GenUtil.ShaderToTexCube(cubeRes, TexFormat.RGBA16F, t.gen, params):managed()
 
   self.cloudLevel = rng:getUniformRange(-0.2, 0.15)
+  -- Per-type cloud chance (Phase C). Was carried in Config since the type table
+  -- was written and never wired; the material now reads the baked cloud channel,
+  -- gated by this. cloudLevel is the per-planet coverage bias on top, so two
+  -- terrestrial worlds do not get identical weather.
+  self.weather    = t.weather or 0.0
+  self.cloudTime  = 0.0
   self.atmoScale  = t.atmo > 0 and t.atmo or 1.0
   self.hasAtmo    = t.atmo > 0
   self.atmoTint   = t.atmoTint or { 1, 1, 1 }
@@ -137,6 +143,11 @@ local Planet = subclass(Entity, function (self, seed, opts)
 end)
 
 function Planet:update (state)
+  -- Cloud advection clock. Accumulated from dt rather than read from a wall
+  -- clock, so it stays reproducible with a pinned world seed, and advanced for
+  -- moons too (they return early below).
+  self.cloudTime = (self.cloudTime or 0.0) + state.dt
+
   -- Moon: orbit the parent and keep one face toward it (tidal lock).
   if self.parentPlanet then
     self.orbitPhase = self.orbitPhase + self.orbitSpeed * state.dt
@@ -195,6 +206,15 @@ function Planet:render (state)
     Shader.SetFloat('envAmbient', Settings.get('render.planet.envAmbient') or 2.0)
     Shader.SetFloat('sunScale',   Settings.get('render.planet.sunScale') or 1.0)
     Shader.SetFloat('atmoGlow',   Settings.get('render.planet.atmoGlow') or 1.0)
+    -- Cloud coverage: per-type chance x the panel knob, offset by the per-planet
+    -- bias. weather is 0 for barren/moon types, so airless bodies cost nothing.
+    local cloudKnob = Settings.get('render.planet.clouds')
+    if cloudKnob == nil then cloudKnob = 1.0 end
+    Shader.SetFloat('clouds',     math.max(0.0, math.min(1.0, (self.weather or 0.0) * cloudKnob + (self.cloudLevel or 0.0))))
+    Shader.SetFloat('cloudTime',  self.cloudTime or 0.0)
+    -- Terminator shape: 0 = cosine law (a diffuse planet dims toward the limb),
+    -- 1 = the old flat wrap that glowed almost to the edge.
+    Shader.SetFloat('terminator', Settings.get('render.planet.terminator') or 0.35)
     Shader.SetFloat3('atmoTint', self.atmoTint[1], self.atmoTint[2], self.atmoTint[3])
     Shader.SetFloat('rPlanet', self:getScale())
     Shader.SetFloat('rAtmo', self:getScale() * self.atmoScale)

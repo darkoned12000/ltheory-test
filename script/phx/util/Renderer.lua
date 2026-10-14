@@ -101,6 +101,10 @@ local SETTINGS = {
   { kind = 'float', key = 'nebula.coverage', label = ' - Coverage',  default = 2, min = 0.25, max = 2.5, gpu = 'nebulaCoverage' },
   { kind = 'float', key = 'nebula.radius',  label = ' - Radius',     default = 14000, min = 500, max = 40000, gpu = 'nebulaRadius' },
   { kind = 'float', key = 'nebula.g',       label = ' - Phase g',    default = 0.4, min = -1, max = 1, gpu = 'nebulaG' },
+  -- Baked into the sky CUBE at generation time (gen/nebula.glsl 'Central Star'),
+  -- so a change needs a relaunch to re-bake. Was a hardcoded 8.0/4.0 = 12x peak
+  -- that clipped to white across a broad patch of sky.
+  { kind = 'float', key = 'nebula.starGlow', label = ' - Baked Star Glow', default = 0.35, min = 0, max = 3, gpu = 'nebulaStarGlow' },
   { kind = 'float', key = 'nebula.tint',    label = ' - Glow Tint',  default = 0.0, min = 0, max = 1, gpu = 'nebulaTint' },
   { kind = 'float', key = 'nebula.tintR',   label = '   Color R',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintR' },
   { kind = 'float', key = 'nebula.tintG',   label = '   Color G',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintG' },
@@ -108,8 +112,9 @@ local SETTINGS = {
 
   -- God-rays (fog-nebula Phase 3, independent A/B product) ---------------
   { kind = 'bool',  key = 'postfx.godrays.enable',   label = 'God Rays',      default = false, gpu = 'godraysEnabled' },
-  { kind = 'float', key = 'postfx.godrays.strength', label = ' - Strength',   default = 8, min = 0, max = 32, gpu = 'godraysStrength' },
-  { kind = 'float', key = 'postfx.godrays.g',        label = ' - Anisotropy', default = 0.92, min = 0, max = 0.98, gpu = 'godraysG' },
+  { kind = 'float', key = 'postfx.godrays.strength', label = ' - Strength',   default = 1, min = 0, max = 32, gpu = 'godraysStrength' },
+  { kind = 'float', key = 'postfx.godrays.g',        label = ' - Anisotropy', default = 0.7, min = 0, max = 0.98, gpu = 'godraysG' },
+  { kind = 'float', key = 'postfx.godrays.ceiling',   label = ' - Soft Ceiling', default = 2.0, min = 0, max = 12, gpu = 'godraysCeiling' },
   { kind = 'enum',  key = 'postfx.godrays.debug',    label = ' - Debug View', default = 1,
     options = { 'Off', 'Shaft' }, gpu = 'godraysDebug' },
 
@@ -147,6 +152,10 @@ local SETTINGS = {
   { kind = 'float', key = 'render.sun.fill',      label = ' - Ambient Fill', default = 0.4564, min = 0, max = 1, gpu = 'sunAmbientFill' },
   { kind = 'float', key = 'render.sun.warmth',    label = ' - Warmth',       default = 0.7476, min = 0, max = 1, gpu = 'sunWarmth' },
   { kind = 'bool',  key = 'render.sun.marker',    label = ' - Direction Marker', default = false, gpu = 'sunMarker' },
+  { kind = 'float', key = 'render.sun.starTight', label = ' - Star Disc',   default = 20000, min = 500, max = 60000, gpu = 'sunStarTight' },
+  { kind = 'float', key = 'render.sun.starDisc',  label = ' - Star Bright', default = 30,    min = 0,   max = 120,   gpu = 'sunStarDisc' },
+  { kind = 'float', key = 'render.sun.starHalo',  label = ' - Star Halo',   default = 900,   min = 60,  max = 6000,  gpu = 'sunStarHalo' },
+  { kind = 'float', key = 'render.sun.starGlow',  label = ' - Halo Glow',   default = 0.35,  min = 0,   max = 2,     gpu = 'sunStarGlow' },
   { kind = 'bool',  key = 'render.sun.shadows',   label = ' - Shadows',      default = true, gpu = 'sunShadows' },
   { kind = 'float', key = 'render.sun.shadowRange', label = ' - Shadow Range', default = 8000, min = 500, max = 20000, gpu = 'sunShadowRange' },
   { kind = 'enum',  key = 'render.sun.shadowSize',  label = ' - Shadow Res',   default = 3,
@@ -164,6 +173,8 @@ local SETTINGS = {
   { kind = 'float', key = 'render.planet.sunScale',   label = 'Planet Sun Scale',   default = 1.0,   min = 0, max = 4, gpu = 'planetSunScale' },
   { kind = 'float', key = 'render.planet.envAmbient', label = 'Planet Nebula Fill', default = 1.75,  min = 0, max = 10, gpu = 'planetEnvAmbient' },
   { kind = 'float', key = 'render.planet.atmoGlow',   label = 'Planet Atmosphere',  default = 0.756, min = 0, max = 3,  gpu = 'planetAtmoGlow' },
+  { kind = 'float', key = 'render.planet.clouds',     label = 'Planet Clouds',      default = 1.0,   min = 0, max = 1.5, gpu = 'planetClouds' },
+  { kind = 'float', key = 'render.planet.terminator', label = 'Planet Terminator',  default = 0.35, min = 0, max = 1,   gpu = 'planetTerminator' },
 
   -- SSAO / GTAO -------------------------------------------------------------
   { kind = 'bool',  key = 'ssao.enable',      label = 'Ambient Occlusion', default = false, gpu = 'aoEnabled' },
@@ -1003,6 +1014,7 @@ local volCount = med.anchors and #med.anchors or 0
       if med.noise then Shader.SetTex2D('texNoise', med.noise) end
       Shader.SetFloat2('sunUV', med.sunUv.x, med.sunUv.y)
       Shader.SetFloat('godStrength', strength * (med.sunFade or 1.0))
+      Shader.SetFloat('godCeiling', Settings.get('postfx.godrays.ceiling') or 2.0)
       Draw.Color(1, 1, 1, 1)
       Draw.Rect(0, 0, self.sx, self.sy)
     shaderF:stop()

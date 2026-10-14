@@ -18,6 +18,7 @@ uniform sampler2D texScene;  /* lit scene at this point (full-res)    */
 uniform sampler2D texNoise;  /* 64x64 blue-noise LUT (crawl dither)   */
 uniform vec2      sunUV;     /* sun screen uv, normalized [0..1]      */
 uniform float     godStrength;
+uniform float     godCeiling; /* soft ceiling on the added shaft (0 = linear) */
 uniform int       godMode;   /* 0 composite, 1 debug                  */
 
 void main () {
@@ -44,6 +45,16 @@ void main () {
     return;
   }
 
+  // Soft ceiling on the additive shafts. They used to be added LINEARLY at
+  // godStrength (default 8), so any pixel looking toward the star through the
+  // medium went straight past 1.0 and clipped to a flat white disc -- which read
+  // as a light source sitting on the planet's limb rather than as haze. A
+  // Reinhard-style knee is a no-op well below the ceiling and saturates smoothly
+  // above it, so no gain setting can produce a hard blob. 0 disables it.
+  vec3 shaft = acc * godStrength;
+  if (godCeiling > 0.0) {
+    shaft = shaft / (1.0 + shaft / godCeiling);
+  }
   vec3 scene = texture(texScene, uv).xyz;
-  fragData0 = vec4(scene + acc * godStrength, 1.0);
+  fragData0 = vec4(scene + shaft, 1.0);
 }

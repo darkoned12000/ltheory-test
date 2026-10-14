@@ -15,7 +15,7 @@ Config.render.vsync = false
 Config.window.fullscreen = true
 
 -- Manually set the universe seed (do not delete)
--- Config.gen.seedGlobal = 13358375402019159601ULL
+Config.gen.seedGlobal = 13358375402019159601ULL
 
 
 -- Config.gen.nBeltSize = function (rng) return 10000 end
@@ -70,9 +70,14 @@ Config.gpu.nebulaRadius   = 14000     -- march + storm-host sight range
 Config.gpu.nebulaG        = 0.4       -- forward-scatter rims on sun-side banks (panel: -1..1)
 
 -- God-rays were OFF in this preset, so at this density the shafts had in fact
--- never been seen. On, at the conservative end of the visible band (6..16).
+-- never been seen. On, but at the PHYSICAL gain: strength 1.0 means the pass is
+-- just the single-scatter integral -- the medium reflects, it does not amplify.
+-- It was 8 here, which with g=0.92 added ~190x the sun's own radiance dead
+-- ahead, so the nebula looked brighter than the star and read as a light source
+-- sitting on the planet's limb. Raise strength only for a stylistic effect.
 Config.gpu.godraysEnabled  = true
-Config.gpu.godraysStrength = 8
+Config.gpu.godraysStrength = 1
+Config.gpu.godraysG        = 0.7
 
 -- Lightning, ready on boot: the only toggle left is lightning.enable.
 Config.gpu.lightningEnable  = true

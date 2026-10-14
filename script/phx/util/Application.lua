@@ -122,6 +122,14 @@ function Application:run ()
 
   local profiling = false
   local toggleProfiler = false
+  -- PHX_PERF=<frames>: unattended frame-time statistics (see the block at the
+  -- bottom of the loop). Declared out here, NOT beside `timeScale`: everything
+  -- inside the loop body is re-initialised every frame, which silently makes an
+  -- accumulator a constant 1 so any `n % interval` test never fires.
+  local perfInterval = tonumber(os.getenv('PHX_PERF') or '') or nil
+  local perfN, perfEma, perfSamples = 0, 0, {}
+  local printSettings = os.getenv('PHX_SETTINGS') ~= nil
+
   while not self.exit do
     if toggleProfiler then
       toggleProfiler = false
@@ -195,6 +203,50 @@ function Application:run ()
       self.lastUpdate = now
       self:onUpdate(timeScale * self.dt)
     end)
+
+    -- PHX_PERF=<frames> : frame-time statistics on stdout, every <frames> frames.
+    -- The debug panel shows the same numbers, but only while a human is watching
+    -- (and its text is unreadable in a PHX_DEBUG_DUMP capture), whereas this is
+    -- what an unattended perf run needs: ema/min/p95/max over a window, so a
+    -- single spike cannot masquerade as a result. See ltheory-planets.md 11.0 W6.
+    perfN = perfN + 1
+    -- PHX_SETTINGS=1 : print the live value of the settings that drive a look,
+    -- once the Renderer has seeded them. A/B runs that write Config.gpu.* and
+    -- then assume the toggle took are worthless without this: two "disable"
+    -- variants during the star-glare investigation came out byte-identical to
+    -- baseline, and it was never clear whether the pass contributed nothing or
+    -- the override never arrived.
+    if printSettings and perfN >= 5 then
+      printSettings = false
+      local keys = {
+        'render.sun.intensity', 'render.sun.enable',
+        'render.planet.sunScale', 'render.planet.envAmbient',
+        'render.planet.atmoGlow', 'render.planet.clouds',
+        'nebula.enable', 'postfx.godrays.enable', 'postfx.bloom.enable',
+      }
+      for _, k in ipairs(keys) do
+        if Settings.exists(k) then
+          printf('[SETTING] %-26s = %s', k, tostring(Settings.get(k)))
+        end
+      end
+    end
+
+    if perfInterval then
+      perfSamples[#perfSamples + 1] = self.dt
+      if perfN % perfInterval == 0 then
+        table.sort(perfSamples)
+        local mean = 0
+        for i = 1, #perfSamples do mean = mean + perfSamples[i] end
+        mean = mean / #perfSamples
+        local p95 = perfSamples[math.max(1, math.floor(#perfSamples * 0.95))]
+        io.stderr:write(string.format(
+          '[PERF] n=%d mean=%.2f ema=%.2f min=%.2f p95=%.2f max=%.2f fps=%.0f\n',
+          perfN, 1000 * mean, 1000 * perfEma, 1000 * perfSamples[1],
+          1000 * p95, 1000 * perfSamples[#perfSamples], 1000 / (1000 * mean)))
+        perfEma = mean
+        perfSamples = {}
+      end
+    end
 
     self:profiled('App.onDraw', function ()
       self.window:beginDraw()

@@ -19,6 +19,9 @@ and an engine-driven sun/nebula lighting pass are all in.
    no code — see §11.0).
 6. **W5 density + god-rays re-tune** — ✅ done 2026-10-12 (density 2.2→3.0,
    coverage 2.0→1.6, god-rays on at 8; measured, table in §11.0). W6 FPS next.
+7. **W7 deferred planet features** — W7a clouds landed; W7b rings, W7c biomes,
+   W7d gas giants, W7e atmosphere entry, ordered in §11.3. W6's *scaling* half
+   (rock/NPC load) folded into the `procedural-space-environment.md` work.
 
 **Deferred:** clouds, gas giants (both expected to be FPS-expensive — defer
 until the perf budget is understood). Rings / biomes / atmosphere-entry are
@@ -204,7 +207,7 @@ tune a look against a frame that will change shape under you** (W3–W5 before W
 | W4 | Small look fixes (star in haze, marker rim clamp, integer-hash medium) | W1 | S | ✅ 2026-10-12 |
 | W5 | Re-tune density ⇒ god-rays gain together | W3, W4 | S | ✅ 2026-10-12 |
 | W6 | FPS: profile on the *final* W5 settings | W5 | M | open |
-| W7 | Deferred features (clouds, gas giants, rings, biomes, atmosphere entry) | W6 | L | §11.3 |
+| W7 | Deferred features (clouds, gas giants, rings, biomes, atmosphere entry) | W6 | L | §11.3 — split below |
 | W8 | Planet scale vs `kSystemScale` (planets can engulf the system) | — | M | §11.4 |
 | S1 | Speckle watch — verify on seeds beyond the repro | W1 | S | open |
 
@@ -612,32 +615,223 @@ Known costs / levers:
 - Ideas worth profiling: cull/step-scale by view, drop the volume to quarter-res
   when the camera is inside a planet's atmosphere bubble, gate per-type work.
 
-### 11.3 Deferred features (= §11.0 W7)
+### 11.3 Deferred features (§11.0 W7, split into ordered pieces)
 
-**Gate: do not start any of these until W6 has a measured perf budget.** Two of
-them are explicitly expected to be the expensive ones, and the reason they were
-deferred is that we never established the budget.
+**Gate: W6 has a measured budget** (3.7 ms/frame at 1024x768, ~13 ms of headroom to
+60fps; the volumetric pass is 30% of the frame, everything else is noise), so the
+gate is satisfied — with the standing caveat that the budget was measured on an
+*empty* system, so re-measure before shipping the load W6 never got to.
 
-- **Clouds (Phase C).** The research doc called this "a one-line toggle" — it is
-  not. Needs: a **seeded** `cloudCube` (`gen/clouds_cube.glsl` hardcodes
-  `seed = 1337.0`, so all planets would share one pattern), a 3D `cloudNoise`
-  source (the missing plumbing — a `Tex3D` built once), making
-  `CLOUDS_ENABLED` runtime-switchable, wind animation, and per-type `weather`
-  gating. **Expected FPS cost — the reason it's deferred.**
-- **Gas giants.** Need a banded generator and a no-solid-surface render path
-  (thick atmosphere dominant), not just a palette entry. **Expected FPS cost.**
-- **Planetary rings.** No ring entity today. A particle/anulus system is
-  plausible (the engine has `GPUParticles`); it's a new entity + a ring shader.
-- **True biomes.** The height→4-colour ramp is the current "biome". Discrete
-  biomes need a biome channel in the generation cube + a per-biome material
-  lookup (and likely vertex displacement for real terrain relief).
-- **Atmosphere entry / landing.** No atmosphere-entry physics, no landable
-  surface today. A design: `exp(-altitude/scaleHeight)` density field → ship
-  drag/lift coupling → landing-zone detection (see the old research recipes,
-  folded here).
+W7 is five unrelated features, so it is ordered rather than listed:
+
+| # | Piece | Depends on | Effort | State |
+|---|-------|-----------|--------|-------|
+| W7a | Planet clouds | — | S | ✅ 2026-10-12 (plumbing + ship; look untuned) |
+| W7b | Planetary rings | — | M | open |
+| W7c | True biomes | W7a | M | open |
+| W7d | Gas giants | W7c | L | open |
+| W7e | Atmosphere entry / landing | — | L | open |
+
+**Two corrections to the old descriptions, both found by reading the tree:**
+
+- **Clouds were never the expensive job this section claimed.** It described
+  Phase C as needing a seeded `cloudCube`, a new `Tex3D` noise source, a
+  runtime-switchable `CLOUDS_ENABLED`, and an "expected FPS cost". But
+  `gen/planet.glsl` has baked a **seeded, per-planet cloud field into the surface
+  cube's BLUE channel since the generator was first written** (`genClouds`), and
+  the material simply never read it. Consuming it is one extra cube fetch and a
+  composite — no new texture, no new cube, no regeneration, and it measures at
+  **~0.05–0.1 ms** (W7a below). The old plan was describing `gen/clouds_cube.glsl`
+  (still in the tree, still hardcoding `seed = 1337.0`), a path the generator
+  route makes unnecessary.
+- **`genColor` is dead weight.** A 12-iteration fractal evaluated per texel into
+  the GREEN channel, read by nothing — the material builds its palette from height
+  alone. Same class of bug as W3's dropped fields. W7c consumes it; until then
+  every planet cube pays for it.
+
+**W7a — planet clouds. ✅ plumbing + shipped 2026-10-12; the LOOK is not tuned.**
+- The material now reads the cube's blue channel and composites a cloud deck,
+  gated by `type.weather` (which has been in `Config.render.planet.types` since
+  the type table was written, carrying 0.60 terrestrial / 0.08 desert / 0.00
+  barren …) times the new `render.planet.clouds` knob times a per-planet
+  `cloudLevel` bias — so two terrestrial worlds don't get identical weather, and
+  airless bodies cost nothing. Moons return early in `update`, so the advection
+  clock is advanced before that branch.
+- **Wind costs nothing:** the field is a fractal of the *local* direction, so the
+  deck drifts by sliding the lookup point along the local tangents — no animation
+  texture, no regeneration. It has to be built from `vertPos` and a local basis,
+  not the world tangents `T`/`B` the relief code uses, or the drift would smear
+  with the planet's spin.
+- **Shipped look is provisional and deliberately conservative** (coverage window
+  high in the field's range, 1.25× albedo). First attempt at 1.6× with a window
+  centred on 0.5 blanketed the planet into a bleached shell — `genClouds` returns
+  `0.5 + 0.5*sin(...)`, so anything centred near 0.5 covers most of the sphere.
+- **Not done / needs a real test bed:** the seed available at boot puts a huge
+  planet directly in front of the sun, where the atmosphere shell plus
+  auto-exposure already wash the surface to a pale ball *without* clouds. Judge
+  the deck on a planet seen with the sun behind the *camera*, or from further
+  out. Also still open: clouds casting shadow on the surface, a cloud *shell*
+  above the terrain for parallax (v1 projects them onto the surface), and rain/
+  storms.
+
+**W7b — planetary rings.** The most self-contained piece: a new entity plus a ring
+shader, touching neither the generator nor the surface material, so it cannot
+break the existing look. Needs: an anulus mesh or GPU particle band (the engine
+has `GPUParticles`), a ring shader (ice vs dust, forward-scatter when backlit,
+planet shadow on the ring band — the shadow machinery exists), and a per-type
+probability. W8 (planet scale) should land first or the ring inner radius has to
+be derived from a radius that is currently untamed.
+
+**W7c — true biomes.** Consumes the dead `genColor` channel. The interesting part
+is not the lookup but the *continuity*: the design note
+(`procedural-space-environment.md` §7) is explicit that a procedural boundary is
+a bug — "the player should think *something is changing*, not *I entered a new
+zone*". So biomes must blend between neighbouring region colours over large
+distances, not switch. The height→4-stop ramp stays as the within-biome detail.
+
+**W7d — gas giants.** Needs a banded generator and a no-solid-surface render path
+(thick atmosphere dominant). Explicitly the expensive one, and it should not start
+before W6's budget is re-measured with real load.
+
+**W7e — atmosphere entry / landing.** Gameplay, not rendering, and independent of
+everything above: an `exp(-altitude/scaleHeight)` density field → ship
+drag/lift coupling → landing-zone detection. Sized for after the visuals land.
+
+**Environment lighting directionality (2026-10-12).** *"The skybox produces light
+from all degrees"* — correct, and measurable. `irMap` is **not** a plain
+irradiance map: it is a *progressive-blur chain* (mip 0 = the raw envMap, each
+higher mip a wider-cap average, converging on a hemispherical average). So for a
+diffuse lookup a **low** mip is the directional answer and a high mip is
+literally "light from everywhere". Measured on the 1024 nebula cube — contrast
+between the brightest and darkest directions (p95/p05), plus how much the
+darkest 5% of directions is lifted above its true value:
+
+| sample | p05 | median | p95 | p95/p05 |
+|---|---|---|---|---|
+| irMap mip 2 (256²/face) | 13 | 78 | 118 | **9.1:1** |
+| irMap mip 3 (128²) | 15 | 77 | 118 | 7.9:1 |
+| irMap mip 5 (32²) — *was the planet's* | 25 | 76 | 121 | 4.8:1 |
+| irMap mip 6 (16²) | 30 | 75 | 122 | 4.1:1 |
+| irMap mip 8 (4²/face) — *was the diffuse IBL* | — | — | — | ~uniform |
+
+- **Changed:** `light/global.glsl` diffuse IBL **mip 8 → 4** (`kDiffuseIBLLod`),
+  and the planet's night-side fill **mip 5 → 3**. Mip 8 is 4×4 per face — a
+  hemispherical average, so every lit surface was getting omnidirectional fill.
+  The median barely moves (78 → 77), so directionality is bought without a
+  brightness compensation; the cost is darker night sides where a surface faces
+  empty sky. **Needs an eyeball:** if nights go too black, raise `ambientEnv` /
+  `render.planet.envAmbient` rather than putting the LOD back.
+- The specular IBL still uses `roughnessToLOD(rough)`, which is correct (rougher
+  = blurrier); only the *diffuse* lookups were flattened.
+- Also found while chasing the ship's "duplicated" look: `genship.global.surface`
+  defaults to **'Extrude'** with `genship.override = true`, so
+  `ShipFighter.SurfaceDetail` calls `shape:extrude(0.2)` on the hull **and every
+  wing** — that is the stacked-plate look, not a rendering bug. Set Surface
+  Detail to 'Smooth Corners' or 'None' to compare. The settings were hard to
+  find: the debug panel opens only `Config.debug.windowSection` (nil = *all*
+  sections collapsed), and section titles were raw key prefixes, so `genship`
+  now displays as "Ship Generator" and `windowSection` accepts key or label.
+
+**The blown white glow at the planet's limb — investigation (2026-10-13).**
+Reported as "an unnatural light source sitting on the planet". What was ruled out,
+with **verified** settings (see the `PHX_SETTINGS` probe below — an earlier
+attempt at this same A/B produced two byte-identical "disabled" variants, so the
+toggles were not known to have applied, and one round of conclusions had to be
+thrown away):
+- **Not the volumetric nebula, god-rays or bloom.** Confirmed independently by
+  the player, and by a matched bloom-on/bloom-off pair whose glow falloff is
+  identical (253/249/236/200/167/151/133/120 vs 253/249/234/195/154/149/132/119).
+- **Not the planet's atmosphere.** `planetAtmoGlow = 0` (verified live) leaves
+  the glow unchanged — 136/125 at 320/400 px out vs a 134/124 baseline.
+- **Not the planet's shading alone**: `sunScale = 0` reduces the outer halo
+  (119/104 vs 134/124) and clouds off reduces it most (106/89) — so the planet's
+  sun term *and* the cloud deck contribute, but neither is the whole story.
+
+**What it actually is, in two parts:**
+
+1. **The sky cube has a clipped-white baked star glow.** `gen/nebula.glsl`'s
+   "Central Star" adds `8·exp(-√(4096·d)) + 4·exp(-(1024·d)^¼)` where
+   `d = 1 - dot(dir, starDir)` — a peak of **12×** the nebula colour, i.e. far
+   above 1.0, so it **saturates**. Measured on the generated 1024 cube: the +X
+   face runs median 103 / p95 199 / **p99 254**, while every other face sits at
+   median 49–78. That is a solid white patch baked into the environment, and
+   because it is *baked into the cube at generation time*, **no runtime toggle
+   touches it** — which is precisely why disabling the volume, god-rays and
+   bloom changed nothing.
+2. **The planet's lit limb + cloud deck** adds a broad halo around it, on top of
+   the thin atmosphere limb arc.
+
+**Fixed so far:**
+- The skybox star's own halo was `pow(ca, 120) * 0.8` — a ~20°-wide lobe, i.e.
+  literally "light from all degrees", which is what the player described. Now
+  `pow(ca, sunStarHalo)` with `render.sun.starHalo` default **900**, and the disc
+  `pow(ca, sunStarTight)` default **20000** at 30 instead of 6000 at 60. Four new
+  panel knobs. (Tightening it changed little here, because part 1 dominates.)
+- **Terminator:** `exp(-(1-NL)^4)` stays within 6% of full brightness until
+  NL ≈ 0.5 and still reads **37% at the geometric limb**, so the day side glowed
+  almost to the edge. Now blends toward a true cosine law via
+  `render.planet.terminator` (default **0.35**; 0 = pure Lambert/physical,
+  1 = the old flat wrap). Outer-halo luma 400 px out: 124 → 78.
+- **Cloud deck:** albedo 1.25 → 1.05, and its sun term now follows the same
+  terminator so the deck does not keep glowing past the limb.
+
+**Still open:** the generator's baked Central Star amplitude/tightness (part 1).
+That changes the sky's character *and* everything `irMap` convolves from it, so
+it wants the player's eye before it is touched.
+
+**Harness lessons (both cost real time here):**
+- **Verify your overrides applied.** `PHX_SETTINGS=1` now prints the live value
+  of the settings that drive a look, once the Renderer has seeded them.
+- **Sample the falloff, not the clipped core.** A 253-valued core reads 253 for
+  every variant, so a ±40 px grid around the peak compares nothing; the whole
+  difference between the variants lived 320–400 px out.
+- **Confirm the frame is the same shape.** `Config.window.width/height` is not
+  reliably honoured between runs (one batch came out 841×1232 portrait while the
+  rest were 1891×969), so pixel comparisons are only valid within a framing.
+  Same family of problem as W5's `dt`-drift trap.
+
+**ROOT CAUSE (found 2026-10-13, after the player found it): two passes march the
+same medium, and the god-ray composite added it linearly at gain 8.**
+
+```lua
+-- GameView.lua, post chain
+if Settings.get('nebula.enable') then ... Renderer:volume(...) ... end        -- pass A
+if Settings.get('postfx.godrays.enable') ... then Renderer:godrays(...) end   -- pass B
+```
+
+- `filter/godrays.glsl` calls **`mediumCloud`**, so pass B marches the *same*
+  medium as pass A — but it was gated only on `postfx.godrays.enable`, **not**
+  on `nebula.enable`. So "Nebula Volume off" left the shafts marching a medium
+  the player had just switched off, and vice versa. **Each toggle removed only
+  half the effect**, which is exactly why both appeared to do nothing while
+  `nebula.density → 0` (zeroes `mediumDensity()` for *both*) or
+  `nebula.radius → 500` (empties both marches) removed it completely. Fixed: pass
+  B is now gated on `nebula.enable` as well.
+- `filter/godblur.glsl` composited `scene + acc * godStrength` — **linear, with no
+  ceiling**, at `godStrength` = `postfx.godrays.strength` (default 8). Looking
+  toward the star through 14k units of medium therefore went straight past 1.0
+  and clipped to a **flat white disc** hugging the planet's limb. It reads as a
+  light source *on* the planet because the star happens to sit at the limb, and
+  all of the medium is genuinely *in front of* the planet (radius 101527, camera
+  pushed to a 1.35× stand-off ≈ 137k, versus a 14k march) — so it is correctly
+  depth-limited haze, just blown out by the gain.
+- **Fixed:** a Reinhard knee on the added shaft,
+  `shaft / (1 + shaft / godCeiling)`, `postfx.godrays.ceiling` (default **2.0**,
+  0 = the old linear behaviour). A no-op well below the ceiling, saturating
+  smoothly above it, so **no gain setting can produce a hard white blob** again.
+  Verified by capture at the pinned test seed: the planet's disc goes from washed
+  out across its left third to readable, with the atmosphere crescent visible
+  again and the glow contained to the limb.
+- Note this only became reachable because **W5 turned god-rays on for the first
+  time**; the W5 sweep could not have caught it, because that sweep never framed
+  a planet against the star.
+
+**Lesson (the expensive one):** two passes consuming the same data need ONE
+gate. The asymmetry looked like a rendering mystery for a full session because
+each individual toggle "did nothing", and two earlier rounds of my own A/B were
+wrong before I trusted the player's observation that density controls it.
 
 ### 11.4 Scale / universe-gen (= §11.0 W8)
-
 - **`spawnPlanet` uses `scale = 1e5 * erlang(2)`** and does not wire
   `Config.gen.scalePlanet` as the base. Planets are therefore huge relative to
   `kSystemScale = 10000` and can **engulf the system** (the residual Bullet
@@ -683,7 +877,15 @@ deferred is that we never established the budget.
   uploaded: the medium read a shifted record, evaluated noise at `p * extZ ≈ 1e9`
   and looked like a render bug. When you add a field to a packed buffer, assert
   the *shader* consumes it — and note `NebulaVolumes` still has two such fields
-  (§11.0 W3).
+  (§11.0 W3). The same class of waste, in the other direction, is `genColor` and
+  `genClouds` in `gen/planet.glsl`: two full per-texel evaluations whose results
+  nothing read (W7a consumed one, W7c will consume the other).
+- **A local can shadow a uniform of the same name, and GLSL will not warn.**
+  `material/planet.glsl` declared `vec3 surface = color;` halfway through `main()`,
+  shadowing the `samplerCube surface` uniform — legal, and it silently changed
+  every *later* `texture(surface, …)` into a compile error (or, worse, into a
+  different overload). The existing height-gradient fetches all sit above that
+  line, which is why it went unnoticed. Renamed to `surfCol`.
 - **Never seed a render path from the clock.** `TexCube_GenIRMap` did
   (`RNG_FromTime()`), which made every boot's lighting differ and quietly
   invalidated A/B measurements for a week (§11.0 W1). Anything that ends up in a
