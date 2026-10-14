@@ -851,7 +851,181 @@ wrong before I trusted the player's observation that density controls it.
 - **Lava emission** currently tops out at the albedo clamp — let the emissive
   exceed 1 if we want bloom on molten surfaces.
 
+### 11.6 Pulling out dead post passes (Distant Haze + Auto-Exposure)
+
+Asked after the god-ray fix as "is any of this actually earning its place?". Both
+candidates turned out to be **wrong or broken**, and one of them was costing a
+quarter of the frame while switched off.
+
+**The metering clock is in SECONDS, and has been read as milliseconds twice.**
+
+`Time_GetRaw()` is `return (uint)(time(0) % UINT_MAX);`
+(`libphx/src/PhxTime.cpp:29`) — Unix **epoch seconds**, confirmed at runtime
+(`raw=1791952044`, and the trace also dumps the type signature showing it is
+declared `PHX_API uint Time_GetRaw()`). Two consumers treated it as ms:
+
+| site | assumed | actual | effect |
+|---|---|---|---|
+| `Renderer:autoExposureEV` | `dt = (now-t)/1000` ⇒ ms | t is *seconds* | every delta **1000×** too small; the 0.5 s adaptation constant was really ~500 s, so it could never converge. The `dt > 0.25` clamp never fired either. |
+| `Renderer:meter` readback | `now - last >= 100` ⇒ 100 ms | 100 **seconds** | measured **exactly one** readback in 5200 frames — the panel's `hdr:` line showed one boot-time sample, forever. |
+
+**Auto-exposure: removed.** It was non-functional for the two reasons above —
+smoothing a constant, through a filter 1000× too slow to follow anything. Fixing
+it was the wrong investment anyway: this game spans a lit planet surface and
+empty space, so a keyed 0.18 mid-grey over a −6..+2 EV range pumps the whole
+screen by several stops every time the player crosses that boundary. Absolute
+brightness is *information* here (it tells you how far you are from a star);
+auto-exposure discards it. Kept `postfx.exposure.ev` as a plain manual offset.
+
+I had also suspected the 4096-sample `lit` estimate was too noisy to drive a
+smoother. **Measured: it isn't.** After fixing the rate (24 samples), `lit` has
+sd 1.48% of mean and a frame-to-frame median change of **0.024 stops** (max 0.059).
+So noise was not a reason to remove it — the unit bugs were, and the art
+argument is what settles it.
+
+**The meter: kept, but gated — it was 23% of the frame for a debug readout.**
+
+`Renderer:meter()` ran *unconditionally* every frame: 4096 random `texelFetch`es
+into a 1×1 target plus a synchronous `getDataBytes`. Nothing consumed it unless
+you opened the debug panel, and auto-exposure was off. It is now opt-in on its
+own (`postfx.exposure.meter`), gated **inside** the function so any future caller
+is safe too. The panel says `meter off` rather than printing values that have
+stopped updating.
+
+- default path: **3.30 → ~2.55 ms mean** (p95 3.47 → ~2.8), **~23% of the frame**
+- meter on: ~2.55 → ~3.3–3.5 ms, so the pass alone is ~0.75–1.05 ms
+- the readback is now 1 Hz, and **1 Hz is the ceiling, not a choice**:
+  `time(0)` has 1-second granularity, so `now` only changes once a second and no
+  threshold can beat it (a 0.1 s gate measures ~0.9 Hz, not 10 Hz). Which is
+  right for this consumer anyway — a human reading four numbers does not want 10
+  pipeline stalls a second. A genuinely faster meter needs a real ms clock
+  (`Time_GetRawMs`), not a smaller constant.
+
+**Distance Haze: removed — it was not a tuning problem, it was the wrong model.**
+
+`filter/fogw.glsl` computed `fogF = 1 - exp(-fogDensity * dist)` from the linear
+depth buffer **alone**, and blended the pixel toward `mix(envMap(dir), fogColor,
+tint)`. That models an **unbounded exponential atmosphere**. But this world's
+medium is a *bounded union of ≤16 ellipsoids* around the viewer
+(`res/shader/include/medium.glsl`): `mediumCloud` returns `rho = 0` outside them
+and `mediumBounds` stops the march at their exit. Outside the ellipsoids it is
+**vacuum**.
+
+So for the planet in the pinned test scene — radius 101527, camera at a ~137k
+stand-off — the pass applied
+
+```
+fogF = 1 - exp(-5e-6 x 137000) = 0.496
+```
+
+i.e. **half the planet washed into the nebula's own colour across ~120k of
+nothing.** Measured on a disc-interior crop:
+
+| | mean luma | sd | p95/p05 |
+|---|---|---|---|
+| haze off | 53.6 | **18.15** | **3.77** |
+| haze on | 74.5 | **10.03** | **1.51** |
+
+**45% of the local contrast gone** — it turned a legible planet into a milky ball.
+No setting of `fogDensity` fixes this, because the knob cannot make 120k of vacuum
+scatter. The volumetric pass already does the scattering correctly, over the
+medium that actually exists. If a real atmosphere is ever wanted it belongs in
+the medium as a planet-bound ellipsoid anchor (the mechanism `NebulaVolumes`
+already provides), not as a depth-only post blend.
+
+**Also removed: `getFoginess()` + its `fogDensity` uniform** in
+`res/shader/include/lighting.glsl`. Its only caller in the tree was a commented
+line in `starbg.glsl`, and the only code that ever uploaded a `fogDensity` uniform
+was the haze pass just deleted — so it returned ~0 for the whole of history. Its
+comment carried hard-won advice about the falloff power; that advice was about a
+`depth / farPlane` normalisation which has no physical meaning against a medium
+made of ellipsoids tens of thousands of units across, so the note records the
+warning rather than the tuning.
+
+**Net for this item:** −2 passes, −1 dead shader function, −1 dead uniform,
+−~0.9 ms on the default path, and one debug tool that actually works instead of
+one that shows a frozen number.
+
+### 11.7 `nebula.quality` was INVERTED (High rendered *fewer* steps than Low)
+
+Reported by the player: *"why would the 'low' and 'medium' settings basically
+display more nebula effects than 'high'?"*
+
+The enum has **four** options; the march tables had **three** entries and were
+read with a `- 1`:
+
+```lua
+options = { 'Off', 'Low', 'Medium', 'High' }   -- 1, 2, 3, 4
+local steps = { 10, 20, 48 }
+local stepF = steps[q - 1] or 20        -- q=4 -> steps[3] -> nil -> 20
+```
+
+| quality | index | volume steps | god-ray steps | evals |
+|---|---|---|---|---|
+| Off | 1 | pass skipped | clamped up to Low | – |
+| Low | 2 | 20 | 24 | 2 |
+| Medium | 3 | 48 | 40 | 3 |
+| **High** | 4 | **20** (fallback) | **8** (fallback) | **2** |
+
+So every entry was shifted one slot right and **the last option fell off the end
+into the fallback** — and 'High' got the *smallest* god-ray budget of all (8 vs
+Low's 24). 'Off' was quietly consuming the 'Low' slot, which is why Low and
+Medium looked richer. Both passes were wrong (`Renderer:volume` and
+`Renderer:godrays` had their own private copies of the tables, so they could not
+even be kept in sync).
+
+Fixed by hoisting four explicit tables indexed *by the enum index*, with index 1
+present-but-unused so no `- 1` is needed, plus a **boot-time assertion** that
+every table has an entry for every option — a future 5th option now fails loudly
+instead of silently landing on a fallback.
+
+Measured after the fix (all four runs at the same 1.83 MP):
+
+| quality | steps (vol/god) | mean | fps | vs Off |
+|---|---|---|---|---|
+| Off | – | 1.30 ms | 771 | – |
+| Low | 10 / 12 | 1.51 ms | 661 | **+0.21 ms** |
+| Medium | 20 / 24 | 1.77 ms | 564 | +0.47 ms |
+| High | 48 / 40 | 2.37 ms | 422 | +1.07 ms |
+
+Two things worth noting:
+
+- **High did not get slower** (2.40 ms before the fix at 20/8 steps vs 2.37 ms
+  after at 48/40). The march is not step-bound here — `mediumBounds` early-outs
+  for rays that miss every ellipsoid, so most of the frame never marches. That is
+  also why the *broken* High was not cheap: it was paying for the anchors and the
+  composite, not the sample loop.
+- **The W5 density calibration survives.** `volume.glsl` accumulates the analytic
+  form `inscatter += tr * (1 - stepTr) * (sigmaS/sigmaT) * light` with
+  `tr *= stepTr`, which telescopes to `1 - T_total` over the march — independent
+  of step count. So 20 → 48 steps changes *accuracy*, not brightness, and the
+  density/coverage retune does not need redoing. (It does mean shipped 'Low' now
+  runs 10 steps where it used to run 20, so the default look is slightly thinner
+  and cleaner.)
+
 ## 12. Traps (engine-level — cost us time; know them)
+
+- **An enum's option count must match any table indexed by its value.** The
+  `- 1` idiom (`steps[q-1]`) silently shifts every entry and sends the *last*
+  option off the end into a fallback — so the highest setting quietly rendered as
+  the cheapest. `nebula.quality` did this for years; see §11.7. Index by the enum
+  value with an explicit entry for every option, and assert it at registration.
+- **A uniform the shader declares but Lua never uploads sits at 0 — no error.**
+  `filter/aberration.glsl` divided by one (`0.0/0.0` → NaN) and the result was
+  blue horizontal scanlines over the whole frame. The inverse also happens: knobs
+  whose uniform was never uploaded (`radialblur.scanlines`, `ssao.blur`) read as
+  working but did nothing. Audit both directions.
+- **`Resolution:` printed at boot is stale.** `LTheory.lua` logs `resX/resY` once
+  from `getDefaultSize()`; `Application` then updates them live on every window
+  resize. Headless dumps came out 936×969, 1691×1232 and 1891×969 on nominally
+  identical runs, so **check the actual PNG dimensions before comparing two
+  captures pixel-for-pixel**, and match resolution before comparing frame times.
+
+- **`Time_GetRaw()` is epoch SECONDS, not milliseconds**
+  (`libphx/src/PhxTime.cpp:29`, `time(0)`), *and* it has 1-second granularity so
+  it cannot time anything faster than 1 Hz no matter what threshold you use. Two
+  call sites read it as ms before this was found; see §11.6. If you need real
+  timing, add a monotonic ms source — do not divide this one and hope.
 
 - **An unused uniform is optimized out, and setting a missing uniform
   ABORTS the process** (`Shader_GetVariable`). Hence `mountain`/`crater`/

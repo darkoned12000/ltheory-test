@@ -7,7 +7,9 @@
 void main() {
   float r = length(uv);
   float a = 0.0;
-  // float fog = getFoginess(farPlane);
+  // Was: float fog = getFoginess(farPlane). getFoginess() is gone -- it had no
+  // caller and nothing ever uploaded its `fogDensity` uniform (see
+  // res/shader/include/lighting.glsl). `fog` has always been 0.0 here.
   float fog = 0.0;
   vec4 bg = linear(texture(envMap, vertPos));
   vec3 c = vertNormal;

@@ -227,11 +227,22 @@ Config.gpu = {
   tonemap            = true,   -- HDR -> display (ACES) + sRGB; false = raw clamp
   tonemapOperator    = 'ACES', --   AgX | ACES | Filmic | Khronos
   exposureEV         = 0,      --   exposure stops (-4..4)
-  autoExposure       = false,  --   keyed auto-exposure; manual EV becomes a bias
-  autoExposureKey    = 0.18,   --     mid-gray key (linear) maps to 0 stops
-  autoExposureMinEV  = -6,     --     deep-space floor (darker = blacker)
-  autoExposureMaxEV  = 2,      --     bright-ceiling cap
-  autoExposureSpeed  = 0.5,    --     adaptation time constant (s)
+  exposureMeter      = false,  --   run the HDR exposure meter (filter/exposure) and
+                          --     feed the debug panel's `hdr:` line. It costs
+                          --     ~0.75-1.05 ms/frame (20-28% of a 3.7 ms
+                          --     frame) for a 4096-sample 1x1 pass plus a 1 Hz
+                          --     synchronous GPU readback, so it is OFF by
+                          --     default: switch it on only while tuning exposure
+                          --     by hand. Default frame time went 3.30 -> ~2.5 ms
+                          --     when this was gated off.
+  -- REMOVED: autoExposure / autoExposureKey / autoExposureMinEV /
+  -- autoExposureMaxEV / autoExposureSpeed. Auto-exposure never worked: the
+  -- adaptation used Time_GetRaw() (which returns time(0), i.e. epoch SECONDS) as
+  -- if it were milliseconds, making the 0.5 s constant ~500 s, and the meter it
+  -- keyed on refreshed only once per 100 s for the same reason -- so it was
+  -- smoothing a constant. Beyond that it is the wrong tool here: this game spans
+  -- a lit planet surface and empty space, and absolute brightness is information
+  -- the player is meant to read. Use `exposureEV` by hand.
   vignette           = true,   -- cinematic darkened corners
   vignetteStrength   = 0.5,    --   (0..1)
   vignetteHardness   = 20,     --   falloff toward center (2..32)
@@ -239,31 +250,26 @@ Config.gpu = {
   grainStrength      = 1,      --   (0..4)
   aberration         = false,  -- chromatic aberration (lens fringe)
   aberrationStrength = 1,      --   (0..1)
+  aberrationDispersion = 0.0002, -- UV offset at the frame edge (0..0.01); was hardcoded
   radialblur         = false,  -- radial motion blur / scanlines
   radialblurStrength = 1,      --   (0..1)
   radialblurScanlines = 1,     --   (0..1)
 
-  -- Distance haze (postfx.fog.*). Opt-in; first pass at roadmap #13's fog (no
-  -- streaming). Aerial perspective: haze blends toward the nebula color behind
-  -- each pixel (envMap sampled along the view ray), tinted toward the user
-  -- color by `tint`, clamped at `maxHaze` so you're never fully blind. Skybox
-  -- pixels are exempt (safe beyond 950k of the 1e6 farPlane) so the starfield
-  -- stays crisp.
-  fogEnable  = false,
-  fogDensity = 0.000005, -- exponential depth haze (0..0.0005)
-  fogTint    = 0.15,     -- blend env-matched haze toward user color (0..1)
-  fogMaxHaze = 0.95,     -- cap the haze factor so silhouettes stay visible
-  fogR       = 0.04,     -- haze tint color
-  fogG       = 0.06,
-  fogB       = 0.13,
-  fogMaxHaze = 0.95,
-  fogTint    = 0.15,
+  -- REMOVED: the Distance haze block (fogEnable/fogDensity/fogTint/fogMaxHaze/
+  -- fogR/G/B, i.e. filter/fogw). It hazed by depth alone, modelling an unbounded
+  -- exponential atmosphere, so it applied ~0.50 of haze to a planet 137k away
+  -- across ~120k of vacuum and halved the planet's local contrast. The medium in
+  -- this world is a bounded union of ellipsoids (see res/shader/include/medium.glsl)
+  -- and the volumetric pass already scatters it correctly. A real atmosphere, if
+  -- ever wanted, belongs in the medium as a planet-bound anchor.
 
   -- Volumetric nebula/dust (nebula.*, fog-nebula Phase 1). World-space banks,
   -- correct transmittance (star occlusion), single-scatter inscatter (HG phase
   -- + irMap ambient), depth-aware reconstruction. Off = renderer never invoked.
   nebulaEnabled  = true,
-  nebulaQuality  = 'Low',      -- Off | Low | Medium | High (10/20/48 march steps)
+  nebulaQuality  = 'Low',      -- Off | Low | Medium | High. Volume march steps
+                          -- 10/20/48 and god-ray steps 12/24/40 respectively;
+                          -- 'Off' skips the volume pass (shafts clamp to Low).
   nebulaDebug    = 'Off',            -- Off | Density | Transmittance | Lighting | Steps | Anchors
   -- NOTE (W5, 2026-10-12): these shipped defaults were NOT re-tuned -- the
   -- calibration in script/Config.Local.lua was measured at nebulaQuality 'High',

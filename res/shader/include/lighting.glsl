@@ -10,7 +10,6 @@ uniform samplerCube irMap;
 
 uniform vec3 ambient;
 uniform vec3 eye;
-uniform float fogDensity;
 uniform vec2 rcpFrame;
 uniform vec3 starColor;
 uniform vec3 starPos;
@@ -56,18 +55,18 @@ vec3 getFog(vec3 ro, vec3 rd, float depth, float occlusion) {
 }
 #endif
 
-float getFoginess(float depth) {
-  float d = 1.0 * fogDensity * (depth / farPlane);
-
-  /* NOTE - Do not fking change the power.  You've gone back and forth on
-   *        it a million times, and I'm tired of you getting it wrong.
-   *  0.5 - TOO GLOBAL.  Obfuscates near objects way too much.
-   *        Totally ruins the beauty of objects in dust.
-   *  2.0 - TOO LOCAL.  Can't see anything long-distance. Total loss of
-   *        context in dust.
-   *  1.0 - JUST RIGHT.  Leave it.  Stop poking it. */
-  return 1.0 - exp(-pow(d, 1.0));
-
-}
+/* REMOVED: getFoginess(float depth), and its `fogDensity` uniform.
+ *
+ * Its only caller in the tree was a commented-out line in starbg.glsl, and the
+ * only code that ever uploaded a `fogDensity` uniform was the depth-haze post
+ * pass (Renderer:fog / filter/fogw), which is itself gone -- see ltheory-planets.md
+ * 11.5. Nothing set it here, so the function would have returned ~0 for the whole
+ * of history anyway. Its comment did carry hard-won tuning advice about the falloff
+ * power, which is preserved here only as a warning about what it got wrong: it
+ * scaled depth by `fogDensity * (depth / farPlane)`, i.e. depth normalised against
+ * the 1e6 far plane. Against this world's actual medium -- ellipsoids a few tens of
+ * thousands of units across, with vacuum in between -- that normalisation has no
+ * physical meaning at all. If atmospheric falloff is ever wanted again, derive it
+ * from the medium's own optical depth (mediumOpticalDepth), not from farPlane. */
 
 #endif

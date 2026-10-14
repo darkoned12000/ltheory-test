@@ -56,7 +56,7 @@ end
 -- coverage down. W3's ellipsoid plumes cost ~15% of sky brightness here, not
 -- the ~30% the doc predicted.
 Config.gpu.nebulaEnabled  = true
-Config.gpu.nebulaQuality  = 'High'    -- 24 march steps (needs a real GPU)
+Config.gpu.nebulaQuality  = 'High'    -- volume 48 / god-ray 40 march steps (needs a real GPU)
 Config.gpu.nebulaDensity  = 3.0       -- medium gain (panel: 0..4)
 -- Everywhere-field presence. `density` scales sigma_t AS WELL AS the medium
 -- density, so the sky veil is quadratic in it:

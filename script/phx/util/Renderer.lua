@@ -38,6 +38,10 @@ local SETTINGS = {
   -- Post FX -------------------------------------------------------------------
   { kind = 'bool',  key = 'postfx.aberration.enable',   label = 'Aberration',   default = false, gpu = 'aberration' },
   { kind = 'float', key = 'postfx.aberration.strength', label = ' - Strength',  default = 1, min = 0, max = 1, gpu = 'aberrationStrength' },
+  -- UV offset at the frame edge. Was hardcoded 0.0002 behind an in-shader fallback;
+  -- exposed because with `aspect` now supplied the pass actually works, and this
+  -- is how hard the lens fringe reads.
+  { kind = 'float', key = 'postfx.aberration.dispersion', label = ' - Dispersion', default = 0.0002, min = 0, max = 0.01, gpu = 'aberrationDispersion' },
 
   { kind = 'bool',  key = 'postfx.bloom.enable',        label = 'Bloom',        default = true,  gpu = 'bloom' },
   { kind = 'float', key = 'postfx.bloom.radius',        label = ' - Radius',    default = 20, min = 4, max = 64, gpu = 'bloomRadius' },
@@ -67,11 +71,36 @@ local SETTINGS = {
   { kind = 'float', key = 'postfx.color.temp',      label = ' - Temp (W/C)',  default = 0.0, min = -1, max = 1, gpu = 'colorTemp' },
   { kind = 'float', key = 'postfx.color.tint',      label = ' - Tint (M/G)',  default = 0.0, min = -1, max = 1, gpu = 'colorTint' },
 
-  { kind = 'bool',  key = 'postfx.autoexposure.enable', label = 'Auto-Exposure',    default = false, gpu = 'autoExposure' },
-  { kind = 'float', key = 'postfx.autoexposure.key',    label = ' - Key (mid-gray)', default = 0.18, min = 0.02, max = 1, gpu = 'autoExposureKey' },
-  { kind = 'float', key = 'postfx.autoexposure.minEV',  label = ' - Min EV',        default = -6, min = -8, max = 2, gpu = 'autoExposureMinEV' },
-  { kind = 'float', key = 'postfx.autoexposure.maxEV',  label = ' - Max EV',        default = 2, min = -8, max = 4, gpu = 'autoExposureMaxEV' },
-  { kind = 'float', key = 'postfx.autoexposure.speed',  label = ' - Adapt (s)',     default = 0.5, min = 0.05, max = 3, gpu = 'autoExposureSpeed' },
+  -- REMOVED: auto-exposure (postfx.autoexposure.*, Renderer:autoExposureEV).
+  -- It never worked, for two independent reasons, both of which had to be true
+  -- for it to look merely "off" rather than broken:
+  --  1. Time units. Time_GetRaw() returns time(0) -- Unix EPOCH SECONDS
+  --     (libphx/src/PhxTime.cpp:29) -- but autoExposureEV computed
+  --     dt = (now - self.autoTime) / 1000, treating seconds as milliseconds.
+  --     Every delta was therefore 1000x too small, so the 0.5 s adaptation
+  --     constant was really ~500 s and the smoother could never converge. The
+  --     dt > 0.25 clamp below it never fired either, for the same reason.
+  --  2. Its input. The meter it keys on gates its readback on
+  --     `now - meterLast >= 100`, i.e. 100 *seconds*, so `lit` was refreshed
+  --     once per 100 s -- measured: exactly one readback in 5200 frames.
+  -- So auto-exposure was keying off a value that never moved, through a filter
+  -- 1000x too slow to follow anything. Fixing it was not the interesting part:
+  -- even working, it is wrong for this game. Exposure is a deliberate
+  -- art-direction choice here (the HDR/tonemap item set it by hand), and this
+  -- game spans a lit planet surface and empty space, so a keyed 0.18 mid-grey
+  -- with a -6..+2 EV range would pump the entire screen by several stops every
+  -- time the player crossed that boundary. Absolute brightness is information
+  -- in a space game; auto-exposure throws it away. Kept: postfx.exposure.ev,
+  -- a plain manual offset.
+  --
+  -- The meter (filter/exposure) SURVIVES, because it is how the HDR exposure
+  -- work was actually calibrated -- but it is now opt-in on its own, because it
+  -- renders 4096 random texelFetches into a 1x1 target every frame and was
+  -- running unconditionally for a debug-panel readout. Measured cost of the pass
+  -- alone: ~0.75-1.05 ms/frame across runs, i.e. 20-28% of the whole frame, with
+  -- nothing consuming it. Default frame time went 3.30 -> ~2.5 ms when it was
+  -- gated off.
+  { kind = 'bool',  key = 'postfx.exposure.meter', label = 'Exposure Meter', default = false, gpu = 'exposureMeter' },
 
   { kind = 'bool',  key = 'postfx.vignette.enable',   label = 'Vignette',    default = true, gpu = 'vignette' },
   { kind = 'float', key = 'postfx.vignette.strength', label = ' - Strength', default = 0.5, min = 0, max = 1, gpu = 'vignetteStrength' },
@@ -79,14 +108,6 @@ local SETTINGS = {
 
   { kind = 'bool',  key = 'postfx.grain.enable',   label = 'Film Grain', default = false, gpu = 'grain' },
   { kind = 'float', key = 'postfx.grain.strength', label = ' - Amount',  default = 1, min = 0, max = 4, gpu = 'grainStrength' },
-
-  { kind = 'bool',  key = 'postfx.fog.enable',  label = 'Distance Haze', default = false, gpu = 'fogEnable' },
-  { kind = 'float', key = 'postfx.fog.density', label = ' - Density',    default = 0.000005, min = 0, max = 0.0005, gpu = 'fogDensity' },
-  { kind = 'float', key = 'postfx.fog.tint',    label = ' - Tint',       default = 0.15, min = 0, max = 1, gpu = 'fogTint' },
-  { kind = 'float', key = 'postfx.fog.maxHaze', label = ' - Max Haze',   default = 0.95, min = 0, max = 1, gpu = 'fogMaxHaze' },
-  { kind = 'float', key = 'postfx.fog.r',       label = ' - Color R',    default = 0.04, min = 0, max = 1, gpu = 'fogR' },
-  { kind = 'float', key = 'postfx.fog.g',       label = ' - Color G',    default = 0.06, min = 0, max = 1, gpu = 'fogG' },
-  { kind = 'float', key = 'postfx.fog.b',       label = ' - Color B',    default = 0.13, min = 0, max = 1, gpu = 'fogB' },
 
   { kind = 'bool',  key = 'nebula.enable',  label = 'Nebula Volume', default = true, gpu = 'nebulaEnabled' },
   { kind = 'enum',  key = 'nebula.quality', label = ' - Quality',    default = 2,
@@ -193,6 +214,46 @@ local SETTINGS = {
   { kind = 'bool',  key = 'ssao.show',        label = ' - Show',           default = false },
 }
 
+-- Nebula march budget, indexed by the `nebula.quality` enum INDEX (1..4), i.e.
+-- { 'Off', 'Low', 'Medium', 'High' }. Index 1 is unused-but-present so the table
+-- lines up with the option list instead of needing a `- 1` that silently shifts
+-- every entry and drops the last one off the end.
+--
+-- This WAS a real inversion, and it is exactly the shape of bug that hides for
+-- years because both broken paths still produce a plausible image. The tables
+-- used to be {10,20,48} and {12,24,40} read as `steps[q-1] or <default>`, so:
+--     Low(2)=20   Medium(3)=48   High(4)=nil -> default 20   (volume)
+--     Low(2)=24   Medium(3)=40   High(4)=nil -> default  8   (god-rays)
+-- 'High' therefore rendered FEWER steps than 'Low' (8 vs 24 for the shafts) --
+-- the reported "low and medium show more nebula than high". 'Off' is 0 and the
+-- volume pass skips; god-rays deliberately clamp Off up to Low, because they are
+-- gated on `nebula.enable` rather than on quality.
+local VOL_STEPS = { [1] =  0, [2] = 10, [3] = 20, [4] = 48 }
+local VOL_EVALS = { [1] =  0, [2] =  2, [3] =  2, [4] =  3 }
+local GOD_STEPS = { [1] =  0, [2] = 12, [3] = 24, [4] = 40 }
+local GOD_EVALS = { [1] =  0, [2] =  2, [3] =  2, [4] =  3 }
+
+-- Guard the invariant that cost us this: a quality enum whose option count does
+-- not match its march table re-creates the silent off-the-end fallback. Checked
+-- at registration so a future 5th option fails loudly at boot, not as a picture
+-- that merely looks a bit thin.
+do
+  for _, s in ipairs(SETTINGS) do
+    if s.key == 'nebula.quality' then
+      local n = #s.options
+      for _, t in ipairs({ { 'VOL_STEPS', VOL_STEPS }, { 'VOL_EVALS', VOL_EVALS },
+                           { 'GOD_STEPS', GOD_STEPS }, { 'GOD_EVALS', GOD_EVALS } }) do
+        for i = 1, n do
+          if t[2][i] == nil then
+            error(string.format('Renderer: nebula.quality has %d options but %s has no entry for index %d',
+                  n, t[1], i))
+          end
+        end
+      end
+    end
+  end
+end
+
 for _, s in ipairs(SETTINGS) do
   if s.kind == 'bool' then
     Settings.addBool(s.key, s.label, s.default)
@@ -236,7 +297,6 @@ local Renderer = class(function (self)
   self.exposure   = { avg = 0, max = 0, over = 0, lit = 0 }
   self.meterLast  = 0
   self.frameSeed  = 0
-  self.autoEV     = 0
 end)
 
 local colorFormat = TexFormat.RGBA16F
@@ -286,10 +346,9 @@ end
 function Renderer:tonemap ()
   self:applyFilter('tonemap', function ()
     Shader.SetInt('texOp', Settings.get('postfx.tonemap.operator') or 1)
+    -- Manual exposure offset only. Auto-exposure was removed: it keyed off a
+    -- value refreshed once per 100 s through a filter 1000x too slow to converge.
     local ev = Settings.get('postfx.exposure.ev') or 0
-    if Settings.get('postfx.autoexposure.enable') then
-      ev = ev + self:autoExposureEV()
-    end
     Shader.SetFloat('exposure', 2.0 ^ ev)
 
     -- Color Grading Micro-Knobs (Roadmap #14)
@@ -687,7 +746,18 @@ function Renderer:swap ()
   self.buffer0, self.buffer1 = self.buffer1, self.buffer0
 end
 
+local meterLog = os.getenv('PHX_METER') ~= nil
+-- 1 Hz readback, in the SECONDS Time_GetRaw() returns -- and 1 Hz is the ceiling
+-- that clock allows, not a tuning choice. See the note at the readback.
+local meterIntervalSec = 1
+
 function Renderer:meter ()
+  -- Only run when something actually consumes the numbers. The pass is not free:
+  -- 4096 random texelFetches plus a 1 Hz synchronous readback that stalls the
+  -- pipeline, and with auto-exposure off (the shipped default) the only consumer
+  -- was the debug panel. Gating here rather than at the call site means any future
+  -- caller is safe too.
+  if not Settings.get('postfx.exposure.meter') then return end
   local shader = Cache.Shader('ui', 'filter/exposure')
   if not (shader and self.meterTex) then return end
 
@@ -704,57 +774,48 @@ function Renderer:meter ()
     self.meterTex:pop()
   end
 
+  -- Readback rate. Time_GetRaw() returns time(0) -- Unix EPOCH SECONDS
+  -- (libphx/src/PhxTime.cpp:29) -- so this gate is in SECONDS, not the 100 ms the
+  -- original constant was written as. On a seconds clock `>= 100` meant once per
+  -- 100 SECONDS: measured exactly one readback across 5200 frames, so the debug
+  -- panel's `hdr:` line showed a single boot-time sample forever.
+  --
+  -- Do not try to make this faster than 1 Hz. time(0) has 1-second granularity,
+  -- so `now` only changes once a second and no threshold can beat that (measured:
+  -- a 0.1 s gate yields ~0.9 Hz, not 10 Hz). 1 Hz is the right rate for this
+  -- consumer anyway -- it is a human reading four numbers in a panel, and a
+  -- 10 Hz synchronous readback would add 10 pipeline stalls per second to buy
+  -- digits nobody can see. If a genuinely faster meter is ever wanted it needs a
+  -- real clock (Time_GetRawMs / a monotonic ms source), not a smaller constant.
   local now = Time.GetRaw()
-  if now - self.meterLast >= 100 then
+  if now - self.meterLast >= meterIntervalSec then
     self.meterLast = now
     local b = self.meterTex:getDataBytes(PixelFormat.RGBA, DataFormat.Float):managed()
     self.exposure.avg  = b:readF32()
     self.exposure.max  = b:readF32()
     self.exposure.over = b:readF32()
     self.exposure.lit  = b:readF32()
+    -- PHX_METER=1: log the meter's own readings, so its behaviour can be checked
+    -- without a human reading the debug panel.
+    if meterLog then
+      io.stderr:write(string.format(
+        '[METER] avg=%.4f lit=%.4f max=%.4f over=%.4f\n',
+        self.exposure.avg, self.exposure.lit, self.exposure.max,
+        self.exposure.over))
+    end
   end
 end
 
-function Renderer:autoExposureEV ()
-  local ex = self.exposure or { lit = 0 }
-  local key = Settings.get('postfx.autoexposure.key') or 0.18
-  local minEV = Settings.get('postfx.autoexposure.minEV') or -6
-  local maxEV = Settings.get('postfx.autoexposure.maxEV') or 2
-  local speed = Settings.get('postfx.autoexposure.speed') or 0.5
-  local l = ex.lit or 0
-
-  local l2 = math.log(2)
-  local target = minEV
-  if l > 1e-5 then
-    target = (math.log(l) - math.log(key)) / l2
-    if target < minEV then target = minEV end
-    if target > maxEV then target = maxEV end
-  end
-
-  local now = Time.GetRaw()
-  local dt = 0
-  if self.autoTime then dt = (now - self.autoTime) / 1000.0 end
-  self.autoTime = now
-  if dt > 0.25 then dt = 0.25 end
-
-  local ev = self.autoEV or 0
-  if dt > 0 then
-    local t = 1.0 - math.exp(-dt / math.max(0.05, speed))
-    ev = ev + (target - ev) * t
-  else
-    ev = target
-  end
-  self.autoEV = ev
-  return ev
-end
+-- REMOVED: Renderer:autoExposureEV(). See the REMOVED note in the SETTINGS table
+-- above for why (two unit bugs meant it could never converge, and a working
+-- version would be wrong for this game anyway). Time_GetRaw() is SECONDS, so any
+-- timing here must convert explicitly.
 
 function Renderer:volume (med)
   local q = Settings.get('nebula.quality') or 1
   if q <= 1 then return end
-  local steps = { 10, 20, 48 }
-  local evals = { 2, 2, 3 }
-  local stepF = steps[q - 1] or 20
-  local evalF = evals[q - 1] or 2
+  local stepF = VOL_STEPS[q] or VOL_STEPS[2]
+  local evalF = VOL_EVALS[q] or VOL_EVALS[2]
 
   local shaderH = Cache.Shader('worldray', 'filter/volume')
   local shaderF = Cache.Shader('worldray', 'filter/volblur')
@@ -952,11 +1013,11 @@ function Renderer:godrays (med)
   local sigS = dens * 0.0000375
   local volDist = Settings.get('nebula.radius') or 12000
   local q = Settings.get('nebula.quality') or 1
+  -- Shafts are gated on `nebula.enable`, not on quality, so 'Off' still marches:
+  -- clamp it up to Low rather than dropping to a 0-step march.
   if q <= 1 then q = 2 end
-  local steps = { 12, 24, 40 }
-  local evals = { 2, 2, 3 }
-  local stepF = steps[q - 1] or 8
-  local evalF = evals[q - 1] or 2
+  local stepF = GOD_STEPS[q] or GOD_STEPS[2]
+  local evalF = GOD_EVALS[q] or GOD_EVALS[2]
   local fx, fy, fz, fsp = 0.4, 0.2, 0.8, 40
   local fl = math.sqrt(fx * fx + fy * fy + fz * fz)
   local volTime = (tonumber(Time.GetRaw()) or 0) * 0.001
@@ -1026,27 +1087,18 @@ local volCount = med.anchors and #med.anchors or 0
   Profiler.End()
 end
 
-function Renderer:fog (envTex)
-  local shader = Cache.Shader('worldray', 'filter/fogw')
-  if not shader then return end
-  self.buffer1:pushLevel(self.level)
-  shader:start()
-    Shader.SetFloat('fogDensity', Settings.get('postfx.fog.density') or 0.000005)
-    Shader.SetFloat('fogTint', Settings.get('postfx.fog.tint') or 0.15)
-    Shader.SetFloat('fogMax', Settings.get('postfx.fog.maxHaze') or 0.95)
-    Shader.SetFloat3('fogColor',
-      Settings.get('postfx.fog.r') or 0.04,
-      Settings.get('postfx.fog.g') or 0.06,
-      Settings.get('postfx.fog.b') or 0.13)
-    Shader.SetTex2D('src', self.buffer0)
-    Shader.SetTex2D('texDepth', self.zBufferL)
-    Shader.SetTexCube('envMap', envTex)
-    Draw.Color(1, 1, 1, 1)
-    Draw.Rect(-1, -1, 2, 2)
-  shader:stop()
-  self.buffer1:pop()
-  self:swap()
-end
+-- REMOVED: Renderer:fog (filter/fogw, postfx.fog.*). See ltheory-planets.md §11.5.
+-- The pass modelled aerial perspective as an UNBOUNDED exponential atmosphere:
+-- it hazed any pixel by 1-exp(-density*dist) regardless of whether there was
+-- actually any medium along that ray. In this world the medium is a bounded union
+-- of <=16 ellipsoids around the viewer (res/shader/include/medium.glsl), and the
+-- march stops at their exit -- outside them rho = 0, i.e. vacuum. A planet 137k
+-- away therefore has ~120k of NOTHING in front of it, yet the pass still applied
+-- ~0.50 of haze to it. Measured: the planet's disc lost 45% of its local contrast
+-- (sd 18.15 -> 10.03, p95/p05 3.77 -> 1.51) and went milky. The volumetric pass
+-- already does the scattering correctly, over the medium that actually exists.
+-- If a real atmosphere is ever wanted, it belongs in the medium (a planet-bound
+-- ellipsoid anchor), not as a depth-only post blend.
 
 local filterModes = {
   [1] = { min = TexFilter.Linear,          mag = TexFilter.Linear, aniso = 0,  mip = false },

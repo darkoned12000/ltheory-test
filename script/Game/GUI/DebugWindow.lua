@@ -276,13 +276,8 @@ function DebugWindow:createHDRMeterSection ()
           :setPollFn(function ()
             local r = renderer()
             return r and r.exposure and (100.0 * r.exposure.over) or 0 end))
-        :add(UI.Label('Lit Luma (AE key)'))
+        :add(UI.Label('Lit Luma'))
         :add(val('lit', '%.4f'))
-        :add(UI.Label('Auto EV'))
-        :add(UI.Label():setMinWidth(60):setFormat('%+.2f')
-          :setPollFn(function ()
-            local r = renderer()
-            return r and r.autoEV or 0 end))
       )
     )
 end
@@ -415,12 +410,18 @@ function DebugWindow.DumpSettings ()
     do
       local r = lt.gameView and lt.gameView.renderer
       if r and r.exposure then
-        table.insert(lines, string.format('hdr:     avg %s max %s over1 %.2f%% lit %s autoEV %+.2f',
-          string.format('%.4f', r.exposure.avg),
-          string.format('%.4f', r.exposure.max),
-          100.0 * r.exposure.over,
-          string.format('%.4f', r.exposure.lit),
-          r.autoEV or 0))
+        -- Say 'off' rather than printing stale numbers: the meter pass no longer
+        -- runs unless postfx.exposure.meter is on, so a frozen reading here would
+        -- otherwise be misread as a live one.
+        if Settings.get('postfx.exposure.meter') then
+          table.insert(lines, string.format('hdr:     avg %s max %s over1 %.2f%% lit %s',
+            string.format('%.4f', r.exposure.avg),
+            string.format('%.4f', r.exposure.max),
+            100.0 * r.exposure.over,
+            string.format('%.4f', r.exposure.lit)))
+        else
+          table.insert(lines, 'hdr:     meter off (postfx -> Exposure Meter)')
+        end
       end
     end
   end

@@ -223,6 +223,7 @@ function Application:run ()
         'render.planet.sunScale', 'render.planet.envAmbient',
         'render.planet.atmoGlow', 'render.planet.clouds',
         'nebula.enable', 'postfx.godrays.enable', 'postfx.bloom.enable',
+        'postfx.exposure.meter', 'postfx.tonemap.enable',
       }
       for _, k in ipairs(keys) do
         if Settings.exists(k) then

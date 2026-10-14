@@ -350,7 +350,16 @@ function GameView:renderAO ()
   end
 
   do -- Pass 3: full-res depth-aware upsample + denoise -> aoFull
-    local shader = Cache.Shader('ui', 'filter/aoblur')
+    -- `ssao.blur` was declared as a 0/1/2 enum and mapped to Config.gpu.aoBlur,
+    -- but NOTHING ever read it and this pass ran unconditionally, so 'Denoise: 0'
+    -- silently gave you denoised AO. Now it is honoured: 0 skips the pass and the
+    -- half-res aoRaw is consumed directly (upscaled by the sampler), which is the
+    -- raw AO the knob was meant to select. 1 and 2 both run the single existing
+    -- denoise pass -- there is only one implementation of it, so the two steps
+    -- were never distinguishable and 2 is kept as the signed-off default.
+    local blurMode = tonumber(Settings.get('ssao.blur')) or 1
+    self.aoDenoised = blurMode > 0
+    local shader = self.aoDenoised and Cache.Shader('ui', 'filter/aoblur') or nil
     if shader then
       local rad = Settings.get('ssao.radius') or 500
       RenderTarget.Push(sx, sy)
@@ -519,7 +528,8 @@ function GameView:draw (focus, active)
         Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
         Shader.SetFloat('envScale', Settings.get('lighting.ambientEnv') or 1)
         if self.aoFull then
-          Shader.SetTex2D('texAO', self.aoFull)
+          -- Denoise off => consume the raw half-res AO instead.
+          Shader.SetTex2D('texAO', (self.aoDenoised ~= false) and self.aoFull or self.aoRaw)
           Shader.SetFloat('aoStrength', Settings.get('ssao.intensity') or 1)
           Shader.SetFloat('aoShow', Settings.get('ssao.show') and 1 or 0)
           Shader.SetFloat('fillOcclude', Settings.get('ssao.fillOcclude') or 1)
@@ -784,29 +794,38 @@ function GameView:draw (focus, active)
       end
     end
 
-    if Settings.get('postfx.fog.enable') then
-      local sys = self.ltheory and self.ltheory.system
-      local neb = sys and sys.nebula
-      if neb and neb.envMap then
-        ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
-        ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
-        self.renderer:fog(neb.envMap)
-        ShaderVar.Pop('mProjInv')
-        ShaderVar.Pop('mViewInv')
-      end
-    end
+    -- Distance haze (filter/fogw) used to run here. Removed: it hazed by depth
+    -- alone, so it applied ~0.50 of aerial perspective to a planet 137k away
+    -- across 120k of vacuum, halving the planet's local contrast. See the note
+    -- where Renderer:fog used to be defined.
 
     self.renderer:meter()
     if Settings.get('postfx.tonemap.enable') then self.renderer:tonemap() end
     if Settings.get('postfx.vignette.enable') then self.renderer:vignette() end
     if Settings.get('postfx.aberration.enable') then
+      -- `aspect` and `dispersionAmount` are NOT optional here. aberration.glsl does
+      --     dir.x *= aspect;  ...  dir.x /= aspect;
+      -- and with aspect left at 0 that is 0.0/0.0 -> NaN, so every tap samples at
+      -- a NaN coordinate, the offset collapses to depend on uv.y alone, and the
+      -- result is visible horizontal blue scanlines across the frame (the blue
+      -- comes from the loop's pow(..., 0.50) weight). Shipped off by default,
+      -- which is why it survived. dispersionAmount has an in-shader fallback of
+      -- 0.0002, so it was only ever "fine", but pass it explicitly now too.
+      local abAspect = (self.sy > 0) and (self.sx / self.sy) or 1.0
       self.renderer:applyFilter('aberration', function ()
         Shader.SetFloat('strength', Settings.get('postfx.aberration.strength'))
+        Shader.SetFloat('aspect', abAspect)
+        Shader.SetFloat('dispersionAmount',
+          Settings.get('postfx.aberration.dispersion') or 0.0002)
       end)
     end
     if Settings.get('postfx.radialblur.enable') then
+      -- scanlines is declared and used by radialblur.glsl (crtColor mix) but was
+      -- never uploaded, so it was pinned at 0 and the effect could never appear
+      -- despite having a panel knob.
       self.renderer:applyFilter('radialblur', function ()
         Shader.SetFloat('strength', Settings.get('postfx.radialblur.strength'))
+        Shader.SetFloat('scanlines', Settings.get('postfx.radialblur.scanlines') or 0)
       end)
     end
     if Settings.get('postfx.sharpen.enable') then
