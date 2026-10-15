@@ -368,9 +368,31 @@ Config.gpu = {
   planetTerminator = 0.35, -- day/night falloff: 0 = cosine law (physical, dims
                           -- toward the limb), 1 = the old flat wrap, which kept 37%
                           -- brightness AT the limb and read as a glow on the edge.
-  planetClouds   = 1.0,     -- cloud-deck gain (0..1.5). Per-planet coverage is
+  planetCloudsEnabled = true, -- master switch for every planet's cloud deck. Use
+                          -- THIS to turn clouds off, not Coverage=0: per-planet
+                          -- cloudLevel is a bias that can be negative, so 0 gain
+                          -- still leaves clouds on ~1/3 of desert worlds.
+  planetClouds   = 1.25,    -- cloud-deck gain (0..3.0). NOT a 0..1 fraction: it
+                          -- positions the coverage window smoothstep(0.70-0.20c,
+                          -- 0.95-0.20c), so it stays meaningful above 1. Per-planet coverage is
                           -- type.weather x this x a per-planet bias; airless bodies
                           -- carry weather = 0 and never pay for it.
+  planetCloudHeight = 0.02, -- cloud SHELL altitude as a fraction of planet radius.
+                          -- 0 = the old deck projected onto the ground (no
+                          -- parallax -- the clouds are welded to the terrain);
+                          -- >0 puts the deck on a sphere above it, so the camera
+                          -- moves relative to the clouds and you get parallax.
+                          -- A real cloud deck is ~0.16% of a planet's radius up;
+                          -- the default is higher because a physically-scaled
+                          -- shell is too thin to read at any sane camera distance.
+  planetCloudShadow = 0.55, -- how much the deck dims the sun term on the ground
+                          --     beneath it (0..1). One extra cube fetch on an
+                          --     already-bound texture, no new pass. 0 = off.
+  planetCloudWind   = 0.04, -- cloud advection as a FRACTION OF THE PLANET'S SPIN,
+                          --     not an absolute rate. Real drift is ~6% of Earth's
+                          --     rotation; relative keeps the feel identical on a
+                          --     2-minute planet and a 10-minute one, and the deck
+                          --     creeps backwards against the spin as on Earth.
 
   -- GTAO screen-space ambient occlusion (see ssao-gtao-implementation.md).
   -- Opt-in: kept OFF by default until a mid-tier GPU measurement proves the

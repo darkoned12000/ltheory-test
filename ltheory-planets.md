@@ -682,7 +682,7 @@ W7 is five unrelated features, so it is ordered rather than listed:
 
 | # | Piece | Depends on | Effort | State |
 |---|-------|-----------|--------|-------|
-| W7a | Planet clouds | — | S | ✅ 2026-10-12 (plumbing + ship); **look signed off by the player 2026-10-15** across several seeds. Three extras still unbuilt — see W7a below. |
+| W7a | Planet clouds | — | S | ✅ **CLOSED 2026-10-15** — plumbing, ship, shell + parallax, clouds toggle, resolved-coverage/spin/pos logging, **cloud shadows**, **spin-relative wind**, coverage retune. Look signed off by the player. Left: rain/storms (see §11.12 — judged invisible from orbit). |
 | W7b | Planetary rings | — | M | open |
 | W7c | True biomes | W7a | M | open |
 | W7d | Gas giants | W7c | L | open |
@@ -710,7 +710,13 @@ W7 is five unrelated features, so it is ordered rather than listed:
   gated by `type.weather` (which has been in `Config.render.planet.types` since
   the type table was written, carrying 0.60 terrestrial / 0.08 desert / 0.00
   barren …) times the new `render.planet.clouds` knob times a per-planet
-  `cloudLevel` bias — so two terrestrial worlds don't get identical weather, and
+  `cloudLevel` bias -- **all three, not the slider alone.** Because `cloudLevel`
+  is a bias that can go negative, Coverage = 0 does **not** switch clouds off:
+  `0 * weather + cloudLevel` stays positive for ~34% of desert worlds and ~14%
+  of lava worlds. There is now an explicit `render.planet.cloudsEnabled` master
+  toggle for that, and it is the only reliable off switch. Getting this wrong
+  quietly broke an isolation test of the shell below (Coverage 0 left clouds
+  rendering, so the A/B compared nothing) — so two terrestrial worlds don't get identical weather, and
   airless bodies cost nothing. Moons return early in `update`, so the advection
   clock is advanced before that branch.
 - **Wind costs nothing:** the field is a fractal of the *local* direction, so the
@@ -731,11 +737,262 @@ W7 is five unrelated features, so it is ordered rather than listed:
   seeds at `resolutionScale 50%` and read as good — **the look is signed off**.
   The framing caveat stands for anyone re-judging it: prefer a planet with the
   sun behind the *camera*, or seen from further out.
-- **Three extras still unbuilt** (these are what "W7a" has left, if anything):
-  clouds casting shadow on the surface, a cloud *shell* above the terrain for
-  parallax (v1 projects the deck onto the surface, so it has no vertical
-  separation), and rain/storms. None blocks W7c; all three are cheap-ish once
-  the shell exists, because shadowing and rain both need it.
+- **Three extras**: clouds casting shadow on the surface, rain/storms, and --
+  until 2026-10-15 -- the shell. **The shell now exists** (below), which was the
+  prerequisite for the other two: shadowing and rain both need a layer with
+  vertical separation to exist at all.
+
+**The cloud shell (2026-10-15).** v1 sampled the cloud field at the **surface**
+direction, so the deck was welded to the terrain: move the camera and the clouds
+moved with the ground underneath them, which reads as painted-on rather than as
+weather. The deck now sits on a shell at `rPlanet * (1 + cloudHeight)`:
+
+- `material/planet.glsl` intersects the view ray with that sphere and samples the
+  cube at the **shell hit's** local direction. The cube is authored in local space
+  so terrain spins with the body, which means a world-space hit has to be brought
+  back into that frame -- so `Planet.lua` passes the body's local axes in world
+  space (`planetAxisX/Y/Z`, from `Quat:getAxisX/Y/Z`) and the shader inverts them.
+  Deliberately **not** the `mWorldIT` autovar: no fragment shader has ever
+  declared it, and an autovar that is never uploaded is silently IDENTITY -- which
+  would present as "parallax doesn't work" rather than as an error.
+- **Grazing-angle fade.** Near the limb the shell offset grows without bound and
+  smears the whole deck into radial streaks, so the parallax blends back to the
+  ground direction via `smoothstep(0.02, 0.30, |dot(view, normal)|)`. The same
+  reason relief mapping needs a step budget at silhouettes.
+- `cloudHeight = 0` degenerates to v1's lookup **exactly**, so the knob is a clean
+  A/B against the old behaviour and existing worlds are unchanged if it is left at
+  0. Default **0.02** (2% of radius, ~2000 units at R=101527). A real cloud deck is
+  ~0.16% of radius up; the default is an order of magnitude above that because a
+  physically-scaled shell is too thin to read at any sane camera distance. Knob:
+  `render.planet.cloudHeight`, 0-0.12.
+- **Verified numerically**, not by eye -- `tools/verify_cloud_shell.py`, same
+  precedent as W4's clamp check. It is checked against properties that hold for
+  *any* correct ray-sphere solve rather than a hand-derived closed form (an
+  earlier version of that file used a closed form, the formula was wrong, and it
+  looked like a shader bug):
+  - the returned point lies on the shell (worst residual 2.2e-10 units over 4000
+    random poses). This is what catches a sign error in the ray setup, and it
+    caught one: `origin - eye` instead of `eye - origin` put the sample on the far
+    side of the body;
+  - `t` is the nearest positive root, and the sample never lands on the far side;
+  - `height = 0` reproduces v1 exactly; a head-on view has zero parallax;
+  - parallax rises monotonically with view angle (0.04 deg at 5 deg elevation to
+    0.87 deg at 60 deg);
+  - a genuinely grazing view fades to zero offset;
+  - thin-shell limit: `offset/height -> tan(incidence)` (0.3144 vs 0.3151).
+- **Verified visually** under the harness: `h=0 -> 0.02` moves 0.84% of pixels,
+  `0.02 -> 0.06` moves 1.07%, and with clouds on the changed pixels are confined
+  to **x 480-959** -- the disc and its edge, with **zero** change in the sky.
+- Open: single layer only. There is no thickness, so no self-shadowing inside the
+  deck and no soft edges through depth. A multi-sample march along the shell is
+  the natural v2, and is what cloud shadows and rain will build on.
+
+**Cloud shadows (2026-10-15).** The deck drawn on the surface also blocks the sun,
+so the sun term is dimmed by whatever the deck covers *along the direction to the
+star*. Same shell, same baked field, same wind drift -- a second ray-sphere solve
+along the sun instead of along the view ray. One extra cube fetch on a texture
+that is already bound; no new pass, no render target.
+
+- `starDir` is world space and `vertPos` is local, so the sun direction is
+  converted with the same `worldToLocalDir` the shell uses. Getting this wrong
+  would make the shadow cast by a sun fixed to the planet's own frame, and it
+  would never sweep as the body rotates.
+- The solve is the simple closed form, because in local space the planet centre
+  *is* the origin: `t = -b + sqrt(b^2 - R^2 + rShell^2)`, `b = vertPos . sunDir`.
+- Fades out over `smoothstep(0.06, 0.32, NL)`: as the sun nears the horizon the
+  ray grazes the shell and the hit point runs to infinity, sampling arbitrarily.
+- **Cost: free.** Measured at 1280x720: shadow off 1.00 ms / 1000 fps, on
+  0.79 ms / 1259 fps -- i.e. within noise (it came out *faster*, which is noise).
+- **Verified numerically** by 5 more checks in `tools/verify_cloud_shell.py`: the
+  hit point lies on the shell (worst residual 2.9e-11 units over 4000 random sun
+  directions), sun-overhead hits at exactly `R*(1+h)`, the point is never behind
+  the surface, the fade reaches 0 at the horizon, and `cloudShadow = 0` is an
+  exact no-op.
+- **It was invisible at the old default settings, and that was a coverage problem,
+  not a shadow problem.** shadow 0 and shadow 1 produced *byte-identical* frames at
+  `clouds = 0.44`. Cause: `cov = smoothstep(0.70 - 0.20*clouds, 0.95 -
+  0.20*clouds, cd)` over a field that averages 0.5, so the window `[0.612, 0.862]`
+  put only **14%** of the field above the *upper* edge (fully covered); there was
+  almost nothing to cast from. Fixed below by raising coverage.
+
+**Cloud coverage raised (2026-10-15).** `render.planet.clouds` 1.0 -> **1.25**,
+range `0..1.5` -> `0..3.0`. The deck and its shadows are now visible, but the
+value was chosen from a rendered ladder rather than arithmetic -- see the
+overshoot note below, because the first attempt at 2.0 was wrong.
+
+| type | weather | resolved @1.0 | resolved @2.0 | any / full coverage |
+|---|---|---|---|---|
+| ocean | 0.70 | 0.70 | 1.40 | 58% / 33% |
+| terrestrial | 0.60 | 0.60 | 1.18 | 54% / 29% |
+| ice | 0.40 | 0.44 | 0.84 | 46% / 21% |
+| lava | 0.15 | 0.15 | 0.30 | 36% / 11% |
+| desert | 0.08 | 0.08 | 0.16 | 33% / 8% |
+| barren / moon | 0.00 | 0.00 | 0.00 | 0% (gated on `hasAtmo`) |
+
+- **The knob is not a 0..1 fraction and cannot be treated as one.** It is a
+  multiplier that *positions the coverage window*, so it stays meaningful above
+  1; `Config.App` now says so, because the old `(0..1.5)` range comment was the
+  thing that hid this.
+- **The clamp in `cloudCoverage()` moved 1.0 -> 1.5, and it had to.** Raising only
+  the knob saturates: at knob 2 both ocean and terrestrial resolved to exactly
+  1.00, flattening them into each other AND discarding the per-planet
+  `cloudLevel` bias, because the bias is added *before* the clamp and then thrown
+  away. At 1.5 the ordering and the seed variation both survive -- two live
+  terrestrials resolve to 1.18 and 1.05.
+- **`mix(color, cloudLit, cov * clouds)` is now `clamp(..., 0, 1)`.** With
+  `clouds` above 1 the factor reaches 1.5, and `mix` with `t > 1` *extrapolates*
+  past `cloudLit` -- the deck would render brighter than the cloud colour itself.
+  Safe by accident before (resolved was clamped to 1); a latent trap now that it
+  is not.
+- **Side effect of that clamp, worth knowing before judging edge softness:** the
+  factor reaches 1.0 at `cov = 1/clouds`, not at `cov = 1.0`. At a terrestrial
+  default (resolved 1.20) the coverage ramp therefore saturates at
+  **cov = 0.833** -- the top 17% of the ramp is flat. That is *correct* (opaque
+  cloud must render opaque) and it leaves a real soft edge (verified as checks
+  N/O/O2/P), but if the deck ever reads as having hard-edged clouds, this
+  compression is the reason, not the noise field.
+- Barren worlds and moons stay at 0.00 regardless of bias, so raising the knob
+  cannot resurrect the moon bug found above.
+
+**The coverage ladder (and why 2.0 was wrong).** Derived coverage fractions are
+not a substitute for looking at the planet. Same seed, same explicit pose, each
+rung re-run with `PHX_SETTINGS=1` so the applied value is self-certifying
+(`render.planet.clouds` confirmed as 1 / 1.25 / 1.5 / 2):
+
+| knob | resolved (terrestrial) | mean delta vs 1.25 | look |
+|---|---|---|---|
+| 1.00 (old default) | 0.58 | 2.755 | continents and ocean read clearly, light cloud on top |
+| **1.25 (shipped)** | **0.73** | -- | **deck clearly present, surface still legible** |
+| 1.50 | 0.88 | 2.707 | heavy; continents only break through in patches |
+| 2.00 | 1.18 | 5.602 | near-total whiteout; surface detail lost |
+
+1.0 and 1.5 landing almost equidistant from 1.25 (2.755 / 2.707, with 1.25 their
+midpoint) is a useful sanity check that the knob is behaving linearly where it
+should be.
+
+The trap: at 2.0 the measured "fraction of frame decked" only moves 10.7% ->
+15.2%, so a numeric check would have called it a modest success. The planet goes
+white anyway, because what actually changes is the **opacity of the deck where it
+exists**, not how much of the disc it covers. **Judge this knob by eye; the
+coverage arithmetic will not tell you when you have gone too far.**
+
+At 1.25 a terrestrial resolves to 0.73, below 1.0, so the new mix clamp does not
+bite at the default -- it is a guard for the top of the range, not a shaping
+parameter.
+
+**Determinism is good; my first ladder was not.** Two runs of an identical
+config are **byte-identical** across separate boots (`det1` vs `det2`, and
+default-config runs all identical), so the harness itself is sound and
+`PHX_SETTINGS=1` does not perturb rendering. But the original ladder batch was
+run *without* `PHX_SETTINGS`, and its 1.25 rung does **not** reproduce against the
+certified capture (mean 0.160/255, 0.33% of samples, max 190) while every
+certified pair matches exactly. Rule 6's `PHX_SETTINGS=1` is not ceremony: an
+unverified override is exactly how a ladder ends up measuring values you cannot
+name. The ladder above was re-run with it.
+
+**Deck/shadow desync on non-zero wind -- FIXED (found in play, 2026-10-15).**
+Moving the Wind slider showed a second, counter-rotating circle inside the disc:
+the clouds visibly swung away from their own shadows. Cause: the two sampling
+paths applied `cloudDrift` to vectors of completely different magnitude.
+
+- Deck: `normalize(cloudL + cloudDrift)` where `cloudL` is a UNIT direction, so
+  the drift has full effect.
+- Shadow: `normalize(vertPos + Ll*t + cloudDrift)` where `vertPos + Ll*t` is the
+  shell hit point with magnitude ~`rPlanet` (~1e5), so the drift is swamped.
+
+Measured on the reported configuration (rPlanet 95976, shell altitude 0.0533, 10
+minutes of drift at the default wind): the shadow sample moved **4.1e-6 rad**
+where the deck moved 0.415 rad -- a factor of **95,818**. Fixed by normalising
+the shell point to a unit direction *before* adding the drift, so both paths are
+now structurally identical:
+
+```glsl
+vec3 sp = normalize(normalize(vertPos + Ll * t) + cloudDrift);   // was: normalize(vertPos + Ll*t + cloudDrift)
+```
+
+- **This is exactly the class of bug a "does the feature work" check cannot
+  catch, and a numeric shadow check could not have caught it either** -- the
+  shadow *was* enabled and *was* darkening the sun; it was just sampling the
+  wrong place. It was invisible at wind 0 because neither term moved. Only
+  dragging the slider exposed it. Pinned as checks Q1-Q3.
+- The stale comment that hid this ("the drift offset is ~2e-4 of the lookup, so
+  anchoring them to the same basis is what matters") was itself the bug's
+  cover: it assumed a tiny drift, which was true when the rate was a fixed
+  2e-4 and false once the drift is spin-relative and grows with elapsed time.
+  Corrected in place.
+- Verified at the reported settings (shell altitude 0.0533, shadow 0.492, wind
+  0 vs 0.0343): the wind-on frame no longer shows a second circle.
+
+**Wind decays over a long session -- KNOWN LIMIT (not fixed).** Because the
+drift axis is built from the surface normal and not from the sample direction,
+it is not perpendicular to it, so the advection has to use
+`normalize(dir + D*tangent)`. That rotates by `atan(D)`, not `D`, so the
+effective angular rate decays as `rate/(1+D^2)`: ~5% compressed after 24
+minutes, **52% after an hour** -- the wind very slowly stops. A constant-rate fix
+needs a per-fragment perpendicular axis and a Rodrigues rotation, which changes
+how the deck shears and so needs its own look pass. Pinned as check Q4.
+
+**Wind is now tied to the planet's own spin (2026-10-15).** It was a hardcoded
+`cloudTime * 2.0e-4`, an **absolute** rate, which was wrong twice over: against a
+0.01-0.05 rad/s spin (randomised per planet) that is 1/50th to 1/250th of the
+rotation, so the ground swept 1 degree in under two seconds while the clouds needed
+87 -- invisible. And because the spin is randomised, the same absolute drift was
+5x more visible on a slow world than a fast one. Now `windRate = spinSpeed *
+render.planet.cloudWind`, default **0.04**, which is also the physically meaningful
+ratio (real cloud drift is ~6% of Earth's rotation). Consequences:
+
+- Constant *feel* on every planet, and the deck creeps **backwards** against the
+  spin the way it does on Earth, rather than at an arbitrary absolute rate.
+- On the pinned test planet (`spin=0.0173 rad/s`, a 6.0 min rotation) the default
+  is 6.9e-4 rad/s = **2.4 deg/min** against a 59.5 deg/min rotation -- a 4%
+  counter-drift. That is ~3.5x the old absolute rate on this body, and the old
+  rate was 0.69 deg/min on every planet regardless of size or spin.
+- Verified by capturing the same static (`spin = false`) planet 150 s of simulated
+  time apart at wind 0 / 0.04 / 0.20: the difference grows monotonically
+  (2.182 / 3.883 / 5.786 mean abs delta). The wind=0 case is not zero because
+  **comparing different frames always includes the nebula's own animation** --
+  `simTime` differs between frame 150 and 9150 -- which is worth remembering before
+  attributing any inter-frame difference to the thing being tested.
+- The `[system] planet` line now also reports `spin=<rad/s> (<minutes>)`, since
+  rotation rate is what the wind is derived from and it was otherwise invisible.
+
+**Coverage is logged per world, and that immediately found a bug (2026-10-15).**
+
+`[system] planet` now reports the **resolved** coverage -- the number that
+actually decides how cloudy a world looks -- plus both inputs and the surface-cube
+seed:
+
+```
+[system] planet Netosu    type=ice         moons=2 radius=101527 clouds=0.44 (weather 0.40 + bias +0.04) seed=0.273110
+[system] planet LLeccohife type=terrestrial moons=2 radius=95976  clouds=0.58 (weather 0.60 + bias -0.02) seed=0.445641
+[system] planet Beterytee  type=barren     moons=0 radius=53752  clouds=0.14 (weather 0.00 + bias +0.14) seed=0.330582
+```
+
+because neither panel knob shows it. `Coverage` is only a multiplier on the
+type's prior, and `Shell Altitude` is the parallax altitude; the resolved value is
+`clamp(weather * Coverage + cloudLevel, 0, 1)` with `cloudLevel ~ U(-0.2, +0.15)`
+drawn from the planet's own rng.
+
+**The bug: a barren world resolved to 0.14 and rendered a cloud deck over a body
+with no atmosphere.** `weather = 0` for barren types and moons was believed to be
+sufficient to switch clouds off -- and the source comment said "airless bodies cost
+nothing" -- but `weather = 0` leaves `cloudLevel`, which can be **positive**. So
+roughly 43% of barren worlds (bias > 0) and of moons got clouds. The prior was
+never decisive; only the *sign* of the bias was assumed.
+
+Fixed by gating `cloudCoverage()` on `hasAtmo`, which also makes the old comment
+true. After: barren reads `clouds=0.00`; the atmospheric worlds are byte-identical
+(0.44 / 0.58 / 0.45 unchanged).
+
+Worth noting how it was found: the reasoning about the formula was *right* and the
+implementation was still wrong, and a single log line settled it. The same question
+had taken a capture harness and five seeds to answer approximately, and the harness
+measurement was itself confounded (3 of 5 seeds had the planet out of frame).
+
+Also note `seed=` in the log is the **per-planet surface-cube seed**, which seeds
+both the terrain and the baked cloud field -- so any world reported by a player is
+reproducible from its own log line, without having to work out which world seed
+produced it.
 
 **W7b — planetary rings.** The most self-contained piece: a new entity plus a ring
 shader, touching neither the generator nor the surface material, so it cannot
@@ -1113,11 +1370,18 @@ Two things worth noting:
   fixed-framing capture and a real frame time compose. The signature to watch
   for is a perf line whose `min == p95 == max`: that is a constant, not a
   measurement.
-- **A/B evidence needs three things pinned at once, or it is not evidence.**
-  Frame delta, camera pose and window size. Pinning two out of three still gives
-  you a plausible-looking picture that will not reproduce. `CaptureHarness` does
-  all three; the failure mode without them is an image that looks like a result
-  and is actually the chase camera.
+- **A/B evidence needs FOUR things pinned, or it is not evidence.** Frame
+  delta, camera pose, window size, and **time**. Pinning three out of four still
+  gives you a plausible-looking picture that will not reproduce: the medium read
+  the wall clock for its drift, so identical configs differed by ~0.5% of pixels
+  in the sky, and a real measurement came back as pure noise. `CaptureHarness`
+  does all four; the failure mode without them is an image that looks like a
+  result and is actually the chase camera, or the clock.
+- **Verify a determinism tool against itself before trusting it.** The harness
+  produced bit-identical frames and still had a hole -- a wall-clock time source
+  -- that only appeared when two *identical* runs were compared rather than two
+  different ones. Same-vs-same first: a determinism tool that has never been asked
+  "are you deterministic?" is not a determinism tool.
 
 - **`Time_GetRaw()` is epoch SECONDS, not milliseconds**
   (`libphx/src/PhxTime.cpp:29`, `time(0)`), *and* it has 1-second granularity so
@@ -1176,6 +1440,20 @@ Two things worth noting:
   cube at LOD 0 no matter how wide the averaging cap is gives a 256-tap estimate
   with visible variance; prefilter the source to the cap (`srcLod`) instead of
   buying more taps.
+- **`PHX_FIXED_VIEW=log` freezes the SHIP's pose, which does not necessarily
+  frame the planet.** This silently produced a *false negative* on 2026-10-15: an
+  A/B of "clouds off" vs "deck on" returned **byte-identical** frames at mean
+  delta 0.000, which reads exactly like "the feature does nothing". It was not
+  doing nothing — both captures were of empty sky, because the planet sits at a
+  random `kSystemScale * (1 + exp)` offset per seed and the ship was nowhere near
+  it. The tell was in the log the whole time and I did not look: no `[system]
+  planet` line had been printed, because that log only appears once a planet
+  exists in view of the spawn. Two lessons: **the `[system] planet` line now also
+  prints `pos=(x,y,z)`** so an explicit `PHX_FIXED_VIEW=x,y,z,lx,ly,lz` can be
+  aimed at it (2.2x radius away frames a body at about half the frame width);
+  and **before believing any "identical frames" result, confirm the subject is
+  actually in the shot.** A zero delta is only evidence of absence if something
+  was there to be absent.
 
 ## 13. Verification workflow
 
@@ -1418,6 +1696,40 @@ default" is currently "the preset with two things turned down", not a tuned look
 in its own right. Deciding what ships is a taste call, and §11.5 now has a third
 entry for it.
 
+### 11.12 Rain/storms from orbit — dropped as invisible (2026-10-15)
+
+Asked whether rain would be noticeable from the ship. **It would not**, and the
+arithmetic is not close:
+
+- A raindrop is ~2 mm. At the game's closest planet stand-off (1.35x radius on a
+  ~1e5-unit body, so ~3.5e4 units, rendered at 4K with `resolutionScale = 50%`)
+  one screen pixel covers on the order of **1e2-1e3 units**. A drop is 4-5 orders
+  of magnitude below a pixel. It cannot be drawn, and it cannot be *seen* -- not
+  as geometry, not as a texture, not as a resolved particle.
+- The same holds for any local precipitation: rain, snow, hail. They are
+  sub-pixel at every camera distance the game permits, because the camera is
+  always outside the atmosphere.
+
+What is actually visible from orbit, and what already exists or is worth doing:
+
+| Effect | Visible from orbit? | Status |
+|---|---|---|
+| Cloud decks / systems | **yes** — the whole reason W7a exists | ✅ shipped |
+| Storm cells (mesoscale) | **yes** — 100s of km, many pixels across | plausible W7a extension |
+| Lightning | **yes** — already implemented and firing at boot | ✅ shipped |
+| Dust storms (lava/desert) | **yes**, same scale as storm cells | plausible |
+| Aurorae | **yes**, and absent | candidate (W7c-adjacent) |
+| Rain / snow / hail | **no** — sub-pixel by 4-5 orders of magnitude | dropped |
+| Rainbows | from orbit, **no**; only from inside the atmosphere | dropped (W7e scope) |
+
+So "rain/storms" was really "storms" all along. Storms are a *cloud-field*
+feature (large-scale density modulation and rotation), not a precipitation
+feature, and they would build on the W7a shell rather than need a new one. That
+is a reasonable piece of work — but it is **not** the highest-value next item,
+and it is not what was originally sketched. Recommendation: **skip it**, take
+**W8 (planet scale)** next, which unblocks **W7b rings** — the item the player
+specifically asked for — and revisit storms later if the sky still wants it.
+
 ### 11.8 Closing this out — what is left, and the order to do it in
 
 State as of 2026-10-14. **W7a is the last thing landed**, so W7 is one-fifth
@@ -1446,7 +1758,7 @@ under load, plus `render.resolutionScale` / supersampling as the real levers
 
 | piece | depends on | effort | notes |
 |---|---|---|---|
-| W7a polish | — | S | look untuned; cloud shadows, a cloud *shell* for parallax (v1 projects onto the surface), rain/storms all unbuilt. Needs a planet seen **sun-behind-camera** — §11.3 notes the boot seed puts a planet in front of the star. |
+| ~~W7a polish~~ | — | S | ✅ **Done 2026-10-15.** Shell + parallax, shadows, spin-relative wind, coverage retune all landed and signed off. Rain/storms deliberately **dropped** — see §11.12. |
 | W7b rings | **W8** | M | most self-contained (new entity + shader; touches neither generator nor surface material). **Do W8 first** or the inner radius derives from an untamed radius. |
 | W7c biomes | W7a | M | consumes the dead `genColor` channel. The hard part is continuity, not the lookup — biomes must *blend*, never switch (`procedural-space-environment.md` §7). |
 | W7d gas giants | W7c | L | banded generator + no-solid-surface path. Explicitly the expensive one; must not start before W6 is re-measured with load. **⛔ deferred 2026-10-14** (see below). |

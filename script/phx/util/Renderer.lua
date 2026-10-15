@@ -1,4 +1,5 @@
 local Cache = require('phx.util.Cache')
+local CaptureHarness = require('phx.util.CaptureHarness')
 
 -- TODO JP : Refactor all of this monolithic nonsense into RenderPass objects.
 
@@ -194,7 +195,25 @@ local SETTINGS = {
   { kind = 'float', key = 'render.planet.sunScale',   label = 'Planet Sun Scale',   default = 1.0,   min = 0, max = 4, gpu = 'planetSunScale' },
   { kind = 'float', key = 'render.planet.envAmbient', label = 'Planet Nebula Fill', default = 1.75,  min = 0, max = 10, gpu = 'planetEnvAmbient' },
   { kind = 'float', key = 'render.planet.atmoGlow',   label = 'Planet Atmosphere',  default = 0.756, min = 0, max = 3,  gpu = 'planetAtmoGlow' },
-  { kind = 'float', key = 'render.planet.clouds',     label = 'Planet Clouds',      default = 1.0,   min = 0, max = 1.5, gpu = 'planetClouds' },
+  { kind = 'bool',  key = 'render.planet.cloudsEnabled', label = 'Planet Clouds', default = true, gpu = 'planetCloudsEnabled' },
+  -- Multiplier on the type's prior, NOT a 0..1 fraction: it positions the
+  -- coverage window, so it is meaningful above 1 (resolved coverage is clamped
+  -- separately at 1.5 -- see Planet:cloudCoverage for why not at 1.0).
+  { kind = 'float', key = 'render.planet.clouds',     label = ' - Coverage',         default = 1.25,  min = 0, max = 3.0, gpu = 'planetClouds' },
+  -- Cloud shell altitude as a fraction of the planet radius. 0 = the old
+  -- ground-projected deck (clouds welded to the terrain, no parallax). The
+  -- default is ~12x a physically-scaled cloud deck because a real 0.16% shell
+  -- gives an offset too small to read at any sane camera distance.
+  { kind = 'float', key = 'render.planet.cloudHeight', label = ' - Shell Altitude', default = 0.02, min = 0, max = 0.12, gpu = 'planetCloudHeight' },
+  -- How much the deck dims the sun term on the ground beneath it. One extra
+  -- cube fetch on an already-bound texture; no new pass.
+  { kind = 'float', key = 'render.planet.cloudShadow', label = ' - Shadow',        default = 0.55, min = 0, max = 1, gpu = 'planetCloudShadow' },
+  -- Advection speed as a FRACTION OF THE PLANET'S OWN SPIN, not an absolute
+  -- rate. Real cloud drift is ~6% of Earth's rotation; the default is in that
+  -- band. Because it is relative, the deck feels the same on a 2-minute planet
+  -- and a 10-minute one, and creeps slowly BACKWARDS against the spin the way
+  -- it does on Earth.
+  { kind = 'float', key = 'render.planet.cloudWind', label = ' - Wind', default = 0.04, min = 0, max = 0.2, gpu = 'planetCloudWind' },
   { kind = 'float', key = 'render.planet.terminator', label = 'Planet Terminator',  default = 0.35, min = 0, max = 1,   gpu = 'planetTerminator' },
 
   -- SSAO / GTAO -------------------------------------------------------------
@@ -916,7 +935,7 @@ function Renderer:volume (med)
                               Settings.get('nebula.tintB') or 0.2
   local fx, fy, fz, fsp = 0.4, 0.2, 0.8, 40
   local fl = math.sqrt(fx * fx + fy * fy + fz * fz)
-  local volTime = (tonumber(Time.GetRaw()) or 0) * 0.001
+  local volTime = CaptureHarness.volTime()
   local volGather = 8.0 / (800.0 * 800.0)
 
   Profiler.Begin('Render.Volume')
@@ -1020,7 +1039,7 @@ function Renderer:godrays (med)
   local evalF = GOD_EVALS[q] or GOD_EVALS[2]
   local fx, fy, fz, fsp = 0.4, 0.2, 0.8, 40
   local fl = math.sqrt(fx * fx + fy * fy + fz * fz)
-  local volTime = (tonumber(Time.GetRaw()) or 0) * 0.001
+  local volTime = CaptureHarness.volTime()
   local tintAmt = Settings.get('nebula.tint') or 0.0
   local tintR, tintG, tintB = Settings.get('nebula.tintR') or 1,
                               Settings.get('nebula.tintG') or 1,

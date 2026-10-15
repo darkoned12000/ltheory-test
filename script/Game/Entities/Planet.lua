@@ -72,8 +72,15 @@ local Planet = subclass(Entity, function (self, seed, opts)
   end
   self.typeName = t.name
 
+  -- Kept on the entity for the boot log. This is the seed the surface cube was
+  -- generated from, and that cube carries BOTH the terrain and the baked cloud
+  -- field -- so logging it makes any reported world reproducible from its own
+  -- log line, without having to guess which world seed produced it.
+  local genSeed = rng:getUniform()
+  self.genSeed  = genSeed
+
   local params = {
-    seed  = rng:getUniform(),
+    seed  = genSeed,
     freq  = (t.freqBase or 4) + rng:getExp(),
     power = (t.powerBase or 1.0) + (t.powerVar or 0.5) * rng:getExp(),
     coef  = (rng:getVec4(0.05, 1.00) ^ Vec4f(2, 2, 2, 2)):normalize()
@@ -142,6 +149,41 @@ local Planet = subclass(Entity, function (self, seed, opts)
   self:register(Event.Render, self.render)
 end)
 
+-- Resolved cloud coverage, 0..1. This is the number that actually decides how
+-- cloudy a world looks, and it is the one neither panel knob shows:
+--
+--     clouds = clamp( weather * Coverage + cloudLevel, 0, 1 )
+--
+-- `weather` comes from the type (itself a seeded weighted pick) and `cloudLevel`
+-- is a per-planet bias of U(-0.2, +0.15) drawn from THIS planet's rng -- so two
+-- ice worlds resolve anywhere in 0.20..0.55. The panel's Coverage slider is only
+-- a multiplier on the first term; it is 1.0 (neutral) by default and setting it
+-- to 0 does NOT switch clouds off, because the bias can be positive.
+--
+-- Single definition, used both by the shader path and by the boot log, so the
+-- number the log prints is the number that rendered.
+function Planet:cloudCoverage ()
+  if Settings.get('render.planet.cloudsEnabled') == false then return 0.0 end
+  -- An airless body has no air to hold cloud. Barren types and moons carry
+  -- weather = 0, but weather = 0 alone does NOT switch them off: cloudLevel is a
+  -- per-planet bias that can be POSITIVE, so a barren world resolved to 0.14 and
+  -- rendered a cloud deck over a body with no atmosphere at all. Found by logging
+  -- the resolved value per world rather than assuming the prior was decisive.
+  -- Gating on hasAtmo also makes the long-standing "airless bodies cost nothing"
+  -- comment actually true.
+  if not self.hasAtmo then return 0.0 end
+  local knob = Settings.get('render.planet.clouds')
+  if knob == nil then knob = 2.0 end
+  -- Clamped at 1.5, NOT 1.0. `clouds` parameterises the coverage window rather
+  -- than being a literal 0..1 fraction, and clamping at 1.0 made the wet types
+  -- saturate: at knob 2 both ocean (0.70) and terrestrial (0.60) resolved to
+  -- exactly 1.00, which not only flattened them into each other but DISCARDED
+  -- the per-planet bias, since it is added before the clamp. 1.5 keeps the
+  -- ordering ocean > terrestrial > ice > lava > desert and the seed variation
+  -- inside each. The shader clamps the mix factor to match.
+  return math.max(0.0, math.min(1.5, (self.weather or 0.0) * knob + (self.cloudLevel or 0.0)))
+end
+
 function Planet:update (state)
   -- Cloud advection clock. Accumulated from dt rather than read from a wall
   -- clock, so it stays reproducible with a pinned world seed, and advanced for
@@ -208,10 +250,54 @@ function Planet:render (state)
     Shader.SetFloat('atmoGlow',   Settings.get('render.planet.atmoGlow') or 1.0)
     -- Cloud coverage: per-type chance x the panel knob, offset by the per-planet
     -- bias. weather is 0 for barren/moon types, so airless bodies cost nothing.
-    local cloudKnob = Settings.get('render.planet.clouds')
-    if cloudKnob == nil then cloudKnob = 1.0 end
-    Shader.SetFloat('clouds',     math.max(0.0, math.min(1.0, (self.weather or 0.0) * cloudKnob + (self.cloudLevel or 0.0))))
+    -- See Planet:cloudCoverage for why the slider alone cannot switch these off.
+    Shader.SetFloat('clouds',     self:cloudCoverage())
     Shader.SetFloat('cloudTime',  self.cloudTime or 0.0)
+    -- Cloud shell altitude as a fraction of rPlanet. 0 = v1's ground-projected
+    -- deck exactly (no parallax), so this is a clean A/B against the old look.
+    -- Real cloud decks sit ~0.16% of a planet's radius up; the default is an
+    -- order of magnitude above that because a physically-scaled shell gives an
+    -- offset too small to read at any sane camera distance.
+    Shader.SetFloat('cloudHeight', Settings.get('render.planet.cloudHeight') or 0.02)
+    -- How fast the deck slides across the body, in RADIANS PER SECOND, derived
+    -- from this planet's own rotation rather than a fixed constant.
+    --
+    -- It used to be a hardcoded `cloudTime * 2.0e-4`, which is an ABSOLUTE rate,
+    -- and that is wrong here for two reasons. Against a rotation of 0.01-0.05
+    -- rad/s (randomised per planet) it is 1/50th to 1/250th of the spin -- the
+    -- ground sweeps 1 degree in under two seconds while the clouds need 87, so
+    -- the drift is invisible. And because the spin is randomised, the same
+    -- absolute drift is 5x more visible on a slow planet than a fast one.
+    --
+    -- Tying it to spinSpeed keeps the RATIO constant on every world, which is
+    -- also the physically meaningful relationship: real cloud drift is ~6% of
+    -- Earth's rotation, and on a body that spins faster the wind should scale
+    -- with it. Direction reads correctly too -- a small fraction of spin means
+    -- the deck creeps *backwards* relative to the terrain, exactly as it does
+    -- on Earth.
+    local windFrac = Settings.get('render.planet.cloudWind')
+    if windFrac == nil then windFrac = 0.04 end
+    Shader.SetFloat('cloudWindRate', (self.spinSpeed or 0.0) * windFrac)
+    -- How much the deck dims the sun term beneath it. 0 disables shadowing
+    -- entirely, which is the A/B against the pre-shadow look.
+    Shader.SetFloat('cloudShadow', Settings.get('render.planet.cloudShadow') or 0.55)
+    -- The body's local axes in WORLD space. The surface cube is authored in local
+    -- space so the terrain spins with the planet; the cloud shell needs to convert
+    -- a world-space ray hit back into that local frame. Passed explicitly rather
+    -- than reusing the mWorldIT autovar because no fragment shader has ever
+    -- declared it, and an autovar that never gets uploaded is silently IDENTITY --
+    -- which would look like "parallax just doesn't work" rather than an error.
+    local rot = self:getRot()
+    if rot then
+      local ax, ay, az = rot:getAxisX(), rot:getAxisY(), rot:getAxisZ()
+      Shader.SetFloat3('planetAxisX', ax.x, ax.y, ax.z)
+      Shader.SetFloat3('planetAxisY', ay.x, ay.y, ay.z)
+      Shader.SetFloat3('planetAxisZ', az.x, az.y, az.z)
+    else
+      Shader.SetFloat3('planetAxisX', 1, 0, 0)
+      Shader.SetFloat3('planetAxisY', 0, 1, 0)
+      Shader.SetFloat3('planetAxisZ', 0, 0, 1)
+    end
     -- Terminator shape: 0 = cosine law (a diffuse planet dims toward the limb),
     -- 1 = the old flat wrap that glowed almost to the edge.
     Shader.SetFloat('terminator', Settings.get('render.planet.terminator') or 0.35)

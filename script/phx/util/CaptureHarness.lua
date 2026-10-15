@@ -192,6 +192,30 @@ function CaptureHarness.viewActive ()
   return viewMode ~= nil
 end
 
+-- ---- simulation clock -------------------------------------------------------
+
+-- The volumetric medium's time source was the WALL CLOCK
+-- (`volTime = Time.GetRaw() * 0.001`, consumed as `mod(volTime, 300.0)` drift in
+-- medium.glsl). Pinning `dt` does not pin that, so two runs of an IDENTICAL
+-- config still differed in ~0.5% of pixels -- all in the sky. That is enough to
+-- swamp a look A/B, and it did: an early cloud-shell measurement read "0.518% of
+-- the frame changed" and that number was pure run-to-run noise, not the knob.
+--
+-- So when dt is pinned, the medium's time advances with the SIMULATION instead,
+-- which is reproducible. Normal play is untouched and still uses the wall clock.
+CaptureHarness.simTime = 0.0
+
+function CaptureHarness.advance (dt)
+  if not CaptureHarness.fixedDt then return end
+  CaptureHarness.simTime = CaptureHarness.simTime + dt
+end
+
+-- Time for the medium / shafts. Seconds.
+function CaptureHarness.volTime ()
+  if CaptureHarness.fixedDt then return CaptureHarness.simTime end
+  return (tonumber(Time.GetRaw()) or 0) * 0.001
+end
+
 -- ---- reporting --------------------------------------------------------------
 
 -- The check that makes a comparison honest. The `Resolution:` line at boot is a

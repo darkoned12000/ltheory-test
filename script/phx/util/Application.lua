@@ -253,6 +253,10 @@ function Application:run ()
       -- the other purely from this. With dt constant, entity motion at frame N
       -- is identical regardless of how fast the frame actually ran.
       if CaptureHarness.fixedDt then self.dt = CaptureHarness.fixedDt end
+      -- Advance the harness's simulation clock by the PINNED delta, so anything
+      -- that would otherwise read the wall clock (the volumetric medium's
+      -- `volTime`) is reproducible too.
+      CaptureHarness.advance(self.dt)
       self:onUpdate(timeScale * self.dt)
     end)
 
@@ -277,6 +281,8 @@ function Application:run ()
         'nebula.enable', 'postfx.godrays.enable', 'postfx.bloom.enable',
         'postfx.exposure.meter', 'postfx.tonemap.enable',
         'render.resolutionScale', 'render.superSample',
+        'render.planet.cloudsEnabled', 'render.planet.clouds', 'render.planet.cloudHeight',
+        'render.planet.cloudShadow', 'render.planet.cloudWind',
         -- The medium knobs, because a nebula A/B is worthless without them.
         -- Measured missing: a Low-vs-High comparison at identical density looked
         -- like a real inversion (Low brighter) and the only reason it could not
