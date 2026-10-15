@@ -1,4 +1,5 @@
 local Bindings = require('phx.util.ApplicationBindings')
+local CaptureHarness = require('phx.util.CaptureHarness')
 
 -- Gamepad mapping DB is version-stamped in its filename; hoisted here so a
 -- future bump doesn't require hunting through run() for a bare string.
@@ -17,10 +18,16 @@ function Application:getTitle ()
 end
 
 function Application:getWindowMode ()
+  -- PHX_FIXED_SIZE drops WindowMode.Resizable: a resizable window under a
+  -- compositor comes back at whatever size it likes, which is why headless dumps
+  -- landed on 936x969, 1691x1232 and 1891x969 while all logging the same
+  -- `Resolution: 1280x720`. Fixed-size is only forced by the harness, never in
+  -- normal play.
+  local resizable = CaptureHarness.stripResizable() and 0 or WindowMode.Resizable
   if Config.window.fullscreen then
-    return Bit.Or32(WindowMode.Fullscreen, WindowMode.Resizable)
+    return Bit.Or32(WindowMode.Fullscreen, resizable)
   end
-  return Bit.Or32(WindowMode.Shown, WindowMode.Resizable)
+  return Bit.Or32(WindowMode.Shown, resizable)
 end
 
 function Application:onInit         ()       end
@@ -143,11 +150,41 @@ function Application:run ()
 
     self:profiled('App.onResize', function ()
       local size = self.window:getSize()
+      -- PHX_FIXED_SIZE: refuse resizes and hold the requested size. `Resolution:`
+      -- printed at boot is a one-shot line from getDefaultSize(); this is the
+      -- live truth, and it is what a capture comparison must agree on.
+      local fxW, fxH = CaptureHarness.fixedW, CaptureHarness.fixedH
+      if fxW then
+        if self.resX ~= fxW or self.resY ~= fxH then
+          self:onResize(fxW, fxH)
+        end
+        self.resX, self.resY = fxW, fxH
+        return
+      end
       if size.x ~= self.resX or size.y ~= self.resY then
         self.resX = size.x
         self.resY = size.y
         self:onResize(self.resX, self.resY)
       end
+
+      -- Say the REAL size once, after the window has settled. This matters more
+      -- than it looks: with `fullscreen = true`, SDL hands back the MONITOR's
+      -- resolution and the loop above adopts it, so `Config.window.width/height`
+      -- is silently ignored — a 1024x768 request on a 4K display renders 4K, at
+      -- 10.5x the pixels. The `Resolution:` line an app prints at boot is read
+      -- BEFORE that sync, so it reports the request, not reality, and cost an
+      -- afternoon of "why is your 1.2 ms different from my 5.6 ms".
+      if not self.__sizeReported then
+        self.__sizeReported = true
+        local reqW, reqH = self:getDefaultSize()
+        if (reqW ~= self.resX or reqH ~= self.resY) and Config.window.fullscreen then
+          printf('Display:  %dx%d  (fullscreen: Config.window.%dx%d is ignored;'
+            .. ' use render.resolutionScale to lower the internal resolution)',
+            self.resX, self.resY, reqW, reqH)
+        end
+      end
+
+      CaptureHarness.report(self.resX, self.resY, perfN, false)
     end)
 
     local timeScale = 1.0
@@ -200,7 +237,22 @@ function Application:run ()
     self:profiled('App.onUpdate', function ()
       local now = TimeStamp.Get()
       self.dt = TimeStamp.GetDifference(self.lastUpdate, now)
+      -- Keep the REAL delta even when dt is pinned. PHX_PERF samples self.dt, so
+      -- without this the two tools are mutually exclusive: PHX_FIXED_DT would
+      -- silently turn every perf sample into the pinned constant (measured: all
+      -- four variants reporting exactly 16.67 ms / 60 fps regardless of quality
+      -- setting). With rawDt preserved, a fixed-framing capture and a real
+      -- frame-time measurement compose.
+      self.rawDt = self.dt
       self.lastUpdate = now
+      -- PHX_FIXED_DT: pin the frame delta. This is the other half of the
+      -- harness, and it matters more than it looks: changing a nebula setting
+      -- changes frame time -> changes the dt history -> changes Bullet's
+      -- settling -> changes where everything is by the dump frame. Two
+      -- "equivalent" W5 runs showed the sun fully visible in one and eclipsed in
+      -- the other purely from this. With dt constant, entity motion at frame N
+      -- is identical regardless of how fast the frame actually ran.
+      if CaptureHarness.fixedDt then self.dt = CaptureHarness.fixedDt end
       self:onUpdate(timeScale * self.dt)
     end)
 
@@ -224,6 +276,14 @@ function Application:run ()
         'render.planet.atmoGlow', 'render.planet.clouds',
         'nebula.enable', 'postfx.godrays.enable', 'postfx.bloom.enable',
         'postfx.exposure.meter', 'postfx.tonemap.enable',
+        'render.resolutionScale', 'render.superSample',
+        -- The medium knobs, because a nebula A/B is worthless without them.
+        -- Measured missing: a Low-vs-High comparison at identical density looked
+        -- like a real inversion (Low brighter) and the only reason it could not
+        -- be diagnosed is that the quality enum was not in this list. A tool
+        -- meant to prove overrides applied has to cover the override.
+        'nebula.quality', 'nebula.density', 'nebula.background',
+        'nebula.coverage', 'nebula.radius', 'nebula.debug',
       }
       for _, k in ipairs(keys) do
         if Settings.exists(k) then
@@ -233,7 +293,9 @@ function Application:run ()
     end
 
     if perfInterval then
-      perfSamples[#perfSamples + 1] = self.dt
+      -- rawDt, not dt: PHX_FIXED_DT pins dt for determinism, and sampling the
+      -- pinned value would report the constant back as a measurement.
+      perfSamples[#perfSamples + 1] = self.rawDt or self.dt
       if perfN % perfInterval == 0 then
         table.sort(perfSamples)
         local mean = 0

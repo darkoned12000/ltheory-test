@@ -26,8 +26,16 @@ local function generateNebulaLightTransport (rng, res, starDir)
       ss:setFloat3('color', C.x, C.y, C.z)
       ss:setFloat4('rot', rot.x, rot.y, rot.z, rot.w)
       -- ss:setFloat3('starDir', starDir.x, starDir.y, starDir.z)
-      local glow = Settings.get('nebula.starGlow')
-      ss:setFloat('starGlow', glow or 0.35)
+      -- `nebula.starGlow` is NOT set here, and setting it would ABORT the engine:
+      -- gen/nebula_emit has no such uniform, and Shader_GetVariable aborts on a
+      -- missing variable (see the trap in ltheory-planets.md 12). This aborted the
+      -- process at boot for any seed that selects the Nebula2 generator -- caught
+      -- by S1 on seed 14112139399293175324.
+      --
+      -- So the Baked Star Glow knob applies to Nebula1 only (gen/nebula.glsl's
+      -- "Central Star"). Nebula2 builds its emission from per-blob `color` +
+      -- `density` + extinction passes instead of baking a star, so giving it the
+      -- knob needs its own formulation -- not a copy of Nebula1's.
       ss:setTexCube('src', buffSrc)
       buffDst:generate(ss)
       ss:free()

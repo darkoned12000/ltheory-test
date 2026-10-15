@@ -190,6 +190,62 @@ the moving node. (See the node-UI doc for the map's own design.)
   `unset WAYLAND_DISPLAY; SDL_VIDEODRIVER=x11`.
 - **Auditioning:** `Config.render.planet.forceType = 'desert'` (etc.).
 
+### 10.1 CaptureHarness — reproducible look/perf captures
+
+`script/phx/util/CaptureHarness.lua`. Env-gated, off unless asked for, and
+**required for any pixel or frame-time A/B** (§11.8 item A1).
+
+| variable | effect |
+|---|---|
+| `PHX_FIXED_DT=0.0166667` | Pin the frame delta. Changing a nebula setting changes frame time → changes the `dt` history → changes Bullet's settling → changes where everything is by the dump frame. This is W5's trap, and it is why two "equivalent" runs showed the sun visible in one and eclipsed in the other. |
+| `PHX_FIXED_VIEW=hold` | Freeze the camera pose from frame 2 and hold it. Fly to a framing you like, then replay it exactly. |
+| `PHX_FIXED_VIEW=log` | Same, and print the frozen pose in a form you can paste back as an explicit spec. |
+| `PHX_FIXED_VIEW=x,y,z,lx,ly,lz[,ux,uy,uz]` | Freeze to an explicit pose (position, look direction, optional up). |
+| `PHX_FIXED_SIZE=1280,720` | Force the window size **and drop `WindowMode.Resizable`**, so the compositor cannot resize it mid-capture. |
+| `PHX_REPORT_SIZE=1` | Print the live render size periodically. |
+
+Implementation notes worth keeping:
+- The freeze goes in `GameView:draw` immediately **before `Camera:beginDraw`**,
+  i.e. after every camera controller has run. `Camera:refreshMatrices` resolves
+  `pos = posOffset + posT` / `rot = rotOffset * rotT`, so writing
+  `posOffset`/`rotOffset` discards the chase camera's contribution for the frame.
+- Pose is captured on **frame 2, not frame 1**: `cam.pos`/`cam.rot` are only
+  resolved inside `beginDraw`, so on frame 1 they are still the constructor's
+  `Identity` — which would silently freeze the camera at the origin.
+- Orientation uses the engine's own `Quat:getForward()` / `getUp()` rather than
+  matrix columns. `CoordTest` asserts the quaternion axes and the matrix lookup
+  columns agree, and `Quat.FromLookUp(look, up)` is the exact inverse, so the
+  round-trip is lossless and the sign convention never has to be guessed.
+
+**Verified** (pinned seed, dump at frame 150):
+
+| | render | sha256 |
+|---|---|---|
+| harness ON, same config, run 1 | 1280×720 | `3c3cdb06b9e8` |
+| harness ON, same config, run 2 | 1280×720 | `3c3cdb06b9e8` |
+| harness ON, density 3.0 → 1.5 | 1280×720 | `ecf1ad8be44e` |
+| harness **OFF**, same config, run 1 | 1885×969 | `0953696b1229` |
+| harness **OFF**, same config, run 2 | 1885×969 | `0156c9acfe46` |
+
+i.e. **bit-identical frames** with the harness on, it still detects a real setting
+change, and without it the same config produces **different** frames — which is
+why every earlier A/B in this doc needed re-checking.
+
+### 10.2 `tools/cmp_capture.py` — the gate
+
+Compares two dumps and **refuses** the comparison unless the frames are actually
+comparable, by reading the `[DUMP] frame=… render=WxH camera=(x,y,z)
+harness=… dt=…` header each capture now prints. Rejects on mismatched render
+size, dump frame, dt pinning, harness state or camera pose (to 1 unit), and warns
+if a supposed A/B came out byte-identical — the signature of an override that
+never applied (§11.3's `PHX_SETTINGS` lesson).
+
+Exit: `0` compared, `1` invalid, `2` identical-frames.
+
+```
+python3 tools/cmp_capture.py shot_a.png shot_b.png [a.log] [b.log]
+```
+
 ## 11. Open work
 
 ### 11.0 Wrap-up plan — the dependency order (START HERE)
@@ -626,7 +682,7 @@ W7 is five unrelated features, so it is ordered rather than listed:
 
 | # | Piece | Depends on | Effort | State |
 |---|-------|-----------|--------|-------|
-| W7a | Planet clouds | — | S | ✅ 2026-10-12 (plumbing + ship; look untuned) |
+| W7a | Planet clouds | — | S | ✅ 2026-10-12 (plumbing + ship); **look signed off by the player 2026-10-15** across several seeds. Three extras still unbuilt — see W7a below. |
 | W7b | Planetary rings | — | M | open |
 | W7c | True biomes | W7a | M | open |
 | W7d | Gas giants | W7c | L | open |
@@ -666,13 +722,20 @@ W7 is five unrelated features, so it is ordered rather than listed:
   high in the field's range, 1.25× albedo). First attempt at 1.6× with a window
   centred on 0.5 blanketed the planet into a bleached shell — `genClouds` returns
   `0.5 + 0.5*sin(...)`, so anything centred near 0.5 covers most of the sphere.
-- **Not done / needs a real test bed:** the seed available at boot puts a huge
+- **Not done / needs a real test bed:** ~~the seed available at boot puts a huge
   planet directly in front of the sun, where the atmosphere shell plus
   auto-exposure already wash the surface to a pale ball *without* clouds. Judge
   the deck on a planet seen with the sun behind the *camera*, or from further
-  out. Also still open: clouds casting shadow on the surface, a cloud *shell*
-  above the terrain for parallax (v1 projects them onto the surface), and rain/
-  storms.
+  out.~~ **Partly resolved 2026-10-15:** auto-exposure no longer exists (§11.6),
+  so that wash attribution is stale and the deck has since been seen on several
+  seeds at `resolutionScale 50%` and read as good — **the look is signed off**.
+  The framing caveat stands for anyone re-judging it: prefer a planet with the
+  sun behind the *camera*, or seen from further out.
+- **Three extras still unbuilt** (these are what "W7a" has left, if anything):
+  clouds casting shadow on the surface, a cloud *shell* above the terrain for
+  parallax (v1 projects the deck onto the surface, so it has no vertical
+  separation), and rain/storms. None blocks W7c; all three are cheap-ish once
+  the shell exists, because shadowing and rain both need it.
 
 **W7b — planetary rings.** The most self-contained piece: a new entity plus a ring
 shader, touching neither the generator nor the surface material, so it cannot
@@ -850,6 +913,11 @@ wrong before I trusted the player's observation that density controls it.
   is the lever if we want it lit like the asteroids.
 - **Lava emission** currently tops out at the albedo clamp — let the emissive
   exceed 1 if we want bloom on molten surfaces.
+- **What ships as the nebula default** (added 2026-10-14, from §11.11). `Config.App`
+  ships rays **off** and a ~0.6× veil versus the tuned preset, and the two sit at
+  different quality tiers whose step counts differ in measured brightness by ~29%.
+  Safe and not broken — but "shipped" currently means "the preset with two things
+  turned down" rather than a look validated in its own right. Needs a taste call.
 
 ### 11.6 Pulling out dead post passes (Distant Haze + Auto-Exposure)
 
@@ -995,13 +1063,17 @@ Two things worth noting:
   for rays that miss every ellipsoid, so most of the frame never marches. That is
   also why the *broken* High was not cheap: it was paying for the anchors and the
   composite, not the sample loop.
-- **The W5 density calibration survives.** `volume.glsl` accumulates the analytic
+- **The W5 density calibration survives.** ~~`volume.glsl` accumulates the analytic
   form `inscatter += tr * (1 - stepTr) * (sigmaS/sigmaT) * light` with
   `tr *= stepTr`, which telescopes to `1 - T_total` over the march — independent
-  of step count. So 20 → 48 steps changes *accuracy*, not brightness, and the
-  density/coverage retune does not need redoing. (It does mean shipped 'Low' now
-  runs 10 steps where it used to run 20, so the default look is slightly thinner
-  and cleaner.)
+  of step count.~~ **CORRECTED 2026-10-14 — this is wrong, and §11.11 has the
+  measurement.** It telescopes correctly *for a constant per-step `light`*, but
+  `step = tCap / volSteps` combined with `exp(-σt·ρ·step)` means a coarse step
+  whose midpoint lands in a plume has `stepTr → 0` and absorbs the whole step at
+  full `light`. Measured: 10 steps reads **24%** brighter than 48 at identical
+  settings, and High additionally loses ~29% to the `volEvals >= 2.5` density
+  mask in `medium.glsl`. So a density tuned at one quality tier reads differently
+  at another — which is exactly what shipped-vs-preset does.
 
 ## 12. Traps (engine-level — cost us time; know them)
 
@@ -1020,6 +1092,32 @@ Two things worth noting:
   resize. Headless dumps came out 936×969, 1691×1232 and 1891×969 on nominally
   identical runs, so **check the actual PNG dimensions before comparing two
   captures pixel-for-pixel**, and match resolution before comparing frame times.
+  Now mechanical: `PHX_FIXED_SIZE` + `PHX_REPORT_SIZE`, and
+  `tools/cmp_capture.py` refuses a mismatched pair outright (§10.1, §10.2).
+  **Worse than stale, though: in fullscreen `Config.window.width/height` is
+  ignored entirely**, because SDL returns the monitor size and the loop adopts it.
+  A 1024×768 request rendered at 3840×2160 — 10.5× the pixels — while the boot log
+  cheerfully printed `Resolution: 1024x768`. `Application` now prints the real size
+  once with the reason; **trust the debug panel's `window:` field, never the
+  `Resolution:` line.** See §11.11.
+- **Measure at the resolution the player actually uses.** Every headless run here
+  is windowed and small; the game runs fullscreen at the monitor's native size.
+  That gap was 6× on frame time and it invalidated reading otherwise-sound
+  numbers as "too fast to be real". Re-run at the real size before believing any
+  frame-time figure (that is what `PHX_FIXED_SIZE` is for).
+- **`PHX_FIXED_DT` and `PHX_PERF` measured the same variable until this was
+  caught.** `PHX_PERF` samples `self.dt`, so pinning `dt` for determinism made
+  every perf sample read back the pinned constant — four nebula variants at
+  quality Low/High all reported *exactly* 16.67 ms / 60 fps. Fixed by keeping
+  `self.rawDt` (the real delta) and having `PHX_PERF` sample that instead, so a
+  fixed-framing capture and a real frame time compose. The signature to watch
+  for is a perf line whose `min == p95 == max`: that is a constant, not a
+  measurement.
+- **A/B evidence needs three things pinned at once, or it is not evidence.**
+  Frame delta, camera pose and window size. Pinning two out of three still gives
+  you a plausible-looking picture that will not reproduce. `CaptureHarness` does
+  all three; the failure mode without them is an image that looks like a result
+  and is actually the chase camera.
 
 - **`Time_GetRaw()` is epoch SECONDS, not milliseconds**
   (`libphx/src/PhxTime.cpp:29`, `time(0)`), *and* it has 1-second granularity so
@@ -1028,7 +1126,12 @@ Two things worth noting:
   timing, add a monotonic ms source — do not divide this one and hope.
 
 - **An unused uniform is optimized out, and setting a missing uniform
-  ABORTS the process** (`Shader_GetVariable`). Hence `mountain`/`crater`/
+  ABORTS the process** (`Shader_GetVariable`) — it is *not* a silent no-op, and
+  reading the Lua will not tell you: §11.10 shipped a `setFloat` on a uniform
+  `gen/nebula_emit` never declared, which crashed boot for any seed taking the
+  Nebula2 path (~1 in 4). Reading code found it; **booting the other path** is
+  what proved it. Any `setFloat`/`setTex*` name must exist in *every* shader that
+  call site can reach. Hence `mountain`/`crater`/
   `valley`/`crack` are passed only to `gen/planet`, and `coef`/`atmoTint`/
   `hasAtmo` are kept genuinely used. **Never** declare a uniform "for symmetry".
 - The **medium noise hash is `fract(sin(x) * c)`** — it loses float precision
@@ -1082,16 +1185,329 @@ Two things worth noting:
 3. Headless boot with a dump; grep for `FATAL` / `attempt to` / `Shader_Get`.
 4. For behaviour, env-gated probes (always reverted before commit).
 5. For look/perf, the debug panel + `Config.gen.seedGlobal` to pin the world.
-6. **Determinism check** (do this whenever you touch a generated texture — it is
+6. **For any look or frame-time A/B, use `CaptureHarness` (§10.1) and compare
+   through `tools/cmp_capture.py` (§10.2).** Concretely:
+   `PHX_FIXED_DT=0.0166667 PHX_FIXED_VIEW=log PHX_FIXED_SIZE=1280,720
+   PHX_REPORT_SIZE=1` on **every** run in the pair, plus `PHX_SETTINGS=1` so you
+   can see the override landed. Without all four, the comparison is not evidence.
+7. **Determinism check** (do this whenever you touch a generated texture — it is
    cheap and it is the check that catches seeded-from-the-clock bugs):
    pin `Config.gen.seedGlobal`, boot twice with an env-gated
    `TexCube_Save/SaveLevel` dump of the generated cube, and `sha256sum` the two
    sets. Identical ⇒ deterministic. This is how W1 was verified.
+8. **Mute audio before any headless boot.** `sfx.engine` is a continuous sound
+   with a 60-unit full-volume radius; spawning NPCs on a dev machine produced an
+   audible hum from it.
 
 ## 14. Non-goals (this pass)
 
 Rings, gas-giant rendering, true biomes, atmosphere entry/landing — see §11.3;
 each is a separate, larger effort, and each is gated behind §11.0 W6.
+
+### 11.9 S1 — speckle watch: CLOSED (measured on all four repro seeds, 2026-10-14)
+
+The player has been unable to reproduce the green speckle since W1/W3, so this
+was re-run as a measurement rather than left as "no reports". `CaptureHarness`
+(§10.1) is what made it cheap: fixed `dt` + pinned camera + fixed size, so each
+seed is a clean repeatable capture.
+
+**Method.** §11.1 characterised the bug as **chromatic** high-frequency noise —
+σ ≈ 2/255 in R and B with G flat, scaling with the nebula's wash brightness —
+against a *brightness* grain that was smooth (high-pass σ ≈ 0.3–0.6%). So the
+test is `(σR+σB)/2 ÷ σG`: ≈1 means no channel is elevated, and the bug would sit
+far above it. Stars and near-white highlights are excluded (a point source is
+chromatically meaningless and would dominate a high-pass statistic). Measured on
+both the fixed sky crop and the **whole frame**, the latter because §11.1 notes
+the speckle is only visible where the scene behind it is smooth and bright — a
+planet disc or limb — and a fixed sky crop would miss a planet that happened not
+to be in it.
+
+Whole-frame result (1280×720, dump at frame 150, all `harness=fixed`):
+
+| seed | sky mean | structure | blown | hp σR | σG | σB | chroma/luma |
+|---|---|---|---|---|---|---|---|
+| test seed (reference, known clean) | 31.3 | 2.07 | 0.000% | 1.10 | 1.00 | 1.01 | 1.05 |
+| `14112139399293175324` | 23.5 | 4.85 | 0.014% | 0.76 | 0.74 | 0.74 | 1.01 |
+| `5742763467356266433` | 54.0 | 1.78 | 0.000% | 0.85 | 1.10 | 0.86 | 0.77 |
+| `11396275097720600019` | 41.9 | 1.78 | 0.000% | 1.09 | 1.07 | 1.35 | 1.14 |
+| `12368961037346951482` | 30.4 | 2.28 | 0.027% | 0.87 | 0.77 | 0.93 | 1.17 |
+
+**All four repro seeds are clean** — every chroma/luma ratio sits at ≈1.0
+(0.77–1.17, scatter either side of unity with no channel systematically high),
+and the high-pass σ on the repro seeds is no larger than on the known-clean
+reference. Blown fractions are ≤0.027%, consistent with ordinary bloom on stars
+and nebula cores, not the limb-glow bug. **S1 is closed.**
+
+Two honest caveats: this is 5 seeds at one dump frame at 1280×720, not a sweep
+over orbit/rotation/distance, so it does not prove the bug can never recur; and
+the §11.1 forensics method stays the right thing to use *if* grain reappears.
+
+### 11.10 S1 found a boot-crash regression (mine, fixed)
+
+Running S1 immediately paid for itself: **one of the four repro seeds aborted the
+process at boot**, before it could be measured.
+
+```
+[system] planet Beterytee  type=barren  moons=0  radius=53752
+Shader_GetVariable: Shader <[vs: vertex/ui , fs: fragment/gen/nebula_emit]>
+  has no variable <starGlow>
+Signal_Handler: Caught Abort
+  ./script/Gen/Nebula/Nebula2.lua(30): <null>
+```
+
+`Nebula2.lua` set `starGlow` on `gen/nebula_emit`, which does not declare it —
+added by commit `8ab0869`. Per §12, `Shader_GetVariable` **aborts the process** on
+a missing variable; it is not a silent no-op.
+
+So this was worse than §11.8's "inert" characterisation, and that
+characterisation was itself wrong: during the §11.7 audit I wrote that setting a
+uniform the program lacks is "harmless per the known trap". It is the opposite,
+and §12 already said so. **Any seed that selects the Nebula2 generator crashes at
+boot** — roughly 1 in 4 of the recorded repro seeds.
+
+Fixed by removing the set. `nebula.starGlow` is Nebula1-only (`gen/nebula.glsl`'s
+"Central Star"); Nebula2 builds emission from per-blob `color`/`density` plus
+extinction passes, so giving it the knob needs its own formulation rather than a
+copy of Nebula1's. Both `Nebula2.lua` and `Config.App` now say so. Re-ran the
+offending seed: boots clean, captures, and is in the S1 table above.
+
+The general lesson, and it is the second time this session: **an audit that only
+reads code will call a missing-uniform bug "inert", because reading the Lua shows
+nothing wrong.** It takes a boot on a seed that takes the other path.
+
+### 11.11 Validating the shipped defaults at Low — and `nebula.quality` changes the ART
+
+Run under `CaptureHarness` (§10.1) with `PHX_SETTINGS=1` so every override is
+provably applied. All four variants produced an **identical camera pose**
+(`-43914.7,-16606.9,228326.3`) at 1280×720 — which is the harness earning its
+keep, since four different quality/density settings all freezing to the same pose
+is exactly the property that was missing before.
+
+#### The step sweep: `quality` is not a quality knob
+
+Everything held at the preset values (density 3.0, background 0.10, coverage 1.6,
+god-rays on), varying only quality:
+
+| quality | volume steps | volume evals | sky mean | structure |
+|---|---|---|---|---|
+| Off | pass skipped | – | 31.1 | 3.17 |
+| Low | 10 | 2 | **52.7** | 2.02 |
+| Medium | 20 | 2 | **53.0** | 2.04 |
+| High | 48 | **3** | **28.3** | 2.29 |
+| *High, evals forced to 2* | 48 | 2 | **40.0** | 1.86 |
+
+Two separate effects, and neither is "quality" in the sense the label implies:
+
+1. **`volEvals >= 2.5` multiplies the background density by a second smoothstep.**
+   `medium.glsl:43-46`, taken only at High:
+   ```glsl
+   float d = smoothstep(0.30, 0.72, 0.66 * a + 0.34 * b);
+   if (volEvals >= 2.5) {
+     float m = smoothNoise(p * 0.0006 + b * 3.0);
+     d *= smoothstep(0.25, 0.9, m);   // mean ~0.33 => cuts density ~3x
+   }
+   ```
+   `smoothNoise` averages ~0.5, and `smoothstep(0.25, 0.9, 0.5)` ≈ 0.33, so High
+   **dims the everywhere-field by roughly 3×**. Isolated by forcing High's evals
+   to 2: sky mean **28.3 → 40.0**. A resolution/budget tier should not change the
+   density; this one does. **This is the defect.**
+2. **Coarse steps over-absorb thin gas, so Low is genuinely brighter.** 10 → 20
+   steps is worth +0.6% (negligible), but 20 → 48 steps is **−24%**. The
+   mechanism is `step = tCap / volSteps` with `stepTr = exp(-σt·ρ·step)`: at Low a
+   step is 1400 units, so a *single* sample landing in a plume drives `stepTr → 0`
+   and that one sample absorbs the whole step and contributes full `light`. Fine
+   steps resolve the plume and share the absorption. So the integral is *not*
+   step-count independent, which §11.7 got wrong.
+
+**Correction to §11.7:** that section concluded "the marching integral is
+step-count independent, so the W5 density calibration survives" and advised
+*against* re-running the sweep. **That was wrong** — measured, 10 steps reads
+24–29% brighter than 48 at identical settings, and the dominant term was a
+density *mask*, not the quadrature. The advice was right in spirit (don't re-run
+the old sweep) and wrong in its reason, which is worse, because the reason is what
+you would reuse.
+
+#### God-rays at the physical gain are invisible
+
+`def_low` (rays off) and `def_low_rays` (rays on), both `nebula.density = 1.5`,
+produced **byte-identical** metrics (37.2 / 2.19 / 1.19 / 1.12 / 1.15), and
+`PHX_SETTINGS` confirmed the toggle landed (`false` / `true`). At strength 1.0 —
+the physically-correct gain — **the shafts contribute nothing measurable**.
+
+That is the honest consequence of the §11.6 fix: W5 called the rays "the
+dominant lever" (21.5 → 40.7), but that was at **strength 8**, ~190× the sun's
+radiance. At strength 1 they are correct and invisible. **W5's "rays on at 8"
+preset is therefore no longer a calibration** — it was calibrated against a gain
+that has since been removed as unphysical, and the density/coverage numbers were
+chosen *around* it.
+
+#### You were never rendering at the resolution you configured
+
+The player's own debug-panel snapshot said `window: 3840x2160` while its boot log
+said `Resolution: 1024x768`. Both were true and the gap was the whole mystery:
+`LTheory.lua` prints `resX/resY` **once at boot, before the window syncs**, and
+`Application` then adopts the window's real size every frame. With
+`Config.window.fullscreen = true` SDL hands back the **monitor's** resolution, so
+`Config.window.width/height` is **silently ignored** — a 1024×768 request on a
+4K display renders 3840×2160, which is **8.29 MP instead of 0.79 MP, 10.5× the
+pixels**.
+
+That is why `PHX_PERF` reported 0.9–1.4 ms while the player's panel read 5.6 ms:
+both were correct, at 1280×720 windowed and 3840×2160 fullscreen respectively.
+Re-run at the player's real size, the harness reproduces their number to within
+3% (5.77 vs 5.61 ms), which is what confirmed the diagnosis rather than assuming it.
+
+Measured at 3840×2160, debug panel on, harness-pinned:
+
+| quality | nebula ON | nebula OFF | nebula delta | fps on → off |
+|---|---|---|---|---|
+| Low | 5.77 ms | 4.76 ms | **+1.0 ms** | 173 → 210 |
+| High | 9.34 ms | 4.86 ms | **+4.4 ms** | 107 → 206 |
+
+The debug panel is **not** a factor (0.2–0.3 ms). The nebula's cost scales with
+pixels — **+0.55 ms at 0.79 MP, +4.4 ms at 8.29 MP** — and is **~48% of the frame
+at High**, which is exactly the "lose 50–100 fps" the player had been feeling.
+
+**Applied:** `Config.gpu.resolutionScale = '50%'` (renders 1920×1080, upscales on
+present) and `nebulaQuality = 'Low'`. `Application` now prints the real size once
+with the reason, so this cannot mislead again:
+
+```
+Display:  3840x2160  (fullscreen: Config.window.1024x768 is ignored;
+ use render.resolutionScale to lower the internal resolution)
+```
+
+Result at 4K window / 1920×1080 internal / Low / panel on:
+
+| | mean | fps |
+|---|---|---|
+| nebula ON | **1.68 ms** | 594 |
+| nebula OFF | 1.56 ms | 641 |
+| *(before: 4K native, Low)* | 5.77 ms | 173 |
+
+**3.4× faster**, and the nebula now costs **0.12 ms** instead of 1.0 ms. Note
+`resolutionScale` bottoms out at 50% (1920×1080), so **1024×768 is not reachable
+in fullscreen** — going windowed at 1024×768 is the only way to get exactly the
+configured size.
+
+**Standing caveat:** every frame-time figure in this doc — W5's "3.02–3.19 ms",
+§11.7's sweep, §11.11's numbers — was measured at a *headless windowed* size,
+never at the player's 4K fullscreen. They are internally comparable but do not
+represent what the player actually experiences. Re-measure anything load-bearing
+at the real size.
+
+#### What the shipped defaults actually are
+
+`Config.App` ships `godraysEnabled = false` — so the shipped experience has **no
+shafts at all**, and per the point above, enabling them at strength 1 would change
+almost nothing. Shipped veil proxy (`density² × background × coverage/2 × radius`)
+is **0.62×** the tuned preset.
+
+| variant | sky mean | structure | frame blown |
+|---|---|---|---|
+| shipped defaults @ Low, rays off | 37.2 | 2.19 | 0.000% |
+| shipped defaults @ Low, rays on | 37.2 | 2.19 | 0.000% |
+| tuned preset @ Low | 52.7 | 2.02 | 0.000% |
+| tuned preset @ High | 28.3 | 2.29 | 0.000% |
+
+**Conclusion: the shipped defaults are safe but were never validated and are now
+known to be inconsistent with the preset in two ways** — a ~0.6× veil *and* a
+different quality tier whose step count moves brightness by ~29%. Nothing is
+blown and nothing is wrong-looking, so this is not urgent; but "the shipped
+default" is currently "the preset with two things turned down", not a tuned look
+in its own right. Deciding what ships is a taste call, and §11.5 now has a third
+entry for it.
+
+### 11.8 Closing this out — what is left, and the order to do it in
+
+State as of 2026-10-14. **W7a is the last thing landed**, so W7 is one-fifth
+done and the doc is not closeable yet. This is the consolidated list; the
+recommended order is §15.4.
+
+**A. Verification debt — cheap, and it gates everything visual**
+
+| item | why it matters | state |
+|---|---|---|
+| **Fixed-camera harness** | Every look A/B in this doc was taken under a moving camera and a drifting window size. W5 concluded it was needed; §11.6/§12 later proved it twice more. Without it, measurements are only valid *within* a family of identical frame cost. | ✅ **2026-10-14** — see §10.1/§10.2. Bit-identical frames across runs, verified. |
+| **S1 speckle watch** | The §11.1 fix was verified on **one** of four recorded repro seeds. | ✅ **2026-10-14** — all four clean, measured. See §11.9. |
+| **Re-validate the shipped `Config.App` defaults** | W5 calibrated at High and deliberately shipped `Config.App` unvalidated (density 1.5 / background 0.2 / coverage 2.0 at Low). §11.7 then changed what Low *renders* (10 steps, was 20), so the "re-tune with the harness" note is now doubly out of date. | open |
+
+**B. W6 — FPS, properly**
+
+§11.3's gate claims 3.7 ms/frame at 1024×768 with "the volumetric pass is 30% of
+the frame". Two problems: it was measured on an **empty** system, and §11.7's
+sweep put the nebula at **+1.07 ms of a 2.37 ms frame at High — about 45%**. So
+the figure is stale and the load W6 was supposed to profile (hundreds/thousands
+of asteroids, 10–50 NPCs) was never applied. W6's real content is a re-measure
+under load, plus `render.resolutionScale` / supersampling as the real levers
+(§11.2). Partially advanced by §11.6 (meter gate, −0.9 ms).
+
+**C. W7 remainder**
+
+| piece | depends on | effort | notes |
+|---|---|---|---|
+| W7a polish | — | S | look untuned; cloud shadows, a cloud *shell* for parallax (v1 projects onto the surface), rain/storms all unbuilt. Needs a planet seen **sun-behind-camera** — §11.3 notes the boot seed puts a planet in front of the star. |
+| W7b rings | **W8** | M | most self-contained (new entity + shader; touches neither generator nor surface material). **Do W8 first** or the inner radius derives from an untamed radius. |
+| W7c biomes | W7a | M | consumes the dead `genColor` channel. The hard part is continuity, not the lookup — biomes must *blend*, never switch (`procedural-space-environment.md` §7). |
+| W7d gas giants | W7c | L | banded generator + no-solid-surface path. Explicitly the expensive one; must not start before W6 is re-measured with load. **⛔ deferred 2026-10-14** (see below). |
+| W7e atmosphere entry | — | L | gameplay, not rendering, and blocked by nothing. `exp(-altitude/scaleHeight)` → drag/lift → landing zones. **⛔ deferred 2026-10-14.** |
+
+**D. W8 — planet scale** (§11.4). Independent of all lighting work.
+`Config.gen.scalePlanet` is dead config; planets are `1e5 * erlang(2)` against
+`kSystemScale = 10000` and can engulf the system. **Done when** the config is
+honoured as the base and no seed produces a planet that swallows the belt.
+
+**E. Loose ends found during the §11.6/§11.7 audit — deferred to the planned
+`.glsl` review, recorded so they are not lost**
+
+- `res/shader/fragment/gen/nebula2.glsl`, `nebula3.glsl`, `nebula4_weak.glsl` —
+  **zero references anywhere**; only `gen/nebula`, `gen/nebula_emit`,
+  `gen/nebula_absorb` are loaded. The `starGlow` uniform was added to all three
+  in commit `8ab0869` for nothing. Delete or wire.
+- `nebula.starGlow` is **inert for Nebula2 sectors**: `Nebula2.lua` sets it on
+  `gen/nebula_emit`, which does not declare it. Only `gen/nebula` (Nebula1, the
+  IFS skybox) honours it.
+- `gen/clouds_cube.glsl` still in the tree hardcoding `seed = 1337.0` and
+  unreferenced — W7a made it unnecessary.
+- `genColor` in `gen/planet.glsl`: a 12-iteration fractal per texel read by
+  nothing. W7c consumes it; until then every planet cube pays for it.
+- Dead uniforms with working in-shader fallbacks (harmless, not bugs):
+  `bloompre.maxBrightness` (falls back 5.0), `tonemap.lensDirtStrength` /
+  `lensDirtTex` (stub at 0.0).
+- **The baked Central Star amplitude is still unevaluated** (§11.3, part 1). The
+  `nebula.starGlow` knob exists (0.35) but nobody has looked at the result. It
+  changes the sky *and* everything `irMap` convolves from it.
+- §11.3's W7a note blames "the atmosphere shell plus auto-exposure" for washing
+  out the surface — auto-exposure no longer exists (§11.6); re-check that
+  judgement.
+- §11.2's "Low/Med/High = 10/20/48" was **wrong until §11.7 fixed it**; it is
+  right now, and `Low` genuinely runs 10 steps for the first time.
+
+**F. Two pending decisions** (§11.5) — these need a human to pick a side, they
+are not tasks: the `Material.Metal` ship hull (specular-only → silhouettes), and
+lava emission topping out at the albedo clamp (bright colour, not HDR bloom).
+
+**On "done":** closing this doc means A, C(W7a polish + W7b + W7c), D and the two
+§11.5 decisions are resolved.
+
+**Decision taken 2026-10-14 — W7d (gas giants) and W7e (atmosphere entry /
+landing) are deferred out of this pass**, and **W7b (planetary rings) is
+wanted**. So the scope of "done" for this doc is now:
+
+- **in scope:** the fixed-camera harness, S1, re-validated shipped defaults, W6
+  under load, W8, W7a polish, **W7b rings**, W7c biomes, and the two §11.5
+  look decisions.
+- **deferred, explicitly:** W7d and W7e. Both are blocked by nothing in §11.0
+  and both are larger than everything in scope combined — they are *new feature
+  work*, not finishing the planet pass. They move to a follow-up doc rather than
+  silently disappearing, and W7d still should not start before W6's budget is
+  re-measured with real load.
+
+**Note the dependency this keeps:** W7c (biomes) is listed as depending on W7a,
+and W7d depended on W7c — deferring W7d means W7c is now the **last** item in
+scope rather than a stepping stone, so its continuity work (§7 of
+`procedural-space-environment.md`) is worth doing properly rather than as a
+stepping stone to something bigger.
 
 ---
 
@@ -1103,4 +1519,42 @@ each is a separate, larger effort, and each is gated behind §11.0 W6.
 3. Take the next item off the table, not the next interesting idea. W2/W3/W4/W8
    are independent of each other and can be done in any order; W5 must follow
    W3+W4, W6 must follow W5, W7 follows W6.
+
+### 15.4 Recommended order from here (2026-10-14)
+
+The doc's original dependency order (W6 before W7) has been overtaken by what
+§11.6/§11.7 turned up: **measurement came before the profiling it was supposed
+to inform**, and every item in group A below is cheap and unblocks the rest.
+
+1. **Fixed-camera harness** — the highest-value small piece in the whole doc.
+   It is the precondition for item 2 and for any further look tuning, and it has
+   now invalidated measurement three separate times (§11.3 W5's `dt`-drift trap,
+   §11.3's "one batch came out 841×1232 portrait", §12's stale `Resolution:`).
+   ✅ **Done 2026-10-14** — `CaptureHarness` + `tools/cmp_capture.py` (§10.1,
+   §10.2), verified to produce bit-identical frames across runs.
+2. **Re-validate the shipped defaults at Low, and run S1** on the three
+   unverified speckle seeds — both are now one harness run each, and both are
+   trustworthy for the first time. ✅ **Done 2026-10-14** — S1 closed on all four
+   seeds (§11.9); the defaults validation found a **boot-crash regression** (§11.10)
+   and that **`nebula.quality` changes the rendered density, not just the
+   sampling** (§11.11). The open question that fell out is a taste call now
+   logged as a third §11.5 decision.
+3. **W6 for real** — re-measure under the asteroid/NPC load it never profiled.
+4. **W8** — independent of all lighting work, and doing it next unblocks rings,
+   whose inner radius currently derives from an untamed radius.
+5. **W7b rings** — the most self-contained piece of W7; new entity + shader,
+   touching neither the generator nor the surface material, so it cannot break
+   the existing look.
+6. **W7c biomes** — consumes the dead `genColor` channel; needs W7a's plumbing
+   and continuity-aware blending. This is now the **last item in scope**, so its
+   continuity requirement deserves a proper pass rather than a token one.
+7. ~~W7d / W7e~~ — **deferred 2026-10-14**, out of this pass (§11.8).
+
+The `.glsl` dead-code review (§11.8 E) is deliberately *not* in this list: it is
+orthogonal, touches no behaviour, and should ride with a dedicated pass rather
+than be smuggled between items.
+
+**Do not** re-run the W5 density sweep. §11.7 established that the marching
+integral is step-count independent, so the calibration still holds; the sweep
+would only re-measure the harness, not the look.
 

@@ -14,8 +14,22 @@ Config.render.vsync = false
 
 Config.window.fullscreen = true
 
+-- `Config.window.width/height` (1024x768) are IGNORED in fullscreen: SDL hands
+-- back the monitor's resolution and Application adopts it, so this was rendering
+-- at 3840x2160 = 8.29 MP, not 0.79 MP. The boot log's `Resolution:` line reports
+-- the *request*, not reality -- the debug panel's `window:` field is the live
+-- size. Measured there (panel on, harness-pinned):
+--     3840x2160, nebula Low : 5.77 ms / 173 fps
+--     3840x2160, nebula High: 9.34 ms / 107 fps
+-- The nebula alone is ~48% of the frame at High and its cost scales with pixels
+-- (+0.55 ms at 0.79 MP, +4.4 ms at 8.29 MP).
+--
+-- resolutionScale is the only working lever at 4K: it renders below window size
+-- and upscales on present. 50% => 1920x1080 internal.
+Config.gpu.resolutionScale = '50%'
+
 -- Manually set the universe seed (do not delete)
-Config.gen.seedGlobal = 13358375402019159601ULL
+-- Config.gen.seedGlobal = 13358375402019159601ULL
 
 
 -- Config.gen.nBeltSize = function (rng) return 10000 end
@@ -56,7 +70,11 @@ end
 -- coverage down. W3's ellipsoid plumes cost ~15% of sky brightness here, not
 -- the ~30% the doc predicted.
 Config.gpu.nebulaEnabled  = true
-Config.gpu.nebulaQuality  = 'High'    -- volume 48 / god-ray 40 march steps (needs a real GPU)
+Config.gpu.nebulaQuality  = 'Low'     -- was 'High'. High costs ~4.4 ms/frame at 4K (48% of
+                              -- the frame) and the extra steps buy little: see
+                              -- ltheory-planets.md 11.11, where Low/Medium read
+                              -- identically (52.7 vs 53.0 sky) and High's only real
+                              -- difference is a density mask that makes it DIMMER.
 Config.gpu.nebulaDensity  = 3.0       -- medium gain (panel: 0..4)
 -- Everywhere-field presence. `density` scales sigma_t AS WELL AS the medium
 -- density, so the sky veil is quadratic in it:

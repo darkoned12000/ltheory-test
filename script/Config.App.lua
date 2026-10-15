@@ -284,11 +284,18 @@ Config.gpu = {
   nebulaCoverage = 2,          --   bank size/density multiplier (0.25..2.5)
   nebulaRadius   = 14000,      --   max march distance, world units
   nebulaG        = 0.4,        --   Henyey-Greenstein phase (phase 1.5 tune-up)
-  nebulaStarGlow  = 0.35,      --   Central Star baked into the envMap cube at generation
-                          --   time. Was hardcoded 8.0/4.0 (a 12x peak that clipped
-                          -- to solid white over a broad patch of sky). Changing it
-                          -- needs a relaunch; the cube is generated once and
-                          -- also feeds irMap, so it moves ambient lighting too.
+  nebulaStarGlow  = 0.35,      --   Central Star baked into the envMap cube at
+                          --     generation time. Was hardcoded 8.0/4.0 (a 12x peak
+                          --     that clipped to solid white over a broad patch of
+                          --     sky). Changing it needs a relaunch; the cube is
+                          --     generated once and also feeds irMap, so it moves
+                          --     ambient lighting too.
+                          --     NEBULA1 ONLY. The Nebula2 generator builds its
+                          --     emission from per-blob colour/density plus
+                          --     extinction passes and has no such uniform --
+                          --     setting one ABORTS via Shader_GetVariable (see
+                          --     ltheory-planets.md 12), which crashed boot for
+                          --     any seed taking that path until 2026-10-15.
   nebulaTint     = 0.0,       --   inscatter tint mix (0..1)
   nebulaTintR    = 1.0,          --     1 = warm (1, .6, .2)
   nebulaTintG    = 1.0,

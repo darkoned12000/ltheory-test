@@ -8,6 +8,7 @@ local rsTable = { 1.0, 0.85, 0.75, 0.67, 0.50 }
 local Batcher = require('Game.Batcher')
 local NebulaVolumes = require('Game.NebulaVolumes')
 local LightningStorm = require('Game.LightningStorm')
+local CaptureHarness = require('phx.util.CaptureHarness')
 
 -- PHX_DEBUG_DUMP=<frame> : save pipeline checkpoints to PNGs once, at that frame.
 -- Set PHX_DEBUG_DUMP=120 to snapshot ~2s after boot.
@@ -399,6 +400,17 @@ function GameView:draw (focus, active)
         GameView.__dumpLit = nil
       end
       GameView.__dump = function ()
+        -- Self-describing capture: the PNG's own dimensions, the live camera
+        -- pose and the frozen-vs-live state. A pixel comparison between two
+        -- dumps is only valid if these agree, and this is what makes checking
+        -- them mechanical instead of a thing you have to remember.
+        local t = self.renderer.buffer0:getSize()
+        io.stderr:write(string.format(
+          '[DUMP] frame=%d render=%dx%d camera=%s harness=%s dt=%s\n',
+          GameView.__dumpFrame, t.x, t.y,
+          string.format('(%.1f,%.1f,%.1f)', self.camera.pos.x, self.camera.pos.y, self.camera.pos.z),
+          CaptureHarness.viewActive() and 'fixed' or 'live',
+          tostring(CaptureHarness.fixedDt or 'unpinned')))
         mkDump('3_final')(self.renderer.buffer0)
         GameView.__dump = nil
       end
@@ -412,6 +424,15 @@ function GameView:draw (focus, active)
   ClipRect.PushDisabled()
   RenderState.PushAllDefaults()
   self.camera:setViewport(x, y, sx, sy)
+  -- PHX_FIXED_VIEW: freeze the camera here, i.e. AFTER every camera controller
+  -- has run for the frame and immediately BEFORE beginDraw resolves the pose.
+  -- Camera:refreshMatrices does `pos = posOffset + posT` / `rot = rotOffset *
+  -- rotT`, so writing posOffset/rotOffset discards the chase camera's
+  -- contribution and pins the result. Without this the chase camera keeps
+  -- drifting between runs and pixel comparisons are meaningless (see
+  -- ltheory-planets.md 11.3's dt-drift trap and 11.8).
+  CaptureHarness.freezeCamera(self.camera, self.__harnessFrame)
+  self.__harnessFrame = (self.__harnessFrame or 0) + 1
   self.camera:beginDraw()
 
   -- A destroyed controlling ship detaches from the tree, so player:getRoot()
