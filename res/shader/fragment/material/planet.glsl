@@ -55,6 +55,21 @@ vec3 localToWorldDir (vec3 l) {
   return planetAxisX * l.x + planetAxisY * l.y + planetAxisZ * l.z;
 }
 
+// Rodrigues rotation of a DIRECTION about the body's spin axis. This is the
+// cloud drift. Three properties the old `normalize(dir + D*drift)` construction
+// did not have, and all three were bugs:
+//   * isometric -- |out| == |in| exactly, so the sample direction can never be
+//     dominated (and never collapses toward a fixed direction),
+//   * periodic in `ang`, so it wraps mod 2*pi rather than growing without bound,
+//   * constant angular rate, rather than decaying like atan(D).
+// There is no tangent frame here at all, so nothing can be discontinuous across
+// a latitude circle.
+vec3 driftRotate (vec3 d, float ang) {
+  vec3 a = normalize(planetSpinAxis);
+  float c = cos(ang), s = sin(ang);
+  return d * c + cross(a, d) * s + a * dot(a, d) * (1.0 - c);
+}
+
 const float kSpecular = 1.0;
 const vec3 kOceanColor = vec3(0.01, 0.13, 0.20);
 
@@ -119,12 +134,28 @@ void main() {
   // (low-octave) height over a WIDE step: the gradient must stay low-frequency
   // or it aliases into shimmer at 1x sampling (which only supersampling hid).
   float hr = heightFn(map.x, 3, 0.5);
-  vec3 T = normalize(cross(N, (abs(N.y) < 0.9) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+  // Relief tangent frame, built from the planet's SPIN AXIS for the same reason
+  // the cloud drift is (11.14): this used to be
+  //     cross(N, (abs(N.y) < 0.9) ? vec3(0,1,0) : vec3(1,0,0))
+  // whose branch boundary is the latitude circle |N.y| = 0.9 (asin 0.9 = 64.2
+  // deg) -- and cross(N,+Y) and cross(N,+X) are unrelated, so the height gradient
+  // below SHEARED discontinuously there. That is a visible arc in the TERRAIN
+  // shading, near the top of the disc, and it predates the cloud work entirely.
+  vec3 rAx   = normalize(planetSpinAxis);
+  vec3 tRaw  = cross(N, rAx);
+  float rTl  = length(tRaw);
+  // rTl is tiny only within a fraction of a degree of the spin pole, so the
+  // fallback branch covers a single point -- and reliefFade zeroes the
+  // perturbation there anyway, so the branch can never be seen.
+  vec3 T = (rTl > 1e-3) ? tRaw / rTl : cross(N, vec3(1.0, 0.0, 0.0));
   vec3 B = cross(N, T);
   float eps = 0.004;
   float hU = heightFn(texture(surface, normalize(vertPos + T * eps)).x, 3, 0.5);
   float hV = heightFn(texture(surface, normalize(vertPos + B * eps)).x, 3, 0.5);
-  vec3 Np = normalize(N - relief * ((hU - hr) * T + (hV - hr) * B));
+  // Fade the perturbation out where the tangent is undefined ("eastward" has no
+  // meaning at the pole) so nothing can pop there.
+  float reliefFade = smoothstep(0.0, 0.05, rTl);
+  vec3 Np = normalize(N - relief * reliefFade * ((hU - hr) * T + (hV - hr) * B));
 
   float NL = dot(Np, L);
   // Terminator shape. The old curve, exp(-(1-NL)^4), stays within 6% of full
@@ -177,43 +208,31 @@ void main() {
   // casting a shadow at P is the one along the sun ray, not the one overhead --
   // but both must apply the drift to a UNIT DIRECTION, or they desynchronise.
   // See the shadow sample below.)
-  vec3 cloudDrift = vec3(0.0);
+  float cloudDriftAng = 0.0;
   float cloudShade = 1.0;
   vec3 nl0 = normalize(vertPos);
   if (clouds > 0.001) {
-    // Tangent basis for the drift, built from the body's own SPIN AXIS.
+    // Drift is a ROTATION about the body's own spin axis, not a translation.
     //
-    // The previous form picked a reference axis with a ternary:
-    //     cross(nl0, (abs(nl0.y) < 0.9) ? vec3(0,1,0) : vec3(1,0,0))
-    // which switches from +Y to +X at |nl0.y| = 0.9. But cross(n, +Y) and
-    // cross(n, +X) are UNRELATED directions -- not two approximations of the
-    // same vector -- so the drift basis jumps discontinuously across the
-    // latitude circle at asin(0.9) = 64.2 degrees. That projects as a hard arc
-    // near the top of the disc, and it is invisible at wind 0 only because
-    // cloudDrift is zero there. This was reported as "the circle" and survived
-    // one earlier fix, because that fix addressed drift MAGNITUDE, not the
-    // basis it was measured against.
+    // The old form built a tangent basis and did `normalize(dir + D*driftdir)`
+    // with D = cloudTime * cloudWindRate growing without bound. Because
+    // normalize() discards magnitude, every fragment's sample direction tends to
+    // driftdir as D grows -- and driftdir sits at a FIXED angle off the
+    // equatorial plane. So all latitudes collapsed together: +80 and -80 degrees
+    // both landed at -21.8, the equator at 0, and the whole deck squeezed into one
+    // band. That is the "wind going down a drain" -- it got worse as the Wind
+    // slider rose, because a larger rate reaches the collapse sooner.
     //
-    // Using the spin axis makes the basis continuous everywhere except the two
-    // pole points themselves, and gives the drift a real meaning: winds run
-    // along lines of latitude ("eastward") instead of an arbitrary tangent. The
-    // axis is valid in local space unchanged -- the body rotates ABOUT it, and a
-    // rotation about an axis leaves that axis invariant.
-    vec3 ax  = normalize(planetSpinAxis);
-    vec3 raw = cross(nl0, ax);
-    float tl = length(raw);
-    // Degenerate only exactly AT a pole, not along a latitude circle. Fade the
-    // drift out over the last few degrees so the residual singularity (where
-    // "eastward" is undefined) cannot show.
-    vec3 dtl  = (tl > 1e-4) ? raw / tl : normalize(cross(nl0, vec3(1.0, 0.0, 0.0)));
-    vec3 dbl  = cross(nl0, dtl);
-    float polarFade = smoothstep(0.0, 0.06, tl);
-    // Prevailing drift: mostly along the tangent with a little across it, so the
-    // deck does not read as a rigid rotation of the whole pattern. The RATE is
-    // cloudWindRate (rad/s, derived from this planet's spin) rather than a fixed
-    // constant -- see the note in Planet.lua on why an absolute rate was
-    // invisible against a 0.01-0.05 rad/s spin and varied 5x between worlds.
-    cloudDrift = normalize(dtl + dbl * 0.4) * (cloudTime * cloudWindRate) * polarFade;
+    // A rotation has none of those problems: it is an ISOMETRY (|d| stays 1), it
+    // is periodic in the angle so it wraps mod 2pi instead of growing, and its
+    // angular rate is constant forever instead of decaying as atan(D). Zonal
+    // drift is also the physically dominant term, and it correctly goes to zero
+    // at the poles on its own.
+    //
+    // It also removes the tangent basis entirely, which is what produced the
+    // "circle" in 11.14 -- there is no longer a per-fragment frame to be
+    // discontinuous.
+    cloudDriftAng = cloudTime * cloudWindRate;
   }
   if (clouds > 0.001 && cloudHeight > 1e-6 && cloudShadow > 0.001) {
     // starDir is WORLD space (it points at the star and does not spin with the
@@ -243,7 +262,7 @@ void main() {
         // -- shifts by the full 0.1 rad. The two desynchronise and the shadow
         // reads as a second sphere counter-rotating against the clouds above it.
         // This was invisible at cloudWind = 0 because neither term moved.
-        vec3 sp = normalize(normalize(vertPos + Ll * t) + cloudDrift);
+        vec3 sp = driftRotate(normalize(vertPos + Ll * t), cloudDriftAng);
         float sd = texture(surface, sp).z;
         float scov = smoothstep(0.70 - 0.20 * clouds, 0.95 - 0.20 * clouds, sd);
         cloudShade = 1.0 - cloudShadow * scov * shFade;
@@ -323,7 +342,7 @@ void main() {
     // Drift comes from the surface tangent basis, built once above so the deck
     // and the shadow it casts share one field. Rebuilding a basis from cloudL
     // here would shear the deck against its own shadow at every altitude.
-    float cd = texture(surface, normalize(cloudL + cloudDrift)).z;
+    float cd = texture(surface, driftRotate(cloudL, cloudDriftAng)).z;
     // Coverage window sits HIGH in the field's range: genClouds returns
     // 0.5 + 0.5*sin(...), so a window centred near 0.5 blankets the planet and
     // reads as a bleached shell with the surface only as dark blotches. Biomes
@@ -345,7 +364,8 @@ void main() {
     // convective cells as DARKER than the surrounding deck -- thick anvils
     // absorb, they do not scatter more -- so storminess multiplies the deck
     // albedo down rather than brightening it.
-    float stormField = fSmoothNoise(cloudL * 3.1 + cloudDrift * 0.5 + vec3(91.3, 17.7, 43.1), 3, 2.0);
+    float stormField = fSmoothNoise(driftRotate(cloudL, cloudDriftAng * 0.5) * 3.1
+                                    + vec3(91.3, 17.7, 43.1), 3, 2.0);
     float storm = smoothstep(0.50, 0.80, stormField) * stormAmount;
 
     // Intra-cloud lightning. Quantise the (drifted) sample direction into storm
@@ -361,7 +381,7 @@ void main() {
     // reaches an edge and the grid can never be seen.
     const float cellSize = 0.15;   // ~8 deg across, i.e. storm-cell scale
     const float winDur   = 1.6;
-    vec3  cellC = (cloudL + cloudDrift) / cellSize;
+    vec3  cellC = driftRotate(cloudL, cloudDriftAng) / cellSize;
     vec3  cell  = floor(cellC);
     vec3  cf    = fract(cellC);
     // A NARROW peak. The window was 0.30-0.70, which leaves a wide flat top, so
@@ -388,7 +408,7 @@ void main() {
     // a faint grey patch. High contrast on purpose -- a real intra-cloud flash
     // is a small bright speck, not a dim even wash, and low-contrast modulation
     // left the cell readable as a shape when magnified.
-    float flick = 0.12 + 0.88 * fSmoothNoise((cloudL + cloudDrift) * 7.0
+    float flick = 0.12 + 0.88 * fSmoothNoise(driftRotate(cloudL, cloudDriftAng) * 7.0
                                               + vec3(cloudTime * 3.0), 3, 2.0);
     float flash = env * storm * cov * cellWin * flick * stormFlash;
 

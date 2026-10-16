@@ -1730,6 +1730,76 @@ and it is not what was originally sketched. Recommendation: **skip it**, take
 **W8 (planet scale)** next, which unblocks **W7b rings** — the item the player
 specifically asked for — and revisit storms later if the sky still wants it.
 
+### 11.15 The wind "going down a drain" — unbounded drift collapsed the deck (2026-10-16)
+
+Player report, playing with the Wind slider: *"the wind seems to act like it's
+going down a drain, converging to one area as you move the slider"*, localised to
+the right side of the planet, mid-to-lower. It got **worse** as the slider rose.
+
+Cause: the drift was applied as `normalize(dir + D*driftDir)` with
+`D = cloudTime * cloudWindRate`, growing without bound. `normalize()` discards
+magnitude, so as `D` grows every fragment's sample direction tends toward
+`driftDir` — and `driftDir` sits at a **fixed** angle off the equatorial plane
+(`atan(0.4) = 21.8°`, from the old 0.4 cross-latitude term). Every latitude
+therefore collapsed toward the same band:
+
+| fragment latitude | sample latitude as \|D\|→∞ | compression |
+|---|---|---|
+| +80° | −21.5° | −101.5° |
+| +40° | −13.8° | −53.8° |
+| 0° | 0.0° | 0 |
+| −40° | +13.8° | +53.8° |
+| −80° | +21.5° | +101.5° |
+
+Both poles and the whole deck squeezed into one band. A larger Wind slider means
+a larger rate, which reaches the collapse sooner — exactly the reported
+behaviour, and why it only showed once a session had run long enough for `D` to
+grow.
+
+Fix: the drift is now a **rotation about the spin axis** (Rodrigues), shared by
+all four consumers (deck, shadow, storm field, lightning cells). Three properties
+the translation lacked, all of them bugs:
+
+- **isometric** — `|d|` stays exactly 1, so no sample can ever be dominated, and
+  two fragments can never converge (check V1: worst `|len|-1` = 2.2e-16 at angles
+  up to 5000 rad; V3: +70° and −70° keep a separation of exactly 2.4435 rad at
+  *every* drift angle),
+- **periodic** — wraps mod 2π rather than growing without bound (V2),
+- **constant angular rate** — instead of decaying like `atan(D)`, which was the
+  "known limit" recorded in 11.2 and is now simply gone.
+
+It also removes the tangent frame entirely, so the 11.14 circle class cannot recur
+in the drift. Zonal drift is the physically dominant term anyway, and it
+correctly goes to zero at the poles on its own.
+
+V4 keeps the regression honest by evaluating the old construction: it moves one
+fragment's sample 1.57 rad at a drift of 200.
+
+A/B on the player's exact world (seed `11563922953321689029`, Vuhassoone,
+terrestrial, R 43608, wind 0.2, frame 9150 where the old form was deep into
+collapse): pre-fix shows radial streaking and a pinch on the right; post-fix is
+clean.
+
+### The relief gradient had the SAME bug (and predates the cloud work)
+
+While fixing the drift, `planet.glsl:137` turned out to carry the *same* ternary
+for the **terrain relief** tangent frame:
+
+```glsl
+vec3 T = normalize(cross(N, (abs(N.y) < 0.9) ? vec3(0,1,0) : vec3(1,0,0)));
+```
+
+That is the original "circle" — it shears the height gradient, so it shows as an
+arc in the **ground shading**, near the top of the disc, and it is unrelated to
+clouds entirely. Now built from the spin axis as well, with the perturbation
+faded out where the tangent is undefined. Checks U1/U2 now guard the whole class
+at the source level: **no ternary reference-axis basis may exist in executable
+shader code**, and both the drift and the relief frame must use the spin axis.
+
+That is three separate bugs (§11.2 drift magnitude, §11.14 drift basis,
+§11.15 relief basis) from one recurring mistake, and it is the most useful thing
+in this section: *a branch on a sphere coordinate is a circle on the surface.*
+
 ### 11.14 The "circle" — a discontinuous tangent basis (found in play, 2026-10-16)
 
 The arc the player kept reproducing was **not** the deck/shadow desync fixed in

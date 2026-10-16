@@ -319,60 +319,70 @@ check("P. maximum coverage saturates at exactly 1.0, never beyond",
       top_resolved >= 1.0 and min(1.0, 1.0 * top_resolved) == 1.0,
       "knob 3.0 ocean -> resolved %.2f -> mix 1.000" % top_resolved)
 
-# --- Q: drift must be added to a UNIT DIRECTION on both sampling paths.
-# Regression, found by playing with the Wind slider (2026-10-15): the deck adds
-# cloudDrift to a unit direction, the shadow added it to the raw shell hit point,
-# whose magnitude is ~rPlanet. The drift was therefore ~1e5x weaker on the shadow,
-# so the deck swung away from its own shadow and it read as a second sphere
-# counter-rotating against the clouds. Invisible at wind = 0 because neither
-# term moved, which is why a numeric "is the shadow enabled" check missed it.
-Rl = 95976.0
-shell_alt = 0.0533          # the altitude the bug was reported at
-rSh = Rl * (1.0 + shell_alt)
-spin = 0.0173               # rad/s, the pinned test planet
-wind = spin * 0.04
-cloud_t = 600.0             # 10 minutes of drift
-D = cloud_t * wind          # intended angular offset, radians
+def cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0])
 
-# Sample point on the shell: unit direction u, expressed at radius rSh.
-u = (0.6, 0.0, 0.8)
-P = sc(u, rSh)
-# The shader drifts along the SURFACE TANGENT, i.e. perpendicular to the normal.
-# A drift parallel to u would be degenerate: norm(u + u*D) == u exactly, and the
-# check would pass vacuously at zero rotation.
-t = norm((0.0, 1.0, 0.0))
+# --- V: the drift is a ROTATION, and that is the whole point.
+# It used to be `normalize(dir + D*driftdir)` with D = cloudTime*rate growing
+# without bound. Because normalize() discards magnitude, every fragment's sample
+# direction tends to driftdir as D grows, and driftdir sits at a FIXED angle off
+# the equatorial plane -- so all latitudes collapsed together (+80 and -80 deg both
+# landed at -21.8, the equator at 0) and the deck squeezed into one band. The
+# player reported this as "the wind going down a drain", and it got worse as the
+# Wind slider rose because a larger rate reaches the collapse sooner.
+def rot_axis(d, a, ang):
+    a = norm(a)
+    return norm(sc(d, math.cos(ang))
+               + sc(cross(a, d), math.sin(ang))
+               + sc(a, dot(a, d) * (1.0 - math.cos(ang))))
 
-bad = norm(add(P, sc(t, D)))          # OLD: drift into |P| ~ 1e5 -> swamped
-good = norm(add(norm(P), sc(t, D)))    # NEW: drift into a unit direction
-rot_bad = ang_prec(P, bad)
-rot_good = ang_prec(P, good)
+def lat_lon(lat_deg, lon_deg):
+    la, lo = math.radians(lat_deg), math.radians(lon_deg)
+    return (math.cos(la) * math.cos(lo), math.sin(la), math.cos(la) * math.sin(lo))
 
-check("Q1. drift into the raw shell point moves the sample ~1e5x too little",
-      rot_bad < rot_good * 1e-3,
-      "intended %.4f rad, old form moved %.3e rad (%.0fx too little)"
-      % (D, rot_bad, (rot_good / rot_bad) if rot_bad > 0 else float('inf')))
-check("Q2. drift into a unit direction moves the sample by atan(D), as designed",
-      abs(rot_good - math.atan(D)) < 1e-9,
-      "moved %.6f rad vs atan(%.4f) = %.6f rad" % (rot_good, D, math.atan(D)))
-# And the decisive property: with the fix, a fragment's shadow sample and its deck
-# sample drift by the SAME angular amount, so the deck cannot outrun its shadow.
-deck_drift = ang_prec(u, add(u, sc(t, D)))
-shadow_drift = rot_good
-check("Q3. deck and shadow drift by the same angle (they stay locked)",
-      abs(deck_drift - shadow_drift) < 1e-9,
-      "deck %.6f rad vs shadow %.6f rad" % (deck_drift, shadow_drift))
-# KNOWN LIMIT, pinned rather than asserted as desirable. `normalize(dir + D*tan)`
-# rotates by atan(D), so the deck's angular RATE decays as rate/(1+D^2) and the
-# wind slowly dies: ~5% compressed after 24 min, 52% after an hour. The cause is
-# structural -- the drift axis is built from the surface normal, not from the
-# sample direction, so it is not perpendicular to it and there is no rotation
-# matrix available. A constant-rate fix needs a per-fragment perpendicular axis
-# (Rodrigues), which changes the look; deferred pending a play-test.
-sat = spin * 0.04 * 3600.0     # one hour of drift at the default rate
-check("Q4. [KNOWN LIMIT] 1 h of drift is ~52% compressed by atan() (pinned)",
-      abs(math.atan(sat) / sat - 0.4774) < 0.01,
-      "after 1 h drift=%.3f rad -> rotation %.3f rad (%.0f%% compression)"
-      % (sat, math.atan(sat), 100.0 * (1.0 - math.atan(sat) / sat)))
+SPIN = norm((-0.24, 0.96, 0.15))     # a reported planet's spin axis
+
+worst_len = 0.0
+for ang in (0.0, 0.5, 3.0, 17.0, 250.0, 900.0, 5000.0):
+    for lat in range(-80, 81, 20):
+        for lon in (0.0, 70.0, 160.0):
+            r = rot_axis(lat_lon(float(lat), lon), SPIN, ang)
+            worst_len = max(worst_len, abs(math.sqrt(dot(r, r)) - 1.0))
+check("V1. drift is an isometry (|sample| stays 1 however large the angle)",
+      worst_len < 1e-9, "worst |len|-1 over angles to 5000 rad: %.2e" % worst_len)
+
+d = lat_lon(37.0, 12.0)
+p1 = rot_axis(d, SPIN, 4.25)
+p2 = rot_axis(d, SPIN, 4.25 + 2.0 * math.pi)
+p3 = rot_axis(d, SPIN, 4.25 + 2.0 * math.pi * 40.0)
+check("V2. drift is periodic in the angle (wraps instead of growing)",
+      ang_prec(p1, p2) < 1e-9 and ang_prec(p1, p3) < 1e-9,
+      "after 1 turn %.2e rad, after 40 turns %.2e rad"
+      % (ang_prec(p1, p2), ang_prec(p1, p3)))
+
+ref_sep = None
+worst_shrink = 0.0
+for ang in (0.0, 1.0, 5.0, 30.0, 400.0):
+    sep = ang_prec(rot_axis(lat_lon(70.0, 0.0), SPIN, ang),
+                   rot_axis(lat_lon(-70.0, 0.0), SPIN, ang))
+    if ref_sep is None:
+        ref_sep = sep
+    worst_shrink = max(worst_shrink, abs(sep - ref_sep))
+check("V3. +70 and -70 latitude keep their separation (no convergence)",
+      worst_shrink < 1e-9,
+      "separation stays %.4f rad at every drift angle" % ref_sep)
+
+def old_sample(dv, a, D):
+    east = norm(cross(dv, a))
+    drift = norm(add(east, sc(cross(dv, east), 0.4)))
+    return norm(add(dv, sc(drift, D)))
+collapse = ang_prec(old_sample(lat_lon(70.0, 0.0), SPIN, 0.0),
+                    old_sample(lat_lon(70.0, 0.0), SPIN, 200.0))
+check("V4. OLD construction demonstrably collapsed (the regression has teeth)",
+      collapse > 1.0,
+      "the old form moved one fragment's sample %.2f rad at drift 200" % collapse)
 
 # --- R/S: storms and lightning.
 # These are pinned NUMERICALLY on purpose. A single screenshot is a bad verifier
@@ -445,68 +455,29 @@ check("T3. green emission dominates red (arc reads green, not magenta)",
       G_W > R_W * 2.5,
       "green gain %.2f vs red gain %.2f (%.1fx)" % (G_W, R_W, G_W / R_W))
 
-# --- U: the drift tangent basis must be CONTINUOUS over the sphere.
-# The shipped bug built it as cross(n, (|n.y| < 0.9) ? +Y : +X). Those two
-# cross products are unrelated directions, so the basis JUMPED across the
-# latitude circle at asin(0.9) = 64.2 deg. That projects as a hard arc near the
-# top of the disc, and is invisible at wind 0 only because cloudDrift is zero --
-# which is why it survived a fix aimed at drift MAGNITUDE.
-SPIN_AXIS = (-0.13, 0.94, 0.33)
-def cross(a, b):
-    return (a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0])
-def old_basis(n):
-    ref = (0.0, 1.0, 0.0) if abs(n[1]) < 0.9 else (1.0, 0.0, 0.0)
-    return norm(cross(n, ref))
-def new_basis(n, axis=SPIN_AXIS):
-    raw = cross(n, axis)
-    tl = math.sqrt(dot(raw, raw))
-    return (sc(raw, 1.0 / tl) if tl > 1e-4
-            else norm(cross(n, (1.0, 0.0, 0.0))))
+# --- U: no tangent basis may come back, anywhere.
+# TWO separate artefacts in this area were the same mistake: a ternary that swaps
+# a reference axis (+Y for +X) puts its branch boundary on the latitude circle
+# |n.y| = 0.9 (asin 0.9 = 64.2 deg), and cross(n,+Y) / cross(n,+X) are unrelated
+# vectors, so whatever frame depends on it SHEARS discontinuously there. It was
+# in the cloud drift (11.14) AND in the terrain relief gradient (which predates
+# the cloud work entirely). Both are now built from the spin axis, and the drift
+# is a rotation with no frame at all.
+import os
+SHADER = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       os.pardir, "res", "shader", "fragment",
+                                       "material", "planet.glsl"))
+src = open(SHADER).read() if os.path.exists(SHADER) else ""
+# Strip comments so the OLD code quoted in explanatory comments is not a hit.
+code = "\n".join(l.split("//", 1)[0] for l in src.split("\n"))
+ternary = " ? vec3("
+check("U1. no ternary reference-axis basis remains in executable shader code",
+      bool(code) and ternary not in code,
+      "found %d ternary reference-axis bas(es) in code" % code.count(ternary))
+check("U2. cloud drift is a rotation, and the relief frame uses the spin axis",
+      "driftRotate" in code and "planetSpinAxis" in code
+      and "cloudDriftAng" in code,
+      "driftRotate=%s planetSpinAxis=%s cloudDriftAng=%s"
+      % ("driftRotate" in code, "planetSpinAxis" in code, "cloudDriftAng" in code))
 
-def lat_dirs(lat_deg):
-    """Two adjacent points either side of a latitude, sharing a longitude."""
-    t = math.radians(lat_deg)
-    return (math.cos(t), math.sin(t), 0.0), (math.cos(t - 0.01), math.sin(t - 0.01), 0.0)
-
-# The OLD basis: sweep across the switch latitude and measure the jump.
-worst_old = 0.0
-for lat in (60.0, 62.0, 64.0, 64.1, 64.2, 64.3, 66.0, 70.0):
-    a, b = lat_dirs(lat)
-    ja = ang_prec(old_basis(a), old_basis(b))
-    worst_old = max(worst_old, ja)
-check("U1. OLD basis jumped across a latitude circle (the reported artefact)",
-      worst_old > 0.05,
-      "largest basis jump sweeping the switch latitude: %.3f rad (%.1f deg)"
-      % (worst_old, math.degrees(worst_old)))
-
-# The NEW basis: sweep the whole sphere and require a small step everywhere.
-worst_new = 0.0
-for lat in range(-89, 90, 2):
-    a, b = lat_dirs(float(lat))
-    worst_new = max(worst_new, ang_prec(new_basis(a), new_basis(b)))
-# And a longitude sweep near the poles, where cross(n, axis) degenerates.
-for lon in range(0, 360, 15):
-    p = (math.cos(math.radians(89.5)), math.sin(math.radians(89.5)),
-         math.cos(math.radians(lon)) * 1e-3)
-    q = (math.cos(math.radians(89.5)), math.sin(math.radians(89.5)),
-         math.cos(math.radians(lon + 15)) * 1e-3)
-    worst_new = max(worst_new, ang_prec(new_basis(norm(p)), new_basis(norm(q))))
-check("U2. NEW basis (spin-axis reference) is continuous over the sphere",
-      worst_new < 0.05,
-      "largest basis jump over a 2-deg lat sweep + polar longitudes: %.4f rad"
-      % worst_new)
-# The polar fade must reach zero exactly where the basis is undefined.
-def polar_fade(tl):
-    t = max(0.0, min(1.0, tl / 0.06))
-    return t * t * (3.0 - 2.0 * t)
-check("U3. drift fades to zero where 'eastward' is undefined (the pole)",
-      polar_fade(0.0) == 0.0 and polar_fade(0.06) > 0.99,
-      "fade at pole %.3f, fade at 0.06 %.3f" % (polar_fade(0.0), polar_fade(0.06)))
-
-print()
-if fails:
-    print("FAILED: %s" % ", ".join(fails))
-    raise SystemExit(1)
 print("all checks passed")
