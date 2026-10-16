@@ -445,6 +445,66 @@ check("T3. green emission dominates red (arc reads green, not magenta)",
       G_W > R_W * 2.5,
       "green gain %.2f vs red gain %.2f (%.1fx)" % (G_W, R_W, G_W / R_W))
 
+# --- U: the drift tangent basis must be CONTINUOUS over the sphere.
+# The shipped bug built it as cross(n, (|n.y| < 0.9) ? +Y : +X). Those two
+# cross products are unrelated directions, so the basis JUMPED across the
+# latitude circle at asin(0.9) = 64.2 deg. That projects as a hard arc near the
+# top of the disc, and is invisible at wind 0 only because cloudDrift is zero --
+# which is why it survived a fix aimed at drift MAGNITUDE.
+SPIN_AXIS = (-0.13, 0.94, 0.33)
+def cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0])
+def old_basis(n):
+    ref = (0.0, 1.0, 0.0) if abs(n[1]) < 0.9 else (1.0, 0.0, 0.0)
+    return norm(cross(n, ref))
+def new_basis(n, axis=SPIN_AXIS):
+    raw = cross(n, axis)
+    tl = math.sqrt(dot(raw, raw))
+    return (sc(raw, 1.0 / tl) if tl > 1e-4
+            else norm(cross(n, (1.0, 0.0, 0.0))))
+
+def lat_dirs(lat_deg):
+    """Two adjacent points either side of a latitude, sharing a longitude."""
+    t = math.radians(lat_deg)
+    return (math.cos(t), math.sin(t), 0.0), (math.cos(t - 0.01), math.sin(t - 0.01), 0.0)
+
+# The OLD basis: sweep across the switch latitude and measure the jump.
+worst_old = 0.0
+for lat in (60.0, 62.0, 64.0, 64.1, 64.2, 64.3, 66.0, 70.0):
+    a, b = lat_dirs(lat)
+    ja = ang_prec(old_basis(a), old_basis(b))
+    worst_old = max(worst_old, ja)
+check("U1. OLD basis jumped across a latitude circle (the reported artefact)",
+      worst_old > 0.05,
+      "largest basis jump sweeping the switch latitude: %.3f rad (%.1f deg)"
+      % (worst_old, math.degrees(worst_old)))
+
+# The NEW basis: sweep the whole sphere and require a small step everywhere.
+worst_new = 0.0
+for lat in range(-89, 90, 2):
+    a, b = lat_dirs(float(lat))
+    worst_new = max(worst_new, ang_prec(new_basis(a), new_basis(b)))
+# And a longitude sweep near the poles, where cross(n, axis) degenerates.
+for lon in range(0, 360, 15):
+    p = (math.cos(math.radians(89.5)), math.sin(math.radians(89.5)),
+         math.cos(math.radians(lon)) * 1e-3)
+    q = (math.cos(math.radians(89.5)), math.sin(math.radians(89.5)),
+         math.cos(math.radians(lon + 15)) * 1e-3)
+    worst_new = max(worst_new, ang_prec(new_basis(norm(p)), new_basis(norm(q))))
+check("U2. NEW basis (spin-axis reference) is continuous over the sphere",
+      worst_new < 0.05,
+      "largest basis jump over a 2-deg lat sweep + polar longitudes: %.4f rad"
+      % worst_new)
+# The polar fade must reach zero exactly where the basis is undefined.
+def polar_fade(tl):
+    t = max(0.0, min(1.0, tl / 0.06))
+    return t * t * (3.0 - 2.0 * t)
+check("U3. drift fades to zero where 'eastward' is undefined (the pole)",
+      polar_fade(0.0) == 0.0 and polar_fade(0.06) > 0.99,
+      "fade at pole %.3f, fade at 0.06 %.3f" % (polar_fade(0.0), polar_fade(0.06)))
+
 print()
 if fails:
     print("FAILED: %s" % ", ".join(fails))

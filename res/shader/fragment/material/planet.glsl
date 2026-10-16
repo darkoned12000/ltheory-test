@@ -40,6 +40,8 @@ uniform float auroraHeight; // lower shell altitude as a FRACTION of rPlanet
 uniform vec3  planetAxisX;  // world-space directions of the planet's local axes. The cube is
 uniform vec3  planetAxisY;  // authored in LOCAL space (so the deck spins with the body), so
 uniform vec3  planetAxisZ;  // sampling the cloud shell needs world -> local. Passed explicitly
+uniform vec3  planetSpinAxis;// the body's own spin axis; the drift tangent basis is built
+                             // from it so it cannot jump across a latitude circle (see below)
                            // rather than reusing mWorldIT: no fragment shader has ever declared
                            // that autovar, and an unset one is silently identity (see 12).
 uniform float terminator;   // 0 = cosine (physical), 1 = flat wrap (legacy)
@@ -179,14 +181,39 @@ void main() {
   float cloudShade = 1.0;
   vec3 nl0 = normalize(vertPos);
   if (clouds > 0.001) {
-    vec3 dtl = normalize(cross(nl0, (abs(nl0.y) < 0.9) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-    vec3 dbl = cross(nl0, dtl);
+    // Tangent basis for the drift, built from the body's own SPIN AXIS.
+    //
+    // The previous form picked a reference axis with a ternary:
+    //     cross(nl0, (abs(nl0.y) < 0.9) ? vec3(0,1,0) : vec3(1,0,0))
+    // which switches from +Y to +X at |nl0.y| = 0.9. But cross(n, +Y) and
+    // cross(n, +X) are UNRELATED directions -- not two approximations of the
+    // same vector -- so the drift basis jumps discontinuously across the
+    // latitude circle at asin(0.9) = 64.2 degrees. That projects as a hard arc
+    // near the top of the disc, and it is invisible at wind 0 only because
+    // cloudDrift is zero there. This was reported as "the circle" and survived
+    // one earlier fix, because that fix addressed drift MAGNITUDE, not the
+    // basis it was measured against.
+    //
+    // Using the spin axis makes the basis continuous everywhere except the two
+    // pole points themselves, and gives the drift a real meaning: winds run
+    // along lines of latitude ("eastward") instead of an arbitrary tangent. The
+    // axis is valid in local space unchanged -- the body rotates ABOUT it, and a
+    // rotation about an axis leaves that axis invariant.
+    vec3 ax  = normalize(planetSpinAxis);
+    vec3 raw = cross(nl0, ax);
+    float tl = length(raw);
+    // Degenerate only exactly AT a pole, not along a latitude circle. Fade the
+    // drift out over the last few degrees so the residual singularity (where
+    // "eastward" is undefined) cannot show.
+    vec3 dtl  = (tl > 1e-4) ? raw / tl : normalize(cross(nl0, vec3(1.0, 0.0, 0.0)));
+    vec3 dbl  = cross(nl0, dtl);
+    float polarFade = smoothstep(0.0, 0.06, tl);
     // Prevailing drift: mostly along the tangent with a little across it, so the
     // deck does not read as a rigid rotation of the whole pattern. The RATE is
     // cloudWindRate (rad/s, derived from this planet's spin) rather than a fixed
     // constant -- see the note in Planet.lua on why an absolute rate was
     // invisible against a 0.01-0.05 rad/s spin and varied 5x between worlds.
-    cloudDrift = normalize(dtl + dbl * 0.4) * (cloudTime * cloudWindRate);
+    cloudDrift = normalize(dtl + dbl * 0.4) * (cloudTime * cloudWindRate) * polarFade;
   }
   if (clouds > 0.001 && cloudHeight > 1e-6 && cloudShadow > 0.001) {
     // starDir is WORLD space (it points at the star and does not spin with the

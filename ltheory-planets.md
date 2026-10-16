@@ -1730,6 +1730,64 @@ and it is not what was originally sketched. Recommendation: **skip it**, take
 **W8 (planet scale)** next, which unblocks **W7b rings** — the item the player
 specifically asked for — and revisit storms later if the sky still wants it.
 
+### 11.14 The "circle" — a discontinuous tangent basis (found in play, 2026-10-16)
+
+The arc the player kept reproducing was **not** the deck/shadow desync fixed in
+11.2, and not the aurora (`render.planet.aurora` was 0 in the reported settings,
+which eliminated that immediately). It survived one fix because that fix
+addressed the drift's **magnitude**; this one is about the **basis** that
+magnitude is measured against.
+
+The drift built its tangent frame like this:
+
+```glsl
+vec3 dtl = normalize(cross(nl0, (abs(nl0.y) < 0.9) ? vec3(0,1,0) : vec3(1,0,0)));
+```
+
+The reference axis switches from +Y to +X at `|nl0.y| = 0.9`. But `cross(n, +Y)`
+and `cross(n, +X)` are **unrelated directions** — not two approximations of the
+same vector — so the basis jumps across the latitude circle at
+`asin(0.9) = 64.2°`. That is a circle on the sphere, which projects as a hard
+arc near the top of the disc.
+
+Measured (check U1): the basis jumps **180°** across that latitude. One side of
+the planet drifts one way, the other side drifts *exactly backwards* — which is
+precisely the "an inner sphere turning in opposite directions" that was reported.
+And it is invisible at wind 0 **only because `cloudDrift` is zero there**, which
+is why the symptom tracked the Wind slider and why a frame-300 capture showed
+nothing (drift at 5 s is 0.035 rad; it takes ~150 s to reach 1 rad).
+
+Fixed by building the frame from the body's own **spin axis**, which is valid in
+local space unchanged — the body rotates *about* that axis, and a rotation about
+an axis leaves it invariant:
+
+```glsl
+vec3 ax  = normalize(planetSpinAxis);
+vec3 raw = cross(nl0, ax);
+float tl = length(raw);                       // degenerate only AT a pole
+vec3 dtl = (tl > 1e-4) ? raw / tl : normalize(cross(nl0, vec3(1,0,0)));
+float polarFade = smoothstep(0.0, 0.06, tl);  // drift -> 0 where "east" is undefined
+```
+
+- Continuous everywhere except the two pole **points** (U2: largest basis step
+  over a full 2° latitude sweep plus polar longitudes is 0.0304 rad, versus 180°
+  before), and the drift fades to zero there anyway (U3).
+- Side benefit: the drift now means something. Winds run along lines of
+  latitude — "eastward" — rather than an arbitrary tangent, which is both more
+  physical and better looking.
+- **Reproduced on the player's exact world** (seed `16560706864388890501`,
+  Hebonewate, ocean, R 46343, wind 0.1674, shell 0.05532) and re-captured at
+  frame 9150 where drift reaches 1.057 rad: clean, no arc.
+
+### Lesson: a latitude circle is a signature
+
+Every artifact here that looked like "a mysterious circle" was a **hard-coded
+threshold on a sphere coordinate**: `abs(nl0.y) < 0.9`. When a shader branches on
+a latitude or a dot-product threshold, the branch boundary is a circle on the
+surface, and it shows up in projection as an arc. Prefer a smooth quantity with
+an inherently continuous reference (a per-entity axis) over a ternary that swaps
+one arbitrary axis for another.
+
 ### 11.13 Storms and aurorae (2026-10-15)
 
 Two planet features added after W7a closed, both chosen because they are in the

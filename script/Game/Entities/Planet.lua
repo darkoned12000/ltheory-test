@@ -328,6 +328,14 @@ function Planet:render (state)
       Shader.SetFloat3('planetAxisY', 0, 1, 0)
       Shader.SetFloat3('planetAxisZ', 0, 0, 1)
     end
+    -- Spin axis, used by the cloud drift's tangent basis. Valid in LOCAL space
+    -- unchanged: the body rotates ABOUT this axis, and a rotation about an axis
+    -- leaves that axis invariant, so local and world expressions agree. Passing
+    -- it (rather than letting the shader assume +Y) is what stops the basis
+    -- jumping across the latitude circle where a +Y/+X reference switch used
+    -- to live -- that discontinuity was the "circle" artefact.
+    local sax = self.spinAxis or Vec3f(0, 1, 0)
+    Shader.SetFloat3('planetSpinAxis', sax.x, sax.y, sax.z)
     -- Terminator shape: 0 = cosine law (a diffuse planet dims toward the limb),
     -- 1 = the old flat wrap that glowed almost to the edge.
     Shader.SetFloat('terminator', Settings.get('render.planet.terminator') or 0.35)
