@@ -337,7 +337,12 @@ void main() {
     vec3  cellC = (cloudL + cloudDrift) / cellSize;
     vec3  cell  = floor(cellC);
     vec3  cf    = fract(cellC);
-    vec3  cw    = smoothstep(0.0, 0.30, cf) * (1.0 - smoothstep(0.70, 1.0, cf));
+    // A NARROW peak. The window was 0.30-0.70, which leaves a wide flat top, so
+    // the interior of a firing cell was a nearly-uniform patch: invisible at
+    // planet scale but an obvious rounded rectangle when the camera is close
+    // enough to magnify a cell across a third of the screen. Confirmed by
+    // capture at 1.15x radius with cloudHeight 0.12.
+    vec3  cw    = smoothstep(0.0, 0.45, cf) * (1.0 - smoothstep(0.55, 1.0, cf));
     float cellWin = cw.x * cw.y * cw.z;
     float win   = floor(cloudTime / winDur);
     float ph    = fract(cloudTime / winDur);
@@ -353,9 +358,10 @@ void main() {
     // Only inside a storm, and only where there is actually cloud to light.
     // `flick` breaks the cell's remaining square footprint: even with the border
     // window, a flat cellWin still lights a rounded SQUARE, which is visible as
-    // a faint grey patch. Multiplying by a smooth, fast field makes the lit area
-    // ragged like real intra-cloud lightning.
-    float flick = 0.40 + 0.60 * fSmoothNoise((cloudL + cloudDrift) * 7.0
+    // a faint grey patch. High contrast on purpose -- a real intra-cloud flash
+    // is a small bright speck, not a dim even wash, and low-contrast modulation
+    // left the cell readable as a shape when magnified.
+    float flick = 0.12 + 0.88 * fSmoothNoise((cloudL + cloudDrift) * 7.0
                                               + vec3(cloudTime * 3.0), 3, 2.0);
     float flash = env * storm * cov * cellWin * flick * stormFlash;
 
