@@ -683,7 +683,7 @@ W7 is five unrelated features, so it is ordered rather than listed:
 | # | Piece | Depends on | Effort | State |
 |---|-------|-----------|--------|-------|
 | W7a | Planet clouds | — | S | ✅ **CLOSED 2026-10-15** — plumbing, ship, shell + parallax, clouds toggle, resolved-coverage/spin/pos logging, **cloud shadows**, **spin-relative wind**, coverage retune. Look signed off by the player. Left: rain/storms (see §11.12 — judged invisible from orbit). |
-| W7b | Planetary rings | — | M | open |
+| W7b | Planetary rings | — | M | ✅ **DONE 2026-10-16** — annulus mesh in planet-radii, alpha pass, sun-elevation + forward scatter + planet shadow, ice/dust drives scatter behaviour, nebula pickup, all sliders live. See §11.16. |
 | W7c | True biomes | W7a | M | open |
 | W7d | Gas giants | W7c | L | open |
 | W7e | Atmosphere entry / landing | — | L | open |
@@ -1002,12 +1002,59 @@ planet shadow on the ring band — the shadow machinery exists), and a per-type
 probability. W8 (planet scale) should land first or the ring inner radius has to
 be derived from a radius that is currently untamed.
 
-**W7c — true biomes.** Consumes the dead `genColor` channel. The interesting part
-is not the lookup but the *continuity*: the design note
-(`procedural-space-environment.md` §7) is explicit that a procedural boundary is
-a bug — "the player should think *something is changing*, not *I entered a new
-zone*". So biomes must blend between neighbouring region colours over large
-distances, not switch. The height→4-stop ramp stays as the within-biome detail.
+**W7c — true biomes. ⛔ RE-SCOPED 2026-10-16 — the old cost estimate was wrong.**
+
+The original framing called this M with continuity as the hard part, and that
+estimate was inherited from a *different* feature: atmosphere entry / walking on
+the surface (W7e, deferred). At close range, biome boundaries are inspected
+directly and "a procedural boundary is a bug" is exactly the right bar — you
+cannot see ice directly abutting desert sand from 2 m away. **From orbit that bar
+does not apply.** The orbital requirement the player stated is much weaker and is
+the one that actually matters here:
+
+> *From space the blend needs to be less accurate — it just needs to make sense.
+> You wouldn't see ice and then desert sand right next to it; it should be a
+> progression of terrain changes to get there.*
+
+That is a much easier requirement, and it is the easy direction: "no jarring
+adjacency" is a **monotone progression along a climate axis**, which is a smooth
+interpolated lookup, not a segmentation problem. Ordered zones along one axis
+cannot produce an ice/desert seam by construction.
+
+**And at orbital distance it is nearly free — this was not previously noticed:**
+
+- `gen/planet.glsl:125` already bakes `genColor` (a 12-iteration fractal, read by
+  nothing) into the cube's **green** channel, so every planet cube is already
+  paying to generate it.
+- `material/planet.glsl:126` already fetches the whole cube as `vec4 map` and uses
+  **only `.x`** (height). The biome data is `map.y` — **already in a register, no
+  extra texture fetch, no new pass, no regeneration.**
+
+Proposed shape, all from quantities already available:
+
+- **latitude** — `|dot(dirLocal, spinAxis)|`, free, no texture, and the single
+  largest real climate driver (polar ice → temperate → equatorial).
+- **moisture** — the dead `genColor` channel (`map.y`), a low-frequency field.
+- **elevation** — `map.x`, already driving the 4-stop ramp; high ground reads
+  cooler and drier.
+
+`biome = f(latitude, moisture, elevation)`, interpolated between an *ordered*
+palette so adjacent regions always differ gradually. The height→4-stop ramp stays
+as within-zone detail.
+
+Player's own assessment, which the doc now adopts: *"I look at the biomes as a
+minor detail — if it will not destroy FPS and will give a certain look that could
+be pleasing to the player it's worth adding."* Given the cost above, that is the
+right call: **small, cheap, pleasing, and it stops the planet cube wasting a
+channel it already computes.**
+
+**Future idea — night-side city lights (not scheduled).** Raised by the player
+2026-10-16: if a planet ever has stats (e.g. "populated"), showing small lights
+or clusters of lights for communities/cities from space would be a nice touch.
+Natural home is the night side, where there is currently nothing but skybox fill,
+and it would read strongly at exactly the distances the game uses. Recorded here
+so it is not lost; it needs a population/scivilisation signal first, which does
+not exist yet.
 
 **W7d — gas giants.** Needs a banded generator and a no-solid-surface render path
 (thick atmosphere dominant). Explicitly the expensive one, and it should not start
@@ -2042,7 +2089,7 @@ under load, plus `render.resolutionScale` / supersampling as the real levers
 | piece | depends on | effort | notes |
 |---|---|---|---|
 | ~~W7a polish~~ | — | S | ✅ **Done 2026-10-15.** Shell + parallax, shadows, spin-relative wind, coverage retune all landed and signed off. Rain/storms deliberately **dropped** — see §11.12. |
-| W7b rings | **W8** | M | most self-contained (new entity + shader; touches neither generator nor surface material). **Do W8 first** or the inner radius derives from an untamed radius. |
+| ~~W7b rings~~ | — | M | ✅ **Done 2026-10-16** (§11.16). Landed *without* W8: geometry is in planet-radii, so the W8 dependency dissolved rather than being obeyed. |
 | W7c biomes | W7a | M | consumes the dead `genColor` channel. The hard part is continuity, not the lookup — biomes must *blend*, never switch (`procedural-space-environment.md` §7). |
 | W7d gas giants | W7c | L | banded generator + no-solid-surface path. Explicitly the expensive one; must not start before W6 is re-measured with load. **⛔ deferred 2026-10-14** (see below). |
 | W7e atmosphere entry | — | L | gameplay, not rendering, and blocked by nothing. `exp(-altitude/scaleHeight)` → drag/lift → landing zones. **⛔ deferred 2026-10-14.** |
@@ -2135,11 +2182,14 @@ to inform**, and every item in group A below is cheap and unblocks the rest.
    sampling** (§11.11). The open question that fell out is a taste call now
    logged as a third §11.5 decision.
 3. **W6 for real** — re-measure under the asteroid/NPC load it never profiled.
-4. **W8** — independent of all lighting work, and doing it next unblocks rings,
-   whose inner radius currently derives from an untamed radius.
-5. **W7b rings** — the most self-contained piece of W7; new entity + shader,
-   touching neither the generator nor the surface material, so it cannot break
-   the existing look.
+4. **W8** — independent of all lighting work. ⛔ **still open**: `scalePlanet` is
+   dead config and a planet can engulf the system (§11.4). It no longer blocks
+   rings — see item 5.
+5. **W7b rings** — ✅ **Done 2026-10-16** (§11.16). Shipped *before* W8 on
+   purpose: the ring mesh is authored in **planet-radii** and scaled by the
+   entity's own transform, so when W8 changes planet sizes the rings move with
+   their planet. The dependency this note warned about was dissolved rather than
+   obeyed.
 6. **W7c biomes** — consumes the dead `genColor` channel; needs W7a's plumbing
    and continuity-aware blending. This is now the **last item in scope**, so its
    continuity requirement deserves a proper pass rather than a token one.
