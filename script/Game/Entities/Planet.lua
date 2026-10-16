@@ -137,40 +137,33 @@ local Planet = subclass(Entity, function (self, seed, opts)
   self.ring = nil
   -- Read from Config.gpu (where the knobs live), NOT Config.render.planet --
   -- the SETTINGS entry seeds FROM Config.gpu.planetRingChance, so the panel
-  -- value and the value used here must be the same source. Read from Config
-  -- rather than Settings because this runs at CONSTRUCTION time, before the
-  -- panel has necessarily been seeded.
+  -- value and the value used here must be the same source.
   --
-  -- `ringsEnabled` is checked here AND at draw time. Checking it here stops a
-  -- ring being built at all; checking it again in render() is what makes the
-  -- toggle useful for A/B -- construction-time knobs cannot affect a planet
-  -- that already exists, so `ringChance = 0` alone would look like "the toggle
-  -- does nothing" on the world you are currently staring at.
-  local ringsOn = Config.gpu.planetRingsEnabled
-  if ringsOn == nil then ringsOn = true end
-  local ringChance = (t.ring or 0.0) * (Config.gpu.planetRingChance or 0.45)
-  if ringsOn and ringChance > 0 and rng:getUniform() < ringChance then
-    -- How much rings differ from world to world. 0 = every ringed world gets the
-    -- same canonical ring (useful for comparing a look change across seeds), 1 =
-    -- full random spread. Scales deviation from the centre values, so the mean
-    -- ring stays recognisable at every setting.
-    local var = Config.gpu.planetRingVariation
-    if var == nil then var = 1.0 end
-    local function jitter (centre, lo, hi)
-      return centre + (rng:getUniformRange(lo, hi) - centre) * var
-    end
-    self.ring = {
-      inner    = jitter(1.35, 1.22, 1.55),
-      outer    = jitter(2.20, 1.95, 2.45),
-      opacity  = jitter(0.85, 0.55, 1.15),
-      bands    = jitter(0.75, 0.45, 1.0),
-      -- Ice rings are bright and slightly blue; dust rings are dark and red.
-      -- `ice` picks between them; 0 = pure dust, 1 = pure ice.
-      ice      = (t.ringIce or 0.5) + (rng:getUniform() - 0.5) * 0.4 * var,
-      tilt     = jitter(0.0, -0.22, 0.22),   -- rad, ring plane wobble
-      spin     = jitter(1.0, 0.4, 1.4),      -- ring azimuthal rate
-    }
-    self.ring.ice = math.max(0.0, math.min(1.0, self.ring.ice))
+  -- NOTHING about the ring's appearance is decided here any more. The mesh is
+  -- built for every ELIGIBLE type, and BOTH ring sliders are applied at DRAW
+  -- time (see Planet:ringParams). Baking them in at spawn made ringChance and
+  -- ringVariation look like broken sliders on any world that already existed:
+  -- they cannot retro-act on a planet, and a slider that visibly does nothing
+  -- reads as a bug rather than as a limitation.
+  local typeRing = (t.ring or 0.0)
+  self.ringType = typeRing
+  if typeRing > 0 then
+    -- A FIXED per-planet roll, sampled once and never changed. Draw-time
+    -- visibility compares this against ringChance, so raising the chance reveals
+    -- worlds PROGRESSIVELY instead of the whole set flickering as you drag.
+    self.ringRoll = rng:getUniform()
+    -- Two parameter sets: `base` is the canonical ring (variation 0, so every
+    -- ringed world looks identical -- good for A/B-ing a look change across
+    -- seeds) and `spread` is this world's full random draw (variation 1). The
+    -- live slider interpolates between them, so the mean ring stays
+    -- recognisable at every setting instead of collapsing toward one value.
+    self.ringBase = { inner = 1.35, outer = 2.20, opacity = 0.85, bands = 0.75,
+                      ice = (t.ringIce or 0.5) }
+    self.ringSpread = { inner = rng:getUniformRange(1.22, 1.55),
+                        outer = rng:getUniformRange(1.95, 2.45),
+                        opacity = rng:getUniformRange(0.55, 1.15),
+                        bands = rng:getUniformRange(0.45, 1.0),
+                        ice = (t.ringIce or 0.5) + (rng:getUniform() - 0.5) * 0.4 }
     self.meshRing = self:buildRingMesh():managed()
   end
 
@@ -239,6 +232,28 @@ function Planet:cloudCoverage ()
   -- ordering ocean > terrestrial > ice > lava > desert and the seed variation
   -- inside each. The shader clamps the mix factor to match.
   return math.max(0.0, math.min(1.5, (self.weather or 0.0) * knob + (self.cloudLevel or 0.0)))
+end
+
+-- Resolve the ring's live parameters, or nil when it should not be drawn.
+-- ringChance and ringVariation are PANEL SLIDERS, so they are applied here
+-- rather than baked in at spawn: a slider that visibly does nothing reads as a
+-- broken feature, and neither of these can affect an already-spawned world if it
+-- is consumed at construction.
+function Planet:ringParams ()
+  if not self.meshRing then return nil end
+  local live = Settings.get('render.planet.ringsEnabled')
+  if live == nil then live = true end
+  if not live then return nil end
+  local chance = (self.ringType or 0.0) * (Config.gpu.planetRingChance or 0.45)
+  if (self.ringRoll or 1.0) > chance then return nil end
+  local var = Settings.get('render.planet.ringVariation')
+  if var == nil then var = 1.0 end
+  local b, sp = self.ringBase, self.ringSpread
+  local function mix (k) return b[k] + (sp[k] - b[k]) * var end
+  local ice = mix('ice')
+  if ice < 0.0 then ice = 0.0 elseif ice > 1.0 then ice = 1.0 end
+  return { inner = mix('inner'), outer = mix('outer'), opacity = mix('opacity'),
+           bands = mix('bands'), ice = ice }
 end
 
 -- Build the ring annulus in the local XZ plane (local +Y is the spin axis, so
@@ -464,9 +479,8 @@ function Planet:render (state)
     -- drawing the ring first means the atmosphere's scatter tints the ring's
     -- inner edge where the two overlap -- which is what happens physically,
     -- since the ring passes in front of and behind the haze.
-    local ringsLive = Settings.get('render.planet.ringsEnabled')
-    if ringsLive == nil then ringsLive = true end
-    if self.meshRing and ringsLive then
+    local r = self:ringParams()
+    if r then
       -- Cull face and depth state are already set by startAlpha (CullFace.None,
       -- depth test on, depth write off), and CullFace.None is what we want: a
       -- flat ring must be visible from above AND below. Only the blend mode
@@ -474,7 +488,6 @@ function Planet:render (state)
       BlendMode.Push(BlendMode.PreMultAlpha)
       local rshader = Cache.Shader('wvp', 'material/ring')
       rshader:start()
-      local r = self.ring
       local pos = self:getPos()
       Shader.SetFloat3('origin', pos.x, pos.y, pos.z)
       Shader.SetFloat('rPlanet', self:getScale())

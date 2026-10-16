@@ -1842,12 +1842,35 @@ light originates -- so a backlit ring takes the colour of whatever nebula bank
 lies behind it. Knob `ringEnv`; verified live (ring band mean delta 2.276,
 max 108, between env 1 and 0).
 
-**Debug affordances, per the player's request.** `ringsEnabled` is checked BOTH at
-spawn (don't build the mesh) *and* at draw time (hide an existing one) --
-construction-time knobs like `ringChance` cannot affect the world already on
-screen, so a chance of 0 alone looks like a broken toggle. `ringVariation` scales
-deviation from canonical ring values: 0 = every ringed world gets the same ring
-(good for A/B-ing a look change across seeds), 1 = full spread.
+**Every ring slider is LIVE -- and getting there took two rounds.** Reported in
+play as "I move the ring sliders and don't see much change unless I use
+brightness/opacity". Diagnosis: `ringOpacity` and `ringBright` are read per
+frame, but `ringChance` and `ringVariation` were *baked at spawn*, so they could
+not affect a world already on screen. **A slider that visibly does nothing is
+indistinguishable from a broken feature**, so both moved to draw time:
+
+- `ringsEnabled` -- checked at spawn (don't build the mesh) *and* at draw (hide an
+  existing one).
+- `ringChance` -- no longer a spawn-time roll. Each eligible planet samples a
+  FIXED roll once and never changes it; draw time compares that roll against the
+  current chance, so raising the slider reveals worlds **progressively** instead
+  of the whole set flickering as you drag. Verified live: chance 0.45 vs 0.0
+  gives mean 2.359 / max 63 in the ring band.
+- `ringVariation` -- stores TWO parameter sets per planet (`ringBase`, the
+  canonical ring, and `ringSpread`, its full random draw) and interpolates
+  between them at draw time. 0 = every ringed world looks identical (good for
+  A/B-ing a look change across seeds), 1 = full spread. Verified live: mean
+  2.439 / max 60.
+
+The boot log now reports `ring=none (roll 0.00, type 0.30)` when a ring is
+suppressed, which is the diagnostic that was missing -- a planet whose roll is
+0.00 qualifies at any nonzero chance, so the chance slider looks dead on exactly
+that world. (Caveat: the log prints at spawn, before the panel seeds Settings, so
+it reports the panel DEFAULT variation rather than a Config.gpu override.)
+
+Also: a test that compares chance 0.45 against 0.6 on a world that already
+qualified at 0.45 measures NOTHING -- correctly, since that world is visible in
+both. Prove liveness against 0, not against a nearby value.
 
 TRAP -- **never write an include directive literally in a shader comment.** The
 preprocessor scans the whole file and takes the rest of that line as a path,

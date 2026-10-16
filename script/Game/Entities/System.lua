@@ -356,8 +356,9 @@ function System:spawnPlanet ()
     planet.spinSpeed or 0.0,
     ((planet.spinSpeed or 0.0) > 0) and (2 * math.pi / (planet.spinSpeed)) / 60.0 or 0.0,
     (function ()
-       local r = planet.ring
-       if not r then return 'none' end
+       local r = planet:ringParams()
+       if not r then return format('none (roll %.2f, type %.2f)',
+                                   planet.ringRoll or 1.0, planet.ringType or 0.0) end
        return format('%.2f-%.2f R  ice=%.2f  opacity=%.2f',
                      r.inner, r.outer, r.ice, r.opacity)
      end)(),
