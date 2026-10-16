@@ -214,6 +214,21 @@ local SETTINGS = {
   -- and a 10-minute one, and creeps slowly BACKWARDS against the spin the way
   -- it does on Earth.
   { kind = 'float', key = 'render.planet.cloudWind', label = ' - Wind', default = 0.04, min = 0, max = 0.2, gpu = 'planetCloudWind' },
+  -- Storms: scale the type's existing `weather` prior, so storminess tracks how
+  -- wet the world already is and airless bodies stay storm-free for free.
+  { kind = 'float', key = 'render.planet.storms',    label = ' - Storminess', default = 1.0, min = 0, max = 2.0, gpu = 'planetStorms' },
+  -- Intra-cloud lightning, split from storminess so flashes can be auditioned
+  -- against a calm sky. Storms read as DARKER cells; this is the flash inside
+  -- them, hashed per cell so cells fire out of phase.
+  { kind = 'float', key = 'render.planet.stormFlash', label = ' - Flashes',   default = 1.0, min = 0, max = 3.0, gpu = 'planetStormFlash' },
+  -- Aurorae. TYPE-GATED in Config.App (needs a magnetic dynamo AND an
+  -- atmosphere -- terrestrial and ocean only); this knob only scales worlds that
+  -- already qualify, so turning it up will not light up a desert or a moon.
+  { kind = 'float', key = 'render.planet.aurora',    label = ' - Aurora',    default = 1.0, min = 0, max = 3.0, gpu = 'planetAurora' },
+  -- Lower (green) shell altitude as a fraction of radius. Earth's green band is
+  -- 100-300 km on a 6371 km radius, so ~2-4%; the red band above it is derived
+  -- in the shader at 2.2x this.
+  { kind = 'float', key = 'render.planet.auroraHeight', label = ' - Aurora Alt', default = 0.03, min = 0.0, max = 0.10, gpu = 'planetAuroraHeight' },
   { kind = 'float', key = 'render.planet.terminator', label = 'Planet Terminator',  default = 0.35, min = 0, max = 1,   gpu = 'planetTerminator' },
 
   -- SSAO / GTAO -------------------------------------------------------------

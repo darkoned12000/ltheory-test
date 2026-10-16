@@ -350,13 +350,19 @@ function System:spawnPlanet ()
 -- weather without a capture harness. Also log the two inputs (weather, cloudLevel)
 -- and the planet's generator seed, which is what makes a reported world
 -- reproducible from the log line alone.
-  print(format('[system] planet %s  type=%s  moons=%d  radius=%.0f  clouds=%.2f (weather %.2f + bias %+.2f)  spin=%.4f rad/s (%.1f min)  seed=%.6f  pos=(%.1f,%.1f,%.1f)',
+  print(format('[system] planet %s  type=%s  moons=%d  radius=%.0f  clouds=%.2f (weather %.2f + bias %+.2f)  spin=%.4f rad/s (%.1f min)  seed=%.6f  pos=(%.1f,%.1f,%.1f)  axis=(%.2f,%.2f,%.2f)  star=(%.2f,%.2f,%.2f)',
     planet:getName(), tostring(planet.typeName), nMoons, scale,
     planet:cloudCoverage(), planet.weather or 0.0, planet.cloudLevel or 0.0,
     planet.spinSpeed or 0.0,
     ((planet.spinSpeed or 0.0) > 0) and (2 * math.pi / (planet.spinSpeed)) / 60.0 or 0.0,
     planet.genSeed or 0,
-    pos.x or 0.0, pos.y or 0.0, pos.z or 0.0))
+    pos.x or 0.0, pos.y or 0.0, pos.z or 0.0,
+    -- spinAxis and starDir are logged so a REPORTED VIEW can be reproduced:
+    -- aurorae only appear in the auroral oval (high latitude, near spinAxis) AND
+    -- on the night side (180 deg from starDir), so to aim a camera at one you
+    -- need both vectors.
+    (planet.spinAxis or Vec3f(0, 1, 0)).x, (planet.spinAxis or Vec3f(0, 1, 0)).y, (planet.spinAxis or Vec3f(0, 1, 0)).z,
+    (self.starDir or Vec3f(1, 0, 0)).x, (self.starDir or Vec3f(1, 0, 0)).y, (self.starDir or Vec3f(1, 0, 0)).z))
   return planet
 end
 

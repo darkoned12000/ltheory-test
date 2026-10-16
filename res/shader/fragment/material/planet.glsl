@@ -33,6 +33,10 @@ uniform float cloudTime;    // seconds; advects the cloud lookup (wind)
 uniform float cloudWindRate;// advection rate in rad/s = spinSpeed * render.planet.cloudWind
 uniform float cloudHeight;  // shell altitude as a FRACTION of rPlanet (0 = flat deck, no parallax)
 uniform float cloudShadow;  // how much the deck dims the sun term (0 = no shadowing)
+uniform float stormAmount;  // storminess 0..1 (per-type weather prior x panel knob)
+uniform float stormFlash;   // intra-cloud lightning brightness (0 = none)
+uniform float auroraAmt;    // auroral emission 0..1 (0 = none; type-gated, see Planet.lua)
+uniform float auroraHeight; // lower shell altitude as a FRACTION of rPlanet
 uniform vec3  planetAxisX;  // world-space directions of the planet's local axes. The cube is
 uniform vec3  planetAxisY;  // authored in LOCAL space (so the deck spins with the body), so
 uniform vec3  planetAxisZ;  // sampling the cloud shell needs world -> local. Passed explicitly
@@ -306,11 +310,75 @@ void main() {
     // 1.05 deck albedo, and the sun term scaled by the same terminator shape as
     // the ground so the deck does not keep glowing out past the limb.
     vec3 cloudLit = (sunColor * sunScale * (0.15 + 0.85 * cNL * (1.0 - 0.5 * terminator)) + amb) * 1.05;
+
+    // ---- Storms -----------------------------------------------------------
+    // Storminess is a much LOWER-frequency field than the deck texture, so a
+    // storm reads as a whole weather system rather than as cloud detail. NASA
+    // astronaut photography of storms from orbit consistently shows the
+    // convective cells as DARKER than the surrounding deck -- thick anvils
+    // absorb, they do not scatter more -- so storminess multiplies the deck
+    // albedo down rather than brightening it.
+    float stormField = fSmoothNoise(cloudL * 3.1 + cloudDrift * 0.5 + vec3(91.3, 17.7, 43.1), 3, 2.0);
+    float storm = smoothstep(0.50, 0.80, stormField) * stormAmount;
+
+    // Intra-cloud lightning. Quantise the (drifted) sample direction into storm
+    // cells and hash the cell against the current TIME WINDOW, so each cell
+    // flashes independently and out of phase -- the planet twinkles rather than
+    // strobing in unison. Windows are short so the envelope decays inside one.
+    //
+    // The cell grid is only a way to give each region its OWN flash timing; it
+    // must never be visible. Quantising a unit direction with floor() makes
+    // axis-aligned PLANAR cells, so a firing cell lit a visible white SQUARE
+    // with hard edges (seen 2026-10-15). The position within the cell gives a
+    // smooth window that is 0 at every border, so a flash fades out before it
+    // reaches an edge and the grid can never be seen.
+    const float cellSize = 0.15;   // ~8 deg across, i.e. storm-cell scale
+    const float winDur   = 1.6;
+    vec3  cellC = (cloudL + cloudDrift) / cellSize;
+    vec3  cell  = floor(cellC);
+    vec3  cf    = fract(cellC);
+    vec3  cw    = smoothstep(0.0, 0.30, cf) * (1.0 - smoothstep(0.70, 1.0, cf));
+    float cellWin = cw.x * cw.y * cw.z;
+    float win   = floor(cloudTime / winDur);
+    float ph    = fract(cloudTime / winDur);
+    float hsh   = fract(sin(dot(cell + win, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+    // ~7% of cells fire per window; fast attack, exponential decay.
+    float fire  = step(0.86, hsh);  // ~14% of cells per window
+    // Decay rate sets how long a flash is visible. exp(-ph*8) left it significant
+    // for only ~0.4 s of each 1.6 s window, which is physically right but easy
+    // to miss entirely -- two of three sampled frames landed in the dead part
+    // of the envelope. 5.0 keeps it a FLASH rather than a glow while making it
+    // unmistakable in motion.
+    float env   = fire * smoothstep(0.0, 0.04, ph) * exp(-ph * 5.0);
+    // Only inside a storm, and only where there is actually cloud to light.
+    // `flick` breaks the cell's remaining square footprint: even with the border
+    // window, a flat cellWin still lights a rounded SQUARE, which is visible as
+    // a faint grey patch. Multiplying by a smooth, fast field makes the lit area
+    // ragged like real intra-cloud lightning.
+    float flick = 0.40 + 0.60 * fSmoothNoise((cloudL + cloudDrift) * 7.0
+                                              + vec3(cloudTime * 3.0), 3, 2.0);
+    float flash = env * storm * cov * cellWin * flick * stormFlash;
+
+    // Storm cells darken the deck, then the flash briefly overdrives it.
+    // `storm` MUST be clamped before it drives a mix() factor: stormAmount is
+    // the weather prior times the knob, so it exceeds 1 whenever the knob is
+    // above 1/weather (at storms = 3 on a 0.60 world it reaches 1.8), and an
+    // unclamped mix(1.0, 0.45, 1.8) EXTRAPOLATES to 0.01 -- cells went almost
+    // black and swamped the flashes entirely (2026-10-15).
+    float stormMix = clamp(storm, 0.0, 1.0);
+    cloudLit *= mix(1.0, 0.45, stormMix);
+    // Clamp the flash too, so a firing cell cannot push the deck past a
+    // plausible albedo and blow out through the bloom threshold.
+    cloudLit += vec3(0.85, 0.90, 1.00) * min(flash, 0.8) * 3.2;
     // clamp() matters now that `clouds` can exceed 1 (it parameterises the coverage
     // window, not a literal fraction). mix() with t > 1 EXTRAPOLATES past
     // cloudLit, so an unclamped cov*clouds would push the deck brighter than the
     // cloud colour itself.
     color = mix(color, cloudLit, clamp(cov * clouds, 0.0, 1.0));
+    // A flash inside the deck lights the ground beneath it too. Small, and only
+    // where the deck is thin enough to pass light down, which is what stops it
+    // reading as a glow painted on the surface.
+    color += vec3(0.85, 0.90, 1.00) * flash * 0.35 * (1.0 - cov);
   }
 
   if (hasAtmo > 0.5) {
@@ -320,6 +388,116 @@ void main() {
     // instead of leaving a glowing shell.
     atmo.xyz *= sunOn * atmoGlow;
     color = atmo.xyz + color * (1.0 - atmo.w);
+  }
+
+  // ---- Aurorae -----------------------------------------------------------
+  // Grounded in ISS observations (see ltheory-planets.md 11.13): green emission
+  // occupies 100-300 km and red sits ON TOP of it at 300-500 km; the display
+  // forms concave arcs tens of degrees across, centred on the magnetic pole, in
+  // an oval at high latitude; activity peaks ~180 degrees from the sun; and the
+  // whole thing "crawls around like a giant green amoeba" rather than sitting
+  // still.
+  //
+  // The two colours are put on TWO SHELLS rather than one, which gets the
+  // vertical structure for free: the higher shell is hit at a different
+  // direction whenever the view is off-axis, so red appears offset above green
+  // at the limb and directly behind it when looking straight down. That is the
+  // same thing the real altitude split does, for one extra ray-sphere solve and
+  // no extra texture.
+  if (auroraAmt > 0.001) {
+    float rAur = rPlanet * (1.0 + auroraHeight);
+    float rRed = rPlanet * (1.0 + auroraHeight * 2.2);
+    vec3  oc   = eye - origin;
+    vec3  rd   = normalize(pos - eye);
+
+    // Auroral oval: a NARROW latitude band, not a polar cap and not a hemisphere.
+    // The real oval is a few degrees wide centred near 67 degrees magnetic
+    // latitude. The first attempt spanned lat 0.70-0.99 (44-82 degrees), which
+    // is not an oval at all -- it washed the entire disc green (2026-10-15).
+    // spinAxis is only tilted +/-19 degrees from local +Y (see Planet.lua), so
+    // dot(dir, vec3(0,1,0)) is a good latitude.
+    float lat = abs(dot(normalize(vertPos), vec3(0.0, 1.0, 0.0)));
+    float oval = smoothstep(0.84, 0.90, lat) * (1.0 - smoothstep(0.93, 0.985, lat));
+    // Activity peaks 180 degrees from the sun, so weight hard toward night.
+    float night = 1.0 - smoothstep(-0.55, 0.10, dot(normalize(vertPos), L));
+    // An auroral curtain is optically THIN, so the path length through it is
+    // short when you look straight down at it and long when you see it edge-on.
+    // That makes it a LIMB feature, which is exactly how it reads from orbit --
+    // and it is what stops it painting the disc face-on.
+    float limb = 1.0 - abs(dot(V, N));
+    float edgeOn = smoothstep(0.12, 0.65, limb);
+
+    if (oval * night * edgeOn > 0.001) {
+      // Two advected noise fields: a slow one for the arcs, a faster, finer one
+      // for the vertical rays that fringe their edges.
+      float t = cloudTime * 0.05;
+      vec3  ag = vec3(0.0);
+      vec3  bq = vec3(0.0);
+      float gHit = 0.0, rHit = 0.0;
+
+      // Lower shell -> green.
+      {
+        float bqv = dot(oc, rd);
+        float dsc = bqv * bqv - (dot(oc, oc) - rAur * rAur);
+        if (dsc > 0.0) {
+          float s = sqrt(dsc);
+          float tH = -bqv - s;
+          if (tH <= 0.0) tH = -bqv + s;
+          if (tH > 0.0) {
+            ag = normalize(worldToLocalDir(normalize(oc + rd * tH)));
+            gHit = 1.0;
+          }
+        }
+      }
+      // Upper shell -> red.
+      {
+        float bqv = dot(oc, rd);
+        float dsc = bqv * bqv - (dot(oc, oc) - rRed * rRed);
+        if (dsc > 0.0) {
+          float s = sqrt(dsc);
+          float tH = -bqv - s;
+          if (tH <= 0.0) tH = -bqv + s;
+          if (tH > 0.0) {
+            bq = normalize(worldToLocalDir(normalize(oc + rd * tH)));
+            rHit = 1.0;
+          }
+        }
+      }
+
+      float band = 0.0, rays = 0.0, rband = 0.0;
+      if (gHit > 0.5) {
+        band = fSmoothNoise(ag * 5.5 + vec3(t, 0.0, -t), 4, 2.0);
+        rays = fSmoothNoise(ag * 21.0 + vec3(-t * 1.7, 0.0, t * 1.7), 3, 2.1);
+      }
+      if (rHit > 0.5) {
+        rband = fSmoothNoise(bq * 4.2 + vec3(t * 0.7, 0.0, -t * 0.7), 3, 2.0);
+      }
+
+      // Arc structure: threshold the slow field so the oval breaks into
+      // discrete arcs with real gaps. Two thresholds multiplied -- the first
+      // picks the arcs, the second cuts holes in them -- because a single
+      // saturate() on a fbm field just saturates to 1 over most of the oval.
+      float arc = smoothstep(0.36, 0.50, band) * (1.0 - smoothstep(0.60, 0.78, band));
+      float ray = 0.45 + 0.55 * saturate(rays * 1.4 - 0.25);
+      float g = oval * night * edgeOn * arc * ray;
+
+      // Red is weaker and patchier than green, and only where the upper shell
+      // actually differs from the lower one -- so at nadir it hides behind the
+      // green instead of tinting it.
+      float r = oval * night * edgeOn * smoothstep(0.48, 0.62, rband) * (1.0 - 0.6 * arc);
+
+      // Oxygen green 557.7 nm, oxygen red 630 nm, and a little nitrogen violet
+      // where the rays are strongest.
+      // Green dominant: from orbit the 557.7 nm oxygen band is what you
+      // actually see, and the 630 nm red is a fringe above it. Giving red equal
+      // weight turned the arc magenta, which reads as a bug rather than a light.
+      vec3 aur = vec3(0.10, 1.00, 0.42) * g * 2.60
+               + vec3(1.00, 0.17, 0.28) * r * 0.70
+               + vec3(0.50, 0.34, 1.00) * rays * g * 0.40;
+      // Additive and unbounded upward: it is emission, and the tonemapper rolls
+      // it off rather than clipping it to a flat disc.
+      color += aur * auroraAmt;
+    }
   }
 
   // Emissive (lava): molten cracks glow where the terrain is low. emissiveAmt

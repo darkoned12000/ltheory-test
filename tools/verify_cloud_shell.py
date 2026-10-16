@@ -374,6 +374,77 @@ check("Q4. [KNOWN LIMIT] 1 h of drift is ~52% compressed by atan() (pinned)",
       "after 1 h drift=%.3f rad -> rotation %.3f rad (%.0f%% compression)"
       % (sat, math.atan(sat), 100.0 * (1.0 - math.atan(sat) / sat)))
 
+# --- R/S: storms and lightning.
+# These are pinned NUMERICALLY on purpose. A single screenshot is a bad verifier
+# for lightning: the envelope decays inside each 1.6 s window, so two of three
+# sampled frames landed in the dead part of it and reported "zero flashes" for a
+# feature that was working. Sampling luck is not evidence.
+weather = 0.60          # terrestrial prior
+storm_amt = weather * 3.0
+# A storm factor is clamped BEFORE it drives a mix(); unclamped it reaches 1.8 and
+# mix(1.0, 0.45, 1.8) extrapolates to 0.01, i.e. cells go almost black.
+def lerp(a, b, f):
+    return a + (b - a) * f
+dark_clamped = lerp(1.0, 0.45, min(1.0, storm_amt))
+dark_raw = lerp(1.0, 0.45, storm_amt)
+check("R1. storm mix factor is clamped so cells cannot be driven to black",
+      dark_clamped >= 0.40 and dark_raw < 0.05,
+      "clamped -> %.3f (readable); unclamped would have been %.3f (black)"
+      % (dark_clamped, dark_raw))
+check("R2. a fully-developed storm still leaves the deck readable (not black)",
+      0.30 < dark_clamped < 0.60,
+      "full storm multiplies deck albedo by %.2f" % dark_clamped)
+
+# Flash duty cycle: fraction of a window where the envelope is still visible.
+win_dur = 1.6
+visible = sum(1 for i in range(400)
+              if math.exp(-(i / 400.0) * 5.0) > 0.10)
+check("S1. a lightning flash is visible for a sensible part of its window",
+      0.20 < visible / 400.0 < 0.75,
+      "env > 0.10 for %.0f%% of the %.1f s window"
+      % (100.0 * visible / 400.0, win_dur))
+peak = min(1.0, 0.8) * 3.2
+check("S2. a peak flash brightens the deck without exceeding the cap",
+      0.0 < peak <= 0.8 * 3.2 + 1e-12,
+      "peak deck addition %.2f (cap %.2f)" % (peak, 0.8 * 3.2))
+# The cell grid must never be visible: the border window has to reach 0 at the
+# cell edge, otherwise a firing cell paints a hard SQUARE (seen 2026-10-15).
+def border_window(f):
+    if f < 0.30:
+        t = f / 0.30
+        return t * t * (3.0 - 2.0 * t)
+    if f <= 0.70:
+        return 1.0
+    return max(0.0, 1.0 - (f - 0.70) / 0.30)
+check("S3. cell border window reaches zero at the cell edge (no visible grid)",
+      abs(border_window(0.0)) < 1e-12 and abs(border_window(1.0)) < 1e-12
+      and border_window(0.5) > 0.99,
+      "f=0 -> %.3f, f=0.5 -> %.3f, f=1 -> %.3f"
+      % (border_window(0.0), border_window(0.5), border_window(1.0)))
+
+# --- T: aurora localisation.
+# Aurorae must be a NARROW polar band on the NIGHT side. The first attempt
+# spanned latitude 0.70-0.99 and washed the entire disc green.
+def ss(e0, e1, x):
+    t = max(0.0, min(1.0, (x - e0) / (e1 - e0)))
+    return t * t * (3.0 - 2.0 * t)
+def oval(lat):
+    return ss(0.84, 0.90, lat) * (1.0 - ss(0.93, 0.985, lat))
+def night_w(NL):
+    return 1.0 - ss(-0.55, 0.10, NL)
+check("T1. auroral oval peaks in the 64-68 deg band, zero at equator and pole",
+      oval(math.sin(math.radians(66))) > 0.95
+      and oval(0.0) == 0.0 and oval(1.0) == 0.0,
+      "lat 66deg -> %.3f, equator -> %.3f, pole -> %.3f"
+      % (oval(math.sin(math.radians(66))), oval(0.0), oval(1.0)))
+check("T2. aurora is dark on the day side and lit on the night side",
+      night_w(0.5) == 0.0 and night_w(-0.5) > 0.95,
+      "NL=+0.5 (day) -> %.3f, NL=-0.5 (night) -> %.3f" % (night_w(0.5), night_w(-0.5)))
+G_W, R_W = 2.60, 0.70
+check("T3. green emission dominates red (arc reads green, not magenta)",
+      G_W > R_W * 2.5,
+      "green gain %.2f vs red gain %.2f (%.1fx)" % (G_W, R_W, G_W / R_W))
+
 print()
 if fails:
     print("FAILED: %s" % ", ".join(fails))

@@ -160,9 +160,14 @@ Config.render = {
     -- (override in Config.Local.lua); nil = weighted per-seed pick.
     forceType = nil, -- default is nil
     types = {
-      { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 },
+      -- `aurora` = has a global magnetic dynamo AND enough air to emit. That is
+      -- two requirements, and it is why this is a per-type flag rather than
+      -- "any world with an atmosphere": Venus has a thick atmosphere and NO
+      -- intrinsic field (no aurora), Titan has air and no dynamo (no aurora).
+      -- Only the Earth-like types get one. Absent elsewhere == 0.
+      { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 }, aurora = 1.0,
         hue = { 0.18, 0.46 }, sat = { 0.12, 0.34 }, light = { 0.11, 0.40 }, crater = 0.45, relief = 10.0, valley = 0.35, crack = 0.25 },
-      { name = 'ocean',       weight = 14, gen = 'gen/planet', ocean = { 0.62, 0.92 }, atmo = 1.15, weather = 0.70, mountain = 0.45, atmoTint = { 0.90, 1.00, 1.10 },
+      { name = 'ocean',       weight = 14, gen = 'gen/planet', ocean = { 0.62, 0.92 }, atmo = 1.15, weather = 0.70, mountain = 0.45, atmoTint = { 0.90, 1.00, 1.10 }, aurora = 1.0,
         hue = { 0.50, 0.62 }, sat = { 0.18, 0.40 }, light = { 0.14, 0.30 }, crater = 0.08, relief = 4.0, valley = 0.25, crack = 0.15 },
       { name = 'desert',      weight = 14, gen = 'gen/planet', ocean = { 0.00, 0.03 }, atmo = 1.03, weather = 0.08, mountain = 0.70, atmoTint = { 1.40, 0.95, 0.55 },
         hue = { 0.04, 0.12 }, sat = { 0.20, 0.45 }, light = { 0.10, 0.44 }, crater = 0.90, relief = 14.0, valley = 0.50, crack = 0.45 },
@@ -388,6 +393,23 @@ Config.gpu = {
   planetCloudShadow = 0.55, -- how much the deck dims the sun term on the ground
                           --     beneath it (0..1). One extra cube fetch on an
                           --     already-bound texture, no new pass. 0 = off.
+  planetStorms      = 1.0,     -- storminess multiplier on the type's `weather` prior
+                          --     (ocean .70 / terr .60 / ice .40 / lava .15 /
+                          --     desert .08 / barren+moon 0). Storms read as
+                          --     DARKER convective cells, per ISS photography.
+  planetStormFlash  = 1.0,     -- intra-cloud lightning. Cells fire independently
+                          --     (hashed per cell per time window), so the planet
+                          --     twinkles rather than strobing in unison.
+  planetAurora      = 1.0,     -- auroral emission. TYPE-GATED: only worlds whose
+                          --     type sets `aurora` (needs a magnetic dynamo AND
+                          --     an atmosphere) emit at all -- terrestrial and
+                          --     ocean. Raising this will NOT light a desert,
+                          --     an ice world, a lava world, a barren rock or a
+                          --     moon.
+  planetAuroraHeight = 0.03,   -- lower (green) shell altitude as a fraction of
+                          --     radius; Earth's green band is 100-300 km on a
+                          --     6371 km radius. The red band above is derived
+                          --     in the shader at 2.2x this altitude.
   planetCloudWind   = 0.04, -- cloud advection as a FRACTION OF THE PLANET'S SPIN,
                           --     not an absolute rate. Real drift is ~6% of Earth's
                           --     rotation; relative keeps the feel identical on a

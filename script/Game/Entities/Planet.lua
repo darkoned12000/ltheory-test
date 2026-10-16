@@ -71,6 +71,11 @@ local Planet = subclass(Entity, function (self, seed, opts)
     t = t or pickType(rng, Config.render.planet.types)
   end
   self.typeName = t.name
+  -- Can this body emit aurorae? Needs a global magnetic dynamo AND an
+  -- atmosphere to excite, which is a per-type property, not a per-planet one.
+  -- Default 0 so a type that has not thought about it (including the implicit
+  -- 'moon' type built above) simply never emits.
+  self.auroraCapable = (t.aurora or 0.0)
 
   -- Kept on the entity for the boot log. This is the seed the surface cube was
   -- generated from, and that cube carries BOTH the terrain and the baked cloud
@@ -281,6 +286,31 @@ function Planet:render (state)
     -- How much the deck dims the sun term beneath it. 0 disables shadowing
     -- entirely, which is the A/B against the pre-shadow look.
     Shader.SetFloat('cloudShadow', Settings.get('render.planet.cloudShadow') or 0.55)
+
+    -- ---- Storms -----------------------------------------------------------
+    -- Scaled by the type's existing `weather` prior rather than a second table,
+    -- so "storminess" stays consistent with how wet the world already is: ocean
+    -- (0.70) and terrestrial (0.60) get the worst of it, ice (0.40) moderate,
+    -- lava (0.15) and desert (0.08) rare, and barren/moon -- weather 0 -- none
+    -- at all, which also keeps airless bodies free.
+    local stormKnob = Settings.get('render.planet.storms')
+    if stormKnob == nil then stormKnob = 1.0 end
+    Shader.SetFloat('stormAmount', self.hasAtmo and ((self.weather or 0.0) * stormKnob) or 0.0)
+    -- Intra-cloud lightning brightness. Separate knob so the flashes can be
+    -- auditioned against a calm sky.
+    Shader.SetFloat('stormFlash', Settings.get('render.planet.stormFlash') or 1.0)
+
+    -- ---- Aurorae ----------------------------------------------------------
+    -- Gated on the per-type `aurora` flag (see Config.App types): a dynamo AND
+    -- an atmosphere. Multiplied by hasAtmo as a belt-and-braces check, so a type
+    -- that gains the flag but loses its air still cannot emit.
+    local auroraKnob = Settings.get('render.planet.aurora')
+    if auroraKnob == nil then auroraKnob = 1.0 end
+    local canAurora = self.hasAtmo and (self.auroraCapable and 1.0) or 0.0
+    Shader.SetFloat('auroraAmt', canAurora * auroraKnob)
+    -- Green emission sits at 100-300 km on a 6371 km Earth, so ~2-4% of radius;
+    -- the red band above it is derived in the shader at 2.2x this altitude.
+    Shader.SetFloat('auroraHeight', Settings.get('render.planet.auroraHeight') or 0.03)
     -- The body's local axes in WORLD space. The surface cube is authored in local
     -- space so the terrain spins with the planet; the cloud shell needs to convert
     -- a world-space ray hit back into that local frame. Passed explicitly rather

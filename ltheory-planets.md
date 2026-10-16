@@ -1730,6 +1730,81 @@ and it is not what was originally sketched. Recommendation: **skip it**, take
 **W8 (planet scale)** next, which unblocks **W7b rings** — the item the player
 specifically asked for — and revisit storms later if the sky still wants it.
 
+### 11.13 Storms and aurorae (2026-10-15)
+
+Two planet features added after W7a closed, both chosen because they are in the
+"actually visible from orbit" class (§11.12) rather than the sub-pixel one.
+
+**Storms** — darker cloud cells plus intra-cloud lightning, per the player's
+brief ("darker clouds with the occasional light flashes").
+
+- Storminess is a **much lower-frequency** field than the deck texture, so a
+  storm reads as a whole weather system rather than cloud detail. NASA astronaut
+  photography consistently shows convective cells as *darker* than the
+  surrounding deck — thick anvils absorb rather than scatter more — so
+  storminess **multiplies the deck albedo down** (to 0.45 at full strength),
+  it does not add a dark overlay.
+- Scaled by the type's **existing `weather` prior** rather than a second table,
+  so storminess stays consistent with how wet the world already is: ocean 0.70 /
+  terrestrial 0.60 worst, ice 0.40, lava 0.15, desert 0.08 rare, barren+moon 0 —
+  which also keeps airless bodies free.
+- Flames: each storm cell hashes (cell, time window) so cells flash
+  **independently and out of phase**; the planet twinkles rather than strobing in
+  unison. 1.6 s windows, ~14% of cells per window, fast attack and exponential
+  decay.
+
+**Aurorae** — the player asked for these to be type-gated, and they must be,
+because an aurora needs **two** independent things: an atmosphere to excite and
+a **global magnetic dynamo**. That is not "any world with air": Venus has a
+thick atmosphere and no intrinsic field (no aurora), Titan has air and no dynamo
+(no aurora). So it is a per-type `aurora` flag in `Config.App`, set only on
+**terrestrial and ocean**. Raising the panel knob will not light up a desert, an
+ice world, a lava world, a barren rock or a moon.
+
+Grounded in ISS observations for the look:
+
+| property | source | implementation |
+|---|---|---|
+| green 100–300 km, red 300–500 km above it | altitude-resolved ISS spectra | two shells, red at 2.2x the green altitude |
+| narrow oval near 67° magnetic latitude | oval geometry | `lat` band 0.84–0.93, zero at equator **and** pole |
+| concave arcs with gaps | "large concave arcs... with well-defined edges" | two-threshold arc cut (a single `saturate` just floods the oval) |
+| activity peaks 180° from the sun | "peak at 180 degrees from the sun" | night weighting, zero on the day side |
+| optically thin → long path edge-on | physics | limb weighting, so it is a limb feature |
+| "crawls around like a giant green amoeba" | always moving | two advected noise fields, slow + fast |
+
+The two-shell trick gets the vertical structure for free: the higher shell is hit
+at a different direction off-axis, so red sits above green at the limb and
+directly behind it at nadir — which is what the real altitude split does, for one
+extra ray-sphere solve and no extra texture.
+
+**Four bugs found by LOOKING at the output, none by any test:**
+
+1. **Lightning painted visible white SQUARES.** Quantising a unit *direction*
+   with `floor()` yields axis-aligned **planar** cells, so a firing cell lit a
+   hard-edged square. The grid is only a timing device and must never be visible:
+   fixed with a smooth per-cell border window plus a fast noise field to break
+   the remaining rounded-square footprint.
+2. **The aurora washed the entire disc green.** The oval spanned latitude
+   0.70–0.99 (44–82°) — that is not an oval, it is most of a hemisphere. Narrowed
+   to a real band.
+3. **Storm cells went almost black and the flashes vanished.** `stormAmount` is
+   the weather prior times the knob, so it exceeds 1 above `knob = 1/weather`
+   (1.8 at storms=3), and `mix(1.0, 0.45, 1.8)` extrapolates to 0.01. Same class
+   as the earlier `cov*clouds` trap — **every mix factor fed by a product of a
+   prior and a knob must be clamped.**
+4. **The arc read magenta** because red was weighted equally with green. From
+   orbit the 557.7 nm oxygen band is what you see and 630 nm is a fringe.
+
+**A screenshot is a bad verifier for lightning.** The flash envelope decays
+inside each 1.6 s window, so two of three sampled frames landed in the dead part
+of it and reported "zero flashes" for a feature that was working. Sampling luck is
+not evidence — storms and flashes are now pinned numerically (checks R1–R2, S1–S3)
+and the aurora's localisation is pinned by region (T1–T3).
+
+Verified by region on the limb pose: night limb **4.50/255** mean delta, while the
+sunlit limb and the day-side control are **exactly 0.000** — so it is precisely
+localised to the oval on the night side, not a wash. Perf 0.74 ms at 1280x720.
+
 ### 11.8 Closing this out — what is left, and the order to do it in
 
 State as of 2026-10-14. **W7a is the last thing landed**, so W7 is one-fifth
