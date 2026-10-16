@@ -128,6 +128,52 @@ local Planet = subclass(Entity, function (self, seed, opts)
     self.meshAtmo:invert()
   end
 
+  -- Rings (W7b). Only some worlds have one, decided per type plus a per-planet
+  -- roll. The mesh is built in UNITS OF PLANET RADIUS (radii ~1.25-2.35) in the
+  -- local XZ plane -- the equatorial plane, since local +Y is the spin axis --
+  -- so the entity's own scale supplies rPlanet. Deriving the geometry from the
+  -- planet rather than baking absolute radii is what keeps the ring correct when
+  -- planet sizes change, which is the dependency doc 15.4 flagged for W8.
+  self.ring = nil
+  -- Read from Config.gpu (where the knobs live), NOT Config.render.planet --
+  -- the SETTINGS entry seeds FROM Config.gpu.planetRingChance, so the panel
+  -- value and the value used here must be the same source. Read from Config
+  -- rather than Settings because this runs at CONSTRUCTION time, before the
+  -- panel has necessarily been seeded.
+  --
+  -- `ringsEnabled` is checked here AND at draw time. Checking it here stops a
+  -- ring being built at all; checking it again in render() is what makes the
+  -- toggle useful for A/B -- construction-time knobs cannot affect a planet
+  -- that already exists, so `ringChance = 0` alone would look like "the toggle
+  -- does nothing" on the world you are currently staring at.
+  local ringsOn = Config.gpu.planetRingsEnabled
+  if ringsOn == nil then ringsOn = true end
+  local ringChance = (t.ring or 0.0) * (Config.gpu.planetRingChance or 0.45)
+  if ringsOn and ringChance > 0 and rng:getUniform() < ringChance then
+    -- How much rings differ from world to world. 0 = every ringed world gets the
+    -- same canonical ring (useful for comparing a look change across seeds), 1 =
+    -- full random spread. Scales deviation from the centre values, so the mean
+    -- ring stays recognisable at every setting.
+    local var = Config.gpu.planetRingVariation
+    if var == nil then var = 1.0 end
+    local function jitter (centre, lo, hi)
+      return centre + (rng:getUniformRange(lo, hi) - centre) * var
+    end
+    self.ring = {
+      inner    = jitter(1.35, 1.22, 1.55),
+      outer    = jitter(2.20, 1.95, 2.45),
+      opacity  = jitter(0.85, 0.55, 1.15),
+      bands    = jitter(0.75, 0.45, 1.0),
+      -- Ice rings are bright and slightly blue; dust rings are dark and red.
+      -- `ice` picks between them; 0 = pure dust, 1 = pure ice.
+      ice      = (t.ringIce or 0.5) + (rng:getUniform() - 0.5) * 0.4 * var,
+      tilt     = jitter(0.0, -0.22, 0.22),   -- rad, ring plane wobble
+      spin     = jitter(1.0, 0.4, 1.4),      -- ring azimuthal rate
+    }
+    self.ring.ice = math.max(0.0, math.min(1.0, self.ring.ice))
+    self.meshRing = self:buildRingMesh():managed()
+  end
+
   -- Axial spin (planets-work Phase A). Drawn LAST so a given seed's appearance
   -- parameters above are unchanged. The surface is sampled in LOCAL space
   -- (`vertPos = vertex_position`), so rotating the body spins the visible
@@ -193,6 +239,46 @@ function Planet:cloudCoverage ()
   -- ordering ocean > terrestrial > ice > lava > desert and the seed variation
   -- inside each. The shader clamps the mix factor to match.
   return math.max(0.0, math.min(1.5, (self.weather or 0.0) * knob + (self.cloudLevel or 0.0)))
+end
+
+-- Build the ring annulus in the local XZ plane (local +Y is the spin axis, so
+  -- XZ is the equatorial plane). Radii are in PLANET RADIiS: the mesh spans the
+  -- widest plausible band and the fragment shader masks to this ring's own
+  -- [inner, outer], which keeps the per-ring edges LIVE (a knob, not baked
+  -- geometry) while the mesh covers every case.
+--
+  -- Radial subdivision matters: a ring seen edge-on collapses many texel rows
+  -- onto one pixel row, so the angular direction is oversampled and the radial
+  -- direction is subdivided independently rather than left to a single quad.
+function Planet:buildRingMesh ()
+  local R_IN, R_OUT = 1.10, 2.60     -- mesh extent; shader masks inside this
+  local N_RAD, N_ANG = 28, 160
+  local m = Mesh.Create()
+  m:reserveVertexData((N_RAD + 1) * (N_ANG + 1))
+  m:reserveIndexData(N_RAD * N_ANG * 6)
+  local idx = 0
+  for i = 0, N_RAD do
+    -- Bias samples toward the inner edge, where the ring is brightest and the
+    -- detail lives.
+    local f = i / N_RAD
+    local r = R_IN + (R_OUT - R_IN) * (f * f * 0.65 + f * 0.35)
+    for j = 0, N_ANG do
+      local a = (j / N_ANG) * 2.0 * math.pi
+      local ca, sa = math.cos(a), math.sin(a)
+      m:addVertex(r * ca, 0.0, r * sa, 0.0, 1.0, 0.0, j / N_ANG, f)
+    end
+  end
+  local stride = N_ANG + 1
+  for i = 0, N_RAD - 1 do
+    for j = 0, N_ANG - 1 do
+      local v0 = i * stride + j
+      local v1 = (i + 1) * stride + j
+      m:addIndex(v0);     m:addIndex(v1);     m:addIndex(v0 + 1)
+      m:addIndex(v0 + 1); m:addIndex(v1);     m:addIndex(v1 + 1)
+      idx = idx + 6
+    end
+  end
+  return m
 end
 
 -- Rotation multiplier from the debug panel. 1 = the seed's own rate, 0 = fully
@@ -373,7 +459,64 @@ function Planet:render (state)
     Shader.SetTexCube('surface', self.texSurface)
     self.mesh:draw()
     shader:stop()
-  elseif state.mode == BlendMode.Alpha and self.meshAtmo then
+  elseif state.mode == BlendMode.Alpha then
+    -- Ring first, then the atmosphere shell. Both are premultiplied-alpha, and
+    -- drawing the ring first means the atmosphere's scatter tints the ring's
+    -- inner edge where the two overlap -- which is what happens physically,
+    -- since the ring passes in front of and behind the haze.
+    local ringsLive = Settings.get('render.planet.ringsEnabled')
+    if ringsLive == nil then ringsLive = true end
+    if self.meshRing and ringsLive then
+      -- Cull face and depth state are already set by startAlpha (CullFace.None,
+      -- depth test on, depth write off), and CullFace.None is what we want: a
+      -- flat ring must be visible from above AND below. Only the blend mode
+      -- needs changing, to premultiplied, to match the shader's output.
+      BlendMode.Push(BlendMode.PreMultAlpha)
+      local rshader = Cache.Shader('wvp', 'material/ring')
+      rshader:start()
+      local r = self.ring
+      local pos = self:getPos()
+      Shader.SetFloat3('origin', pos.x, pos.y, pos.z)
+      Shader.SetFloat('rPlanet', self:getScale())
+      Shader.SetFloat('ringInner', r.inner)
+      Shader.SetFloat('ringOuter', r.outer)
+      Shader.SetFloat('ringOpacity', r.opacity * (Settings.get('render.planet.ringOpacity') or 1.0))
+      Shader.SetFloat('ringBands', r.bands)
+      Shader.SetFloat('ringBright', Settings.get('render.planet.ringBright') or 1.0)
+      Shader.SetFloat('sunScale', Settings.get('render.planet.sunScale') or 1.0)
+      -- Ice rings are bright and faintly blue; dust rings are dark and red.
+      local iceness = r.ice
+      local cr = (1.0 - iceness) * 0.62 + iceness * 0.92
+      local cg = (1.0 - iceness) * 0.46 + iceness * 0.95
+      local cb = (1.0 - iceness) * 0.34 + iceness * 1.00
+      Shader.SetFloat3('ringColor', cr, cg, cb)
+      -- Drives scatter BEHAVIOUR as well as colour: dust is fine and nearly
+      -- isotropic (a matte ring), ice is coarse and blazes when backlit.
+      Shader.SetFloat('ringIce', iceness)
+      -- How strongly the ring picks up the skybox / nebula around it.
+      Shader.SetFloat('ringEnv', Settings.get('render.planet.ringEnv') or 1.0)
+      -- Ring plane normal in world space: the planet's equatorial axis, which
+      -- the entity transform already carries (this is why the mesh is flat).
+      local sax = self.spinAxis or Vec3f(0, 1, 0)
+      Shader.SetFloat3('spinAxis', sax.x, sax.y, sax.z)
+      local rot = self:getRot()
+      if rot then
+        local ax, ay, az = rot:getAxisX(), rot:getAxisY(), rot:getAxisZ()
+        Shader.SetFloat3('planetAxisX', ax.x, ax.y, ax.z)
+        Shader.SetFloat3('planetAxisY', ay.x, ay.y, ay.z)
+        Shader.SetFloat3('planetAxisZ', az.x, az.y, az.z)
+      else
+        Shader.SetFloat3('planetAxisX', 1, 0, 0)
+        Shader.SetFloat3('planetAxisY', 0, 1, 0)
+        Shader.SetFloat3('planetAxisZ', 0, 0, 1)
+      end
+      Shader.SetMatrix('mWorld', self:getToWorldMatrix())
+      Shader.SetMatrixT('mWorldIT', self:getToLocalMatrix())
+      self.meshRing:draw()
+      rshader:stop()
+      BlendMode.Pop()
+    end
+    if self.meshAtmo then
     CullFace.Push(CullFace.Back)
     BlendMode.Push(BlendMode.PreMultAlpha)
     local shader = Cache.Shader('wvp', 'material/atmosphere')
@@ -404,6 +547,7 @@ function Planet:render (state)
     shader:stop()
     BlendMode.Pop()
     CullFace.Pop()
+    end
   end
 end
 

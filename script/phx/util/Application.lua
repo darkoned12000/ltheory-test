@@ -283,7 +283,8 @@ function Application:run ()
         'render.resolutionScale', 'render.superSample',
         'render.planet.cloudsEnabled', 'render.planet.clouds', 'render.planet.cloudHeight',
         'render.planet.cloudShadow', 'render.planet.cloudWind',
-    'render.planet.spinRate', 'render.planet.storms', 'render.planet.stormFlash',
+    'render.planet.spinRate', 'render.planet.ringsEnabled', 'render.planet.ringVariation', 'render.planet.ringChance',
+    'render.planet.ringOpacity', 'render.planet.ringBright', 'render.planet.ringEnv', 'render.planet.storms', 'render.planet.stormFlash',
     'render.planet.aurora', 'render.planet.auroraHeight',
         -- The medium knobs, because a nebula A/B is worthless without them.
         -- Measured missing: a Low-vs-High comparison at identical density looked

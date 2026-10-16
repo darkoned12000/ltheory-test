@@ -1800,6 +1800,63 @@ That is three separate bugs (§11.2 drift magnitude, §11.14 drift basis,
 §11.15 relief basis) from one recurring mistake, and it is the most useful thing
 in this section: *a branch on a sphere coordinate is a circle on the surface.*
 
+### 11.16 Planetary rings (W7b)
+
+Rings ship on a fraction of eligible worlds, drawn in the **alpha pass** so the
+G-buffer depth from the planet rejects the half of the ring hidden behind the
+body -- no extra depth sort needed.
+
+**Geometry is derived from the planet, not baked.** The annulus mesh is authored
+at radii 1.10-2.60 in *planet radii* in the local XZ plane (local +Y is the spin
+axis, so XZ is equatorial) and the entity's own scale supplies `rPlanet`. That is
+how the dependency doc 15.4 flagged is resolved rather than blocked: **W8 can now
+change planet sizes freely and the rings simply move with their planet**, which is
+the physically correct outcome. The mesh spans the widest plausible band and the
+fragment shader masks to each ring's own live `[inner, outer]`.
+
+Radial subdivision is independent of angular (28 x 160) because a ring seen
+edge-on collapses many rows onto one pixel row.
+
+**Lighting, all three from real ring physics:**
+
+- **Sun elevation on the ring plane** -- a flat sheet is lit in proportion to how
+  much of the sun's hemisphere its face sees, so an edge-on ring dims.
+- **Forward scatter** -- light scattered toward the observer arrives from the
+  *sun's* direction, so a ring with the sun behind it glows far brighter. This is
+  the strongest cue that rings are ice and not paint, and why a backlit Saturn is
+  the iconic view.
+- **The planet's shadow** -- the ring is coplanar with the planet, so for a point
+  `p` the ray to the sun passes through the planet exactly when `p.L < 0`. The
+  geometry reduces to a wedge, which is the dark band across a backlit ring. No
+  quadratic needed. Softened for the sun's penumbra.
+
+**Ice vs dust drives behaviour, not just colour.** Particle size sets how sharp
+the forward-scatter peak is: ice is coarse and blazes when backlit, dust is fine
+and nearly isotropic so its ring stays matte. Driving only the *colour* from the
+ice/dust mix was the wrong tell -- a dust ring flared like ice. So the exponent
+(2.5 -> 9.0) and peak (0.30 -> 2.00) both interpolate with it.
+
+**Nebula pickup** samples `irMap` (pushed globally every frame by
+`System:beginRender`) along the *sun's* direction, which is where the scattered
+light originates -- so a backlit ring takes the colour of whatever nebula bank
+lies behind it. Knob `ringEnv`; verified live (ring band mean delta 2.276,
+max 108, between env 1 and 0).
+
+**Debug affordances, per the player's request.** `ringsEnabled` is checked BOTH at
+spawn (don't build the mesh) *and* at draw time (hide an existing one) --
+construction-time knobs like `ringChance` cannot affect the world already on
+screen, so a chance of 0 alone looks like a broken toggle. `ringVariation` scales
+deviation from canonical ring values: 0 = every ringed world gets the same ring
+(good for A/B-ing a look change across seeds), 1 = full spread.
+
+TRAP -- **never write an include directive literally in a shader comment.** The
+preprocessor scans the whole file and takes the rest of that line as a path,
+comments included, so a comment explaining an include made it try to load a
+shader named after the sentence and abort the boot with `Resource_Resolve: Failed
+to find Shader <...>`. `configure.py`'s offline validator does **not** use this
+path, so the file passed 137/137 and then died at runtime. Refer to it as "the
+include directive". (Backticks have the same effect.)
+
 ### 11.14 The "circle" — a discontinuous tangent basis (found in play, 2026-10-16)
 
 The arc the player kept reproducing was **not** the deck/shadow desync fixed in

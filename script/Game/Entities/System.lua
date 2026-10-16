@@ -350,11 +350,17 @@ function System:spawnPlanet ()
 -- weather without a capture harness. Also log the two inputs (weather, cloudLevel)
 -- and the planet's generator seed, which is what makes a reported world
 -- reproducible from the log line alone.
-  print(format('[system] planet %s  type=%s  moons=%d  radius=%.0f  clouds=%.2f (weather %.2f + bias %+.2f)  spin=%.4f rad/s (%.1f min)  seed=%.6f  pos=(%.1f,%.1f,%.1f)  axis=(%.2f,%.2f,%.2f)  star=(%.2f,%.2f,%.2f)',
+  print(format('[system] planet %s  type=%s  moons=%d  radius=%.0f  clouds=%.2f (weather %.2f + bias %+.2f)  spin=%.4f rad/s (%.1f min)  ring=%s  seed=%.6f  pos=(%.1f,%.1f,%.1f)  axis=(%.2f,%.2f,%.2f)  star=(%.2f,%.2f,%.2f)',
     planet:getName(), tostring(planet.typeName), nMoons, scale,
     planet:cloudCoverage(), planet.weather or 0.0, planet.cloudLevel or 0.0,
     planet.spinSpeed or 0.0,
     ((planet.spinSpeed or 0.0) > 0) and (2 * math.pi / (planet.spinSpeed)) / 60.0 or 0.0,
+    (function ()
+       local r = planet.ring
+       if not r then return 'none' end
+       return format('%.2f-%.2f R  ice=%.2f  opacity=%.2f',
+                     r.inner, r.outer, r.ice, r.opacity)
+     end)(),
     planet.genSeed or 0,
     pos.x or 0.0, pos.y or 0.0, pos.z or 0.0,
     -- spinAxis and starDir are logged so a REPORTED VIEW can be reproduced:

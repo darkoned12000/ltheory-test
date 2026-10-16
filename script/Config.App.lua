@@ -176,13 +176,13 @@ Config.render = {
       -- "any world with an atmosphere": Venus has a thick atmosphere and NO
       -- intrinsic field (no aurora), Titan has air and no dynamo (no aurora).
       -- Only the Earth-like types get one. Absent elsewhere == 0.
-      { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 }, aurora = 1.0,
+      { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 }, aurora = 1.0, ring = 0.30, ringIce = 0.85,
         hue = { 0.18, 0.46 }, sat = { 0.12, 0.34 }, light = { 0.11, 0.40 }, crater = 0.45, relief = 10.0, valley = 0.35, crack = 0.25 },
-      { name = 'ocean',       weight = 14, gen = 'gen/planet', ocean = { 0.62, 0.92 }, atmo = 1.15, weather = 0.70, mountain = 0.45, atmoTint = { 0.90, 1.00, 1.10 }, aurora = 1.0,
+      { name = 'ocean',       weight = 14, gen = 'gen/planet', ocean = { 0.62, 0.92 }, atmo = 1.15, weather = 0.70, mountain = 0.45, atmoTint = { 0.90, 1.00, 1.10 }, aurora = 1.0, ring = 0.22, ringIce = 0.80,
         hue = { 0.50, 0.62 }, sat = { 0.18, 0.40 }, light = { 0.14, 0.30 }, crater = 0.08, relief = 4.0, valley = 0.25, crack = 0.15 },
       { name = 'desert',      weight = 14, gen = 'gen/planet', ocean = { 0.00, 0.03 }, atmo = 1.03, weather = 0.08, mountain = 0.70, atmoTint = { 1.40, 0.95, 0.55 },
         hue = { 0.04, 0.12 }, sat = { 0.20, 0.45 }, light = { 0.10, 0.44 }, crater = 0.90, relief = 14.0, valley = 0.50, crack = 0.45 },
-      { name = 'ice',         weight = 14, gen = 'gen/planet', ocean = { 0.15, 0.55 }, atmo = 1.05, weather = 0.40, mountain = 0.70, atmoTint = { 0.90, 0.98, 1.12 },
+      { name = 'ice',         weight = 14, gen = 'gen/planet', ocean = { 0.15, 0.55 }, atmo = 1.05, weather = 0.40, mountain = 0.70, atmoTint = { 0.90, 0.98, 1.12 }, ring = 0.28, ringIce = 0.30,
         hue = { 0.55, 0.66 }, sat = { 0.05, 0.18 }, light = { 0.22, 0.55 }, crater = 0.55, relief = 7.0, valley = 0.30, crack = 0.35 },
       { name = 'barren',      weight = 18, gen = 'gen/moon',   ocean = { 0.00, 0.00 }, atmo = 0.0,  weather = 0.00,
         hue = { 0.05, 0.10 }, sat = { 0.02, 0.16 }, light = { 0.06, 0.22 },
@@ -404,6 +404,27 @@ Config.gpu = {
   planetCloudShadow = 0.55, -- how much the deck dims the sun term on the ground
                           --     beneath it (0..1). One extra cube fetch on an
                           --     already-bound texture, no new pass. 0 = off.
+  planetRingsEnabled = true, -- master switch for rings. Checked at spawn AND at
+                          --     draw time, so it hides an existing ring live --
+                          -- every other ring knob is construction-time and
+                          --     cannot affect the world already on screen.
+  planetRingVariation = 1.0, -- 0 = every ringed world gets the same canonical
+                          --     ring (good for A/B-ing a look change across
+                          --     seeds), 1 = full spread.
+  planetRingChance  = 0.45,   -- GLOBAL multiplier on each type's per-type `ring`
+                          --     weight, so ring frequency is tunable without
+                          --     touching the type table. Per-type chances are
+                          --     ~0.2-0.3, so at 0.45 roughly one world in six
+                          --     ends up ringed -- a treat, not the norm. 0 forces
+                          --     every type off and is a clean A/B.
+  planetRingOpacity = 1.0,    -- ring optical depth scale
+  planetRingBright  = 1.0,    -- overall ring brightness multiplier
+  planetRingEnv     = 1.0,    -- how strongly a ring picks up the skybox / nebula
+                          --     irradiance. Light scattered toward the eye comes
+                          --     from the star's direction, so a backlit ring
+                          --     takes the colour of whatever nebula bank is
+                          --     behind it. 0 = star light only.
+
   planetStorms      = 1.0,     -- storminess multiplier on the type's `weather` prior
                           --     (ocean .70 / terr .60 / ice .40 / lava .15 /
                           --     desert .08 / barren+moon 0). Storms read as

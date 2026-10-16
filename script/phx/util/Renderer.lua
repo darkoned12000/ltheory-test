@@ -203,6 +203,26 @@ local SETTINGS = {
   -- Live: applies to planets already spinning. Cloud wind is a fraction of
   -- rotation, so it slows in proportion -- raise cloudWind to compensate if you
   -- want the same absolute drift.
+  -- Rings. `ringChance` is a GLOBAL multiplier on the per-type `ring` weight in
+  -- Config.App, so ring frequency can be auditioned without editing the type
+  -- table; 0 is a clean A/B with no ringed worlds at all.
+  -- Master toggle. Checked BOTH at spawn (don't build the ring) and at draw
+  -- time (hide an existing one), which is what makes it a usable A/B: every
+  -- other ring knob is construction-time and cannot affect the world you are
+  -- currently looking at.
+  { kind = 'bool', key = 'render.planet.ringsEnabled', label = ' - Rings',  default = true, gpu = 'planetRingsEnabled' },
+  -- How much ringed worlds differ from each other. 0 = one canonical ring
+  -- everywhere (good for comparing a look change across seeds), 1 = full spread.
+  -- Construction-time, like ringChance.
+  { kind = 'float', key = 'render.planet.ringVariation', label = ' - Ring Variation', default = 1.0, min = 0, max = 1.0, gpu = 'planetRingVariation' },
+  { kind = 'float', key = 'render.planet.ringChance',  label = ' - Rings',     default = 0.45, min = 0, max = 2.0, gpu = 'planetRingChance' },
+  { kind = 'float', key = 'render.planet.ringOpacity', label = ' - Ring Opacity', default = 1.0, min = 0, max = 3.0, gpu = 'planetRingOpacity' },
+  -- How strongly rings pick up the skybox / nebula irradiance around them.
+  -- A backlit ring is lit by light arriving from the star's direction, so this is
+  -- what makes it take the colour of whatever nebula bank lies behind it. 0
+  -- leaves only the star and a small floor.
+  { kind = 'float', key = 'render.planet.ringEnv',     label = ' - Ring Env',  default = 1.0, min = 0, max = 3.0, gpu = 'planetRingEnv' },
+  { kind = 'float', key = 'render.planet.ringBright',  label = ' - Ring Bright',  default = 1.0, min = 0, max = 3.0, gpu = 'planetRingBright' },
   { kind = 'float', key = 'render.planet.spinRate',  label = ' - Rotation',       default = 0.6, min = 0, max = 2.0, gpu = 'planetSpinRate' },
   { kind = 'float', key = 'render.planet.clouds',     label = ' - Coverage',         default = 1.25,  min = 0, max = 3.0, gpu = 'planetClouds' },
   -- Cloud shell altitude as a fraction of the planet radius. 0 = the old
