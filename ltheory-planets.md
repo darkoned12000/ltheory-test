@@ -262,9 +262,9 @@ tune a look against a frame that will change shape under you** (W3–W5 before W
 | W3 | Nebula medium: consume the rim colour + ellipsoid extents it already computes | W1 | M | ✅ 2026-10-12 |
 | W4 | Small look fixes (star in haze, marker rim clamp, integer-hash medium) | W1 | S | ✅ 2026-10-12 |
 | W5 | Re-tune density ⇒ god-rays gain together | W3, W4 | S | ✅ 2026-10-12 |
-| W6 | FPS: profile on the *final* W5 settings | W5 | M | open |
+| W6 | FPS: profile on the *final* W5 settings | W5 | M | ✅ **CLOSED 2026-10-16** — see below |
 | W7 | Deferred features (clouds, gas giants, rings, biomes, atmosphere entry) | W6 | L | §11.3 — split below |
-| W8 | Planet scale vs `kSystemScale` (planets can engulf the system) | — | M | §11.4 |
+| W8 | Planet scale vs `kSystemScale` (planets can engulf the system) | — | M | ⛔ open — needs a size decision, §11.4 |
 | S1 | Speckle watch — verify on seeds beyond the repro | W1 | S | open |
 
 Two **pending decisions** (not tasks — someone has to pick a side): §11.5's
@@ -472,9 +472,38 @@ feeds both the volume and `Renderer:godrays`, and the veil is **quadratic** in i
 - **Not verified:** taste. These are defensible numbers, not the final look —
   play-testing it against the panel is the point.
 
-**W6 — FPS.** Keep it **after** W5: the frame cost depends on the final density
-and god-ray settings, so profiling before them means profiling the wrong frame.
-Existing levers and their costs are in §11.2.
+**W6 — FPS. ✅ CLOSED 2026-10-16.** The missing half was always the *load*: every
+earlier figure was taken on an empty system, so "re-measure under load" was the
+real content. Measured on the player's own preset (fullscreen 4K window,
+`resolutionScale = 50%`, nebula Low, debug panel **on**, live chase camera, a
+10,000-asteroid belt, one planet) with the frame delta including the physics step
+over those 10k rigid bodies:
+
+| config | mean | fps |
+|---|---|---|
+| **player's real preset** (4K window, 1920x1080 internal, 10k belt, panel on) | **1.54 ms** | **650** |
+| **worst case** (4K **native**, planet filling frame, rings + storms + aurorae, 10k belt, panel on) | **6.93 ms** | **144** |
+
+Both are at the real resolution, which closes §11.11's standing caveat for this
+item. Against the 60 fps (16.7 ms) requirement there is roughly **10x headroom at
+the player's own settings** and better than 2x even in the deliberate worst case,
+with all of W7a (clouds, shell, shadows, storms, lightning), the aurorae and the
+new rings enabled.
+
+- **Largest single cost: the volumetric nebula**, as §11.11 already established
+  (+1.0 ms at Low and +4.4 ms at High on 4K native, ~48% of the frame at High).
+  Already mitigated by the shipped choice (`nebulaQuality = 'Low'` plus
+  `resolutionScale = 50%`), so it is **accepted rather than fixed** -- a taste and
+  budget decision, not a defect.
+- **Caveat worth keeping:** the frame is cheap partly because the belt is spread
+  over a system 10,000 units across, so most of those bodies are culled or
+  distant. The *physics* cost of 10k rigid bodies IS included (it is inside the
+  frame delta); the *drawn* count is not measured, so this is a fair "under load"
+  figure but not a worst-case-for-draw-call figure.
+- **This does not re-open W5's calibration.** §11.11's finding stands: `quality`
+  changes the rendered density, not just the sampling, so the W5 numbers were
+  tuned around a god-ray gain that has since been removed as unphysical. That is
+  a *look* decision (§11.5), not a frame-time one.
 
 **S1 — speckle watch.** The green-speckle fix (§11.1) was verified on the repro
 seed only. If the grain reappears elsewhere it is a *different* cause — capture
