@@ -199,6 +199,11 @@ local SETTINGS = {
   -- Multiplier on the type's prior, NOT a 0..1 fraction: it positions the
   -- coverage window, so it is meaningful above 1 (resolved coverage is clamped
   -- separately at 1.5 -- see Planet:cloudCoverage for why not at 1.0).
+  -- Multiplier on each planet's seeded rotation rate, not a new distribution.
+  -- Live: applies to planets already spinning. Cloud wind is a fraction of
+  -- rotation, so it slows in proportion -- raise cloudWind to compensate if you
+  -- want the same absolute drift.
+  { kind = 'float', key = 'render.planet.spinRate',  label = ' - Rotation',       default = 0.6, min = 0, max = 2.0, gpu = 'planetSpinRate' },
   { kind = 'float', key = 'render.planet.clouds',     label = ' - Coverage',         default = 1.25,  min = 0, max = 3.0, gpu = 'planetClouds' },
   -- Cloud shell altitude as a fraction of the planet radius. 0 = the old
   -- ground-projected deck (clouds welded to the terrain, no parallax). The

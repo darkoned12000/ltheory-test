@@ -141,6 +141,17 @@ Config.render = {
   planet = {
     spin      = true,
     spinSpeed = function (rng) return rng:getUniformRange(0.01, 0.05) end,  -- rad/s
+    -- Multiplier on the per-planet rate above, NOT a new distribution: the seed
+    -- still picks 0.01-0.05 rad/s and this scales the result, so worlds keep
+    -- their individual personalities. Read live, so it applies to planets already
+    -- spinning. Default 0.6 = a 40% reduction in rotation.
+    --
+    -- NOTE: cloud wind is defined as a FRACTION of rotation (cloudWind, default
+    -- 0.04), so it slows down with the planet. That is deliberate -- the deck
+    -- keeps drifting at the same rate RELATIVE to the ground, which is what
+    -- makes a fast and a slow planet feel alike. To hold the old absolute drift
+    -- while the rotation is slower, raise cloudWind to 0.04 / 0.6 = 0.067.
+    planetSpinRate = 0.6,
 
     -- Atmosphere exclusion bubble. A planet only collides as a smooth sphere at
     -- `scale`, so a ship pressing in "meshes" with the shaded surface. This

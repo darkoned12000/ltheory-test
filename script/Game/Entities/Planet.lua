@@ -134,7 +134,13 @@ local Planet = subclass(Entity, function (self, seed, opts)
   -- terrain; a slow, tilted, deterministically-signed axis reads as a planet.
   self.spinAxis = Vec3f(
     rng:getUniformRange(-0.35, 0.35), 1, rng:getUniformRange(-0.35, 0.35)):normalize()
-  self.spinSpeed = Config.render.planet.spinSpeed(rng)
+  -- Base rate from the seed, and the EFFECTIVE rate after the panel's
+  -- `render.planet.spinRate` scale. Kept separately so the multiplier can be
+  -- changed live (mid-session) without re-rolling the per-planet value, and so
+  -- cloud wind -- which is defined as a FRACTION of rotation -- scales with it
+  -- rather than silently drifting relatively faster.
+self.spinSpeedBase = Config.render.planet.spinSpeed(rng)
+  self.spinSpeed = self.spinSpeedBase * self:spinScale()
   self.spinAngle = 0
 
   -- Moon (planets-work Phase B): orbit a parent body instead of spinning free.
@@ -189,6 +195,15 @@ function Planet:cloudCoverage ()
   return math.max(0.0, math.min(1.5, (self.weather or 0.0) * knob + (self.cloudLevel or 0.0)))
 end
 
+-- Rotation multiplier from the debug panel. 1 = the seed's own rate, 0 = fully
+-- static (though `render.planet.spin = false` is the blunt way to do that).
+-- Read every frame so the slider is live rather than spawn-time only.
+function Planet:spinScale ()
+  local k = Settings.get('render.planet.spinRate')
+  if k == nil then k = 0.6 end
+  return k
+end
+
 function Planet:update (state)
   -- Cloud advection clock. Accumulated from dt rather than read from a wall
   -- clock, so it stays reproducible with a pinned world seed, and advanced for
@@ -218,6 +233,9 @@ function Planet:update (state)
     return
   end
   if not Config.render.planet.spin then return end
+  -- Re-derive the effective rate each frame so the slider takes effect on
+  -- planets that are ALREADY spinning, not just newly spawned ones.
+self.spinSpeed = self.spinSpeedBase * self:spinScale()
   self.spinAngle = (self.spinAngle + self.spinSpeed * state.dt) % (2 * math.pi)
   -- Base rotation is identity at spawn, so this is a clean spin about the
   -- planet's own fixed axis. (Verified not to be clobbered by the physics step:
