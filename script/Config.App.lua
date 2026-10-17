@@ -56,16 +56,37 @@ Config.gen = {
   -- Minimum distance to keep the player's ship from a planet center at spawn:
   -- keeps you just clear of the surface (and out of its "huge in your face" zone)
   -- so there's room to see and fly around it. Tune freely; default ~1.25x radius.
-  planetViewDist = 250000,
+  -- Ship stand-off from a planet is now primarily planetStandoff x the planet's
+  -- own radius; this is only a FLOOR for very small bodies (see LTheory.lua).
+  -- It used to be the primary term, as a fixed 250000.
+  planetViewDist = 5000,
+  planetStandoff = 2.2,       -- x planet radius; ~54 deg disc at 80 deg FOV
 
-  -- Planet-work planet size (System:spawnPlanet). `scalePlanet` just below is the
-  -- legacy SystemBasic scale and is unrelated. Planets are static bodies, so
-  -- Bullet's oversized-AABB limit (~289k radius) no longer bounds them; this cap
-  -- is about the 1e6 far plane and system coherence.
-  planetScaleBase = 1e5,     -- radius = planetScaleBase * Erlang(2); mean ~200k
-  planetRadiusMax = 400000,  -- hard cap (far side inside 1e6 at 1.35x stand-off)
-
-  scalePlanet = 2000,
+  -- Planet size (System:spawnPlanet). `scalePlanet` is the HONOURED base:
+  -- radius = scalePlanet * Erlang(2), so the mean radius is ~2x this.
+  --
+  -- W8 (2026-10-16): the live spawn path ignored `scalePlanet` entirely and used
+  -- `planetScaleBase = 1e5` below, giving a mean radius of ~200k against
+  -- kSystemScale = 10000 -- every planet was ~20x the system it sat in and could
+  -- engulf the belt and stations. `scalePlanet` was read only by the legacy
+  -- Gen/System/SystemBasic generator, so a player's `Config.gen.scalePlanet` had
+  -- no effect on the world they actually played in. It is now the live base;
+  -- `planetScaleBase` remains only as a fallback if that is set instead.
+  --
+  -- Engagement is now structurally impossible rather than merely unlikely: the
+  -- placement distance is DERIVED from the radius (`planetClearance` below), so
+  -- no value of `scalePlanet` can produce an engulfing planet.
+  scalePlanet     = 6000,    -- mean radius ~12k; the belt lives within 10k
+  planetClearance = 2.5,     -- planet CENTRE is at least this x its radius, so
+                              --     its surface clears the system's own extent
+  -- Fallback base, used only if `scalePlanet` is nil. It was the live base
+  -- before W8 and is 20x larger; changing it does nothing unless scalePlanet is
+  -- unset.
+  planetScaleBase = 1e5,
+  -- Planets are static bodies, so Bullet's oversized-AABB limit (~289k radius)
+  -- no longer bounds them; this cap is about the 1e6 far plane at the ship's
+  -- 1.35x stand-off.
+  planetRadiusMax = 400000,
   playerShipSize = 4,
 }
 
@@ -199,7 +220,13 @@ Config.render = {
     moon = {
       orbitSpeed  = function (rng) return rng:getUniformRange(0.004, 0.018) end,  -- rad/s
       scale       = function (rng) return rng:getUniformRange(0.03, 0.14) end,    -- x parent radius
-      minRadius   = 800,      -- absolute floor so a small planet gets no pebble-moons
+      -- Floor as a FRACTION of the parent radius, not an absolute 800. W8 made
+      -- planets much smaller (scalePlanet 6e3 -> radius ~1e3-9e3), and an
+      -- absolute 800 floor then gave a radius-1008 planet moons of radius 800 --
+      -- 0.79x its own planet. 3% keeps the "no pebble-moons" intent at any
+      -- parent size, and for large parents it subsumes the old 800 outright
+      -- (3% of a 2e5 planet is 6000).
+      minRadiusFrac = 0.03,
       orbit       = function (rng) return rng:getUniformRange(1.6, 3.2) end,      -- x parent radius
       orbitMax    = 220000,   -- absolute cap (world units): keeps moons clear of the
                               -- 1e6 far plane, so they can't clip out as you fly

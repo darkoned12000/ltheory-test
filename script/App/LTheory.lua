@@ -67,10 +67,20 @@ function LTheory:generate ()
       local sp       = controlling:getPos()
       local dx, dy, dz = sp.x - center.x, sp.y - center.y, sp.z - center.z
       local dist     = math.sqrt(dx * dx + dy * dy + dz * dz)
-      -- Clear by at least the planet SURFACE: planetViewDist alone let a huge
-      -- planet (radius 343812 > 250000) spawn the ship INSIDE it -> Bullet
-      -- "Overflow in AABB" -> ship destroyed -> the getRoot() crash.
-      local clear = math.max(Config.gen.planetViewDist, planet:getScale() * 1.35)
+      -- Stand-off is now primarily RELATIVE to the planet's own radius, the same
+      -- scale-invariant principle the ring mesh uses. 2.2x the centre distance
+      -- puts the disc about 54 degrees across, filling a good part of an 80
+      -- degree FOV; it was a FIXED 250000, which was tuned back when planets had
+      -- radius ~200000 and left a radius-4000 planet a 1.7-degree speck.
+      --
+      -- planetViewDist survives as a FLOOR, so a very small body still gets some
+      -- stand-off. It was previously the primary term, and it is also the term
+      -- that prevented a huge planet (radius 343812 > 250000) spawning the ship
+      -- INSIDE it -> Bullet "Overflow in AABB" -> ship destroyed -> getRoot()
+      -- crash -- that case is now covered by the relative term being large for a
+      -- large planet, and the floor only ever raises the distance.
+      local clear = math.max(planet:getScale() * (Config.gen.planetStandoff or 2.2),
+                             Config.gen.planetViewDist or 0)
       if dist < clear then
         local nx, ny, nz = 0, 0, 1
         if dist > 1e-3 then nx, ny, nz = dx / dist, dy / dist, dz / dist end

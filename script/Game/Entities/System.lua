@@ -329,12 +329,32 @@ end
 function System:spawnPlanet ()
   local rng = self.rng
   local planet = Entities.Planet(rng:get64())
-  local pos = rng:getDir3():scale(kSystemScale * (1.0 + rng:getExp()))
-  -- Radius = base * Erlang(2), capped so the far side stays inside the 1e6 far
-  -- plane at the ship's 1.35x stand-off (see Config.gen.planetRadiusMax).
-  local scale = math.min(
-    (Config.gen.planetScaleBase or 1e5) * rng:getErlang(2),
-    Config.gen.planetRadiusMax or 400000)
+
+  -- DRAW ORDER IS DELIBERATE. These two draws happen in the same sequence as
+  -- before W8 (exp, then Erlang), because this rng stream is shared with the rest
+  -- of generation: reordering them silently RESHUFFLES every existing world --
+  -- a planet that was at 42520 moved to 23001 purely because the radius was
+  -- drawn first. The distance still depends on the radius without needing a
+  -- different order; only the DRAW SEQUENCE has to be preserved.
+  local expDraw = rng:getExp()
+  local base = Config.gen.scalePlanet or Config.gen.planetScaleBase or 1e5
+  -- Erlang(2), capped so the far side stays inside the 1e6 far plane at the
+  -- ship's stand-off (see Config.gen.planetRadiusMax).
+  local scale = math.min(base * rng:getErlang(2),
+                          Config.gen.planetRadiusMax or 400000)
+
+  -- Placement distance now also accounts for the RADIUS. The belt and stations
+  -- live within kSystemScale, so a planet whose radius approaches its own
+  -- distance from the origin engulfs them -- which is exactly what happened:
+  -- the old base (1e5, mean radius ~200k) against kSystemScale = 10000 made every
+  -- planet ~20x the system it sat in. Deriving clearance from the radius means NO
+  -- scalePlanet value can produce an engulfing planet, rather than relying on
+  -- the player picking a safe number. With the smaller planets W8 introduces,
+  -- this term normally LOSES to the kSystemScale term, so most positions stay
+  -- put.
+  local clearance = Config.gen.planetClearance or 2.5
+  local dist = math.max(kSystemScale * (1.0 + expDraw), scale * clearance)
+  local pos = rng:getDir3():scale(dist)
   planet:setPos(pos)
   planet:setScale(scale)
   planet:setName(genName(rng))
@@ -350,8 +370,28 @@ function System:spawnPlanet ()
 -- weather without a capture harness. Also log the two inputs (weather, cloudLevel)
 -- and the planet's generator seed, which is what makes a reported world
 -- reproducible from the log line alone.
-  print(format('[system] planet %s  type=%s  moons=%d  radius=%.0f  clouds=%.2f (weather %.2f + bias %+.2f)  spin=%.4f rad/s (%.1f min)  ring=%s  seed=%.6f  pos=(%.1f,%.1f,%.1f)  axis=(%.2f,%.2f,%.2f)  star=(%.2f,%.2f,%.2f)',
+  -- `clear` is the margin between the planet's SURFACE and the system's own
+  -- extent: positive means the belt/stations are outside this planet. It is
+  -- logged because W8's bug was planets engulfing the system, and that is
+  -- invisible until you print the two numbers side by side.
+  -- `surf` is the distance from the system ORIGIN to the planet's surface, which
+  -- is what "engulfing" means: W8's bug was radius (~200k) exceeding the planet's
+  -- own distance (~20k), so the origin was INSIDE the planet and the belt was
+  -- swallowed. surf > 0 means the origin is outside. It is deliberately NOT
+  -- measured against kSystemScale -- that measures proximity to the belt, and a
+  -- small planet sitting among the asteroids is fine, not a failure. (The first
+  -- version of this metric used kSystemScale and reported a healthy radius-1008
+  -- planet at 10183 as "clear=-825", which reads like engulfment and is not.)
+  --
+  -- Vec3 exposes :length() as a METHOD; there is no `.magnitude` field, and an
+  -- `or 0.0` fallback on a nil field would have logged a plausible-looking zero
+  -- instead of failing -- the same "field nobody reads" trap as the unused
+  -- genColor channel.
+  local planetDist = planet:getPos():length()
+  print(format('[system] planet %s  type=%s  moons=%d  radius=%.0f  at=%.0f  surf=%+.0f  clouds=%.2f (weather %.2f + bias %+.2f)  spin=%.4f rad/s (%.1f min)  ring=%s  seed=%.6f  pos=(%.1f,%.1f,%.1f)  axis=(%.2f,%.2f,%.2f)  star=(%.2f,%.2f,%.2f)',
     planet:getName(), tostring(planet.typeName), nMoons, scale,
+    planetDist,
+    planetDist - scale,
     planet:cloudCoverage(), planet.weather or 0.0, planet.cloudLevel or 0.0,
     planet.spinSpeed or 0.0,
     ((planet.spinSpeed or 0.0) > 0) and (2 * math.pi / (planet.spinSpeed)) / 60.0 or 0.0,
@@ -389,7 +429,10 @@ function System:spawnMoon (planet, index)
     parent      = planet,
     orbitRadius = radius,
   })
-  moon:setScale(math.max(planet:getScale() * cfg.scale(rng), cfg.minRadius or 0))
+  -- Floor is a FRACTION of the parent (see Config.App): an absolute floor gave
+  -- a small planet moons nearly its own size once W8 shrank planets.
+  local pScale = planet:getScale()
+  moon:setScale(math.max(pScale * cfg.scale(rng), pScale * (cfg.minRadiusFrac or 0.03)))
   moon:setName(planet:getName() .. ' ' .. (kRoman[index] or tostring(index)))
   moon:setPos(planet:getPos() + Vec3f(radius, 0, 0))
   -- Parent the moon to its PLANET (not the system) so the map groups it under

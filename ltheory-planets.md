@@ -264,7 +264,7 @@ tune a look against a frame that will change shape under you** (W3–W5 before W
 | W5 | Re-tune density ⇒ god-rays gain together | W3, W4 | S | ✅ 2026-10-12 |
 | W6 | FPS: profile on the *final* W5 settings | W5 | M | ✅ **CLOSED 2026-10-16** — see below |
 | W7 | Deferred features (clouds, gas giants, rings, biomes, atmosphere entry) | W6 | L | §11.3 — split below |
-| W8 | Planet scale vs `kSystemScale` (planets can engulf the system) | — | M | ⛔ open — needs a size decision, §11.4 |
+| W8 | Planet scale vs `kSystemScale` (planets can engulf the system) | — | M | ✅ **DONE 2026-10-16** — `scalePlanet` honoured, clearance derived from radius, stand-off and moon floor made relative. See §11.17. |
 | S1 | Speckle watch — verify on seeds beyond the repro | W1 | S | open |
 
 Two **pending decisions** (not tasks — someone has to pick a side): §11.5's
@@ -1876,6 +1876,86 @@ That is three separate bugs (§11.2 drift magnitude, §11.14 drift basis,
 §11.15 relief basis) from one recurring mistake, and it is the most useful thing
 in this section: *a branch on a sphere coordinate is a circle on the surface.*
 
+### 11.17 Planet scale (W8) — `scalePlanet` honoured, engulfment made impossible
+
+**The defect, stated precisely.** `Config.gen.scalePlanet` was documented as dead
+config. It was not *unwired* — it was wired to
+`Gen/System/SystemBasic.lua:46`, a **legacy generator**. The live path,
+`Game/Entities/System.lua:spawnPlanet`, ignored it and used
+`planetScaleBase = 1e5 * erlang(2)`, giving a mean radius of **~200k** against
+`kSystemScale = 10000`. Every planet was therefore **~20× the system it sat in**,
+with a radius far exceeding its own distance from the origin — so the origin was
+*inside* the planet and the belt and stations were swallowed. A player setting
+`Config.gen.scalePlanet` had no effect on the world they actually played in.
+
+**Fix 1 — the base is honoured.** `scalePlanet` is now the base in the live path,
+with `planetScaleBase` kept only as a fallback if `scalePlanet` is unset.
+
+**Fix 2 — engulfment is impossible, not just unlikely.** Placement distance is now
+`max(kSystemScale * (1 + exp), radius * planetClearance)`. The second term is what
+matters: **no value of `scalePlanet` can produce an engulfing planet**, rather than
+relying on the player picking a safe number. With the smaller planets introduced
+here the radius term normally *loses* to the kSystemScale term, so most positions
+stay put.
+
+**Fix 3 — the RNG draw order is preserved, and this was a real bug I introduced.**
+The first attempt drew the radius *before* the placement, because the distance
+depends on it. That silently **reshuffled every existing world**: a planet that
+had been at 42520 moved to 23001 purely because two draws swapped order, and it
+surfaced as the planet sliding out of frame in a capture. The fix is to draw in the
+original sequence (exp, then Erlang) and *store* the exp value, so the distance can
+still depend on the radius without touching the stream. **This stream is shared
+with the rest of generation — the draw SEQUENCE is load-bearing.**
+
+**Three follow-on defects the scale change exposed, all with absolute numbers:**
+
+- **Moon radius floor was absolute.** `minRadius = 800` existed to avoid
+  pebble-moons. Once planets became radius ~1000–9000, that floor gave a
+  radius-1008 planet moons of radius 800 — **0.79× its own planet**. Now
+  `minRadiusFrac = 0.03` (3% of the parent), which preserves the "no pebble-moons"
+  intent at any parent size and subsumes the old absolute value for large parents
+  (3% of a 2e5 planet is 6000).
+- **Ship stand-off was a fixed distance.** `planetViewDist = 250000` was tuned when
+  planets had radius ~200000; at radius 4744 it made a planet a **1.7-degree
+  speck**. Stand-off is now primarily `planetStandoff` (2.2) **times the planet's
+  own radius** — the same scale-invariant principle the ring mesh uses — which puts
+  the disc about 54 degrees across in an 80 degree FOV. `planetViewDist` survives
+  as a FLOOR. The stand-off also guarded a real crash (a radius-343812 planet
+  spawning the ship inside it → Bullet AABB overflow → ship destroyed); the
+  relative term now covers that case for large planets, and the floor can only
+  ever raise the distance.
+- **The logged metric was measuring the wrong thing.** The first diagnostic was
+  `dist - radius - kSystemScale`, which reported a perfectly healthy radius-1008
+  planet at 10183 as `clear=-825`. That number measures **proximity to the belt**,
+  not engulfment — and a small planet sitting among the asteroids is fine. The log
+  now reports `surf` = origin-to-surface distance, which is exactly what
+  "engulfing" means: `surf > 0` says the origin is outside the planet.
+
+**Verification.** Five seeds swept, `surf` positive on every one:
+
+| world | radius | at | surf |
+|---|---|---|---|
+| LLeccohife (terrestrial) | 4744 | 19282 | +14538 |
+| Damoheri (terrestrial) | 1008 | 10183 | +9175 |
+| Satalo (barren) | 1371 | 33244 | +31872 |
+| Bitelatenu (ocean) | 8661 | 21652 | +12991 |
+| Weeri (ice) | 2470 | 22390 | +19920 |
+
+For contrast the old behaviour was `20000 − 200000 = −180000`: the origin deep
+inside the planet.
+
+**Rings and clouds ride the new scale for free — verified.** Both are authored in
+*planet-radii* and scaled by the entity's own transform, which is why rings were
+built before this decision could have blocked them, and why §11.16's note that W8
+"no longer blocks rings" is a measured claim rather than an assumption. Captured
+after the change: the ring renders at the correct band around a radius-4744 planet
+with its structure intact.
+
+**Player-visible.** Their own `Config.Local.lua` already set `scalePlanet = 5e3`,
+which had been doing nothing; it now takes effect, so planets are ~20× smaller in
+their game than before this change. That look change was flagged before starting
+and is the intended one.
+
 ### 11.16 Planetary rings (W7b)
 
 Rings ship on a fraction of eligible worlds, drawn in the **alpha pass** so the
@@ -2211,9 +2291,10 @@ to inform**, and every item in group A below is cheap and unblocks the rest.
    sampling** (§11.11). The open question that fell out is a taste call now
    logged as a third §11.5 decision.
 3. **W6 for real** — re-measure under the asteroid/NPC load it never profiled.
-4. **W8** — independent of all lighting work. ⛔ **still open**: `scalePlanet` is
-   dead config and a planet can engulf the system (§11.4). It no longer blocks
-   rings — see item 5.
+4. **W8** — ✅ **Done 2026-10-16** (§11.17). `scalePlanet` is now the honoured base
+   in the live spawn path, and engulfment is made structurally impossible rather
+   than merely unlikely: the placement distance is derived from the radius, so no
+   value of `scalePlanet` can produce one.
 5. **W7b rings** — ✅ **Done 2026-10-16** (§11.16). Shipped *before* W8 on
    purpose: the ring mesh is authored in **planet-radii** and scaled by the
    entity's own transform, so when W8 changes planet sizes the rings move with
