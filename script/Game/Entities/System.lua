@@ -40,6 +40,21 @@ function System:beginRender ()
   ShaderVar.PushFloat3('starDir', self.starDir.x, self.starDir.y, self.starDir.z)
   ShaderVar.PushTexCube('envMap', self.nebula.envMap)
   ShaderVar.PushTexCube('irMap', self.nebula.irMap)
+  -- Asteroid-field curtain (material/asteroid.glsl). Far >> Near means "no fade",
+  -- which is what keeps ordinary asteroids unaffected when the field is off.
+  --
+  -- Pushing these unconditionally is safe despite 12's "setting a uniform the
+  -- program lacks aborts" rule: Shader_Start only uploads the autovars a program
+  -- DECLARED (Shader.cpp walks self->vars), so a stack entry no shader reads is
+  -- simply never looked at.
+  local af = self.asteroidField
+  if af then
+    ShaderVar.PushFloat('rockFadeNear', af.fadeStart)
+    ShaderVar.PushFloat('rockFadeFar',  af.unloadDist)
+  else
+    ShaderVar.PushFloat('rockFadeNear', 1e9)
+    ShaderVar.PushFloat('rockFadeFar',  2e9)
+  end
 end
 
 function System:render (state)
@@ -53,6 +68,8 @@ function System:endRender ()
   ShaderVar.Pop('starDir')
   ShaderVar.Pop('envMap')
   ShaderVar.Pop('irMap')
+  ShaderVar.Pop('rockFadeNear')
+  ShaderVar.Pop('rockFadeFar')
 end
 
 function System:update (dt)
@@ -116,13 +133,14 @@ end
   hit). Enough damage destroys the asteroid, which then fragments (Asteroid's
   Event.Destroyed handler) and is swept from the world next.
 
-  Tuning:
-    * raise rammingMinSpeed to ignore gentle nudges (no damage on bump)
-    * raise the multiplier to make crashes more lethal
+  Tuning: Config.game.rammingMinSpeed (ignore gentle nudges) and
+    Config.game.rammingDamageScale (how hard a crash hurts). Both were
+    hardcoded at 25 and 2, which is lethal above 75 u/s against the ship's
+    100 HP -- survivable against ~30 decorative rocks, not against a field.
+    Set rammingDamageScale = 0 to make collision scenery.
   Note this runs AFTER physics:update, so it reads the contacts from this step.
 ]]
 local rammingCollision = ffi.new('Collision')
-local rammingMinSpeed = 25.0
 
 function System:handleRamming ()
   -- Reset the iterator (Bullet's manifold list is walked via index/count)
@@ -143,20 +161,114 @@ function System:handleRamming ()
       -- must not ram-damage. Otherwise flying at a planet at speed dealt
       -- ~(speed-25)*2 damage, killed the only ship instantly, and (no death
       -- handling) black-screened the frame. Damage only between movable bodies.
-      if b0:getMass() > 0 and b1:getMass() > 0 then
+      --
+      -- `mass > 0 OR ramDamage == true` rather than mass alone. The streamed
+      -- asteroid field is scenery that must NOT move, so its rocks are mass 0 --
+      -- and a mass test alone would silently exempt them, i.e. you would fly
+      -- through a thousand asteroids for free. Those rocks opt IN explicitly
+      -- (see Asteroid.__init's `opts.static`). Strictly additive: a mass-0 body
+      -- with no flag behaves exactly as before, so planet/moon protection is
+      -- unchanged. A static rock's velocity reads as zero, so relSpeed is the
+      -- ship's own speed, which is the correct impact speed.
+      local e0ram = (b0:getMass() > 0) or (e0.ramDamage == true)
+      local e1ram = (b1:getMass() > 0) or (e1.ramDamage == true)
+      if e0ram and e1ram then
         local v0 = e0:getVelocity()
         local v1 = e1:getVelocity()
         local relSpeed = v0:distance(v1)
-        if relSpeed > rammingMinSpeed then
+        -- Read from Config each time rather than caching in a local, so a
+        -- Config.Local override (or a future panel knob) takes effect without
+        -- a code change. These are per-collision, not per-frame-hot.
+        local minSpeed = Config.game.rammingMinSpeed or 25.0
+        local dmgScale = Config.game.rammingDamageScale or 0.35
+        if relSpeed > minSpeed then
           -- Damage scales with how far above the threshold the impact was.
           -- `e.health` is nil for non-damageable objects (e.g. Zones), so the
           -- `if e.health` guard skips them safely.
-          local dmg = (relSpeed - rammingMinSpeed) * 2.0
+          local dmg = (relSpeed - minSpeed) * dmgScale
           if e0.health then e0:damage(dmg, e1) end
           if e1.health then e1:damage(dmg, e0) end
         end
       end
     end
+  end
+end
+
+--[[
+  streamAsteroidField -- load/unload asteroid chunks around the ship
+  ----------------------------------------------------------------------------
+  Thin wrapper so System:update stays a list of phases. The field itself lives
+  in Game/Entities/AsteroidField.lua; this only resolves the ship to stream
+  around and creates the field on first use.
+
+  Streaming is driven by SHIP position, not by any random draw, and the field
+  generates itself from Seed.rng per chunk -- so the shared generation stream is
+  never touched and the world stays reproducible. See the module header for why
+  the old clump-from-`rng:choose(children)` approach could not be streamed.
+]]
+function System:streamAsteroidField (ship)
+  local cfg = Config.gen and Config.gen.asteroidField
+  if not cfg then return end
+
+  -- Read the three shape knobs from the PANEL when they exist, so the field can
+  -- be switched on, re-densified and re-reached while flying -- watching a field
+  -- stream in is the point of the feature, and tuning how it reads needs a
+  -- slider you can move with the engine running. Falls back to Config.
+  local function knob (key, fallback)
+    if Settings.exists(key) then return Settings.get(key) end
+    return fallback
+  end
+  local enabled  = knob('gen.asteroidField.enable',     cfg.enable)      or false
+  local perChunk = knob('gen.asteroidField.perChunk',   cfg.perChunk)    or 0
+  local loadR    = knob('gen.asteroidField.loadRadius', cfg.loadRadius)   or 4
+
+  if not enabled then
+    -- Turning it off UNLOADS rather than pauses: a frozen field would still cost
+    -- ~2000 entities and ~2 ms every frame while the panel claims "off".
+    if self.asteroidField then
+      self.asteroidField:clear()
+      self.asteroidField = nil
+      print('[system] field: cleared')
+    end
+    return
+  end
+
+  if not self.asteroidField then
+    local AsteroidField = require('Game.Entities.AsteroidField')
+    self.asteroidField = AsteroidField.new(self, cfg)
+    print(format('[system] asteroid field: chunk=%d perChunk=%d load=%d unload=%d radius=%d static=%s',
+                 cfg.chunkSize or 2500, perChunk, loadR,
+                 cfg.unloadRadius or 5, cfg.radius or 400000,
+                 tostring(cfg.static ~= false)))
+  end
+  -- Apply the live knobs to the existing field. perChunk only affects chunks as
+  -- they stream in (regenerating loaded chunks would teleport visible rocks),
+  -- and loadDist likewise only changes which chunks are added from here on.
+  self.asteroidField.perChunk = perChunk
+  self.asteroidField.loadDist  = self.asteroidField.chunkSize * loadR
+
+  -- The ship is PASSED IN, not looked up. There is no System:addPlayer: the
+  -- `self.players` list is populated only by spawnAI, so with NPCs disabled it
+  -- is empty and the human ship is reachable only as a System child -- which is
+  -- indistinguishable from a thousand streamed rocks. LTheory.lua already
+  -- resolves `player:getControlling()` each frame for handleAtmosphere, so this
+  -- takes the same argument rather than inventing a second way to find it.
+  --
+  -- With no ship (still spawning, or after a death) there is nothing to stream
+  -- around, and loading a sphere around the origin would be a large pointless
+  -- allocation.
+  if not (ship and ship.body) then return end
+
+  local loaded, unloaded = self.asteroidField:update(ship:getPos())
+  -- Log only when the stream actually moves, so this cannot spam the console
+  -- on a stationary ship (where it would return 0 every frame).
+  if loaded > 0 then
+    local chunks, rocks = self.asteroidField:getStats()
+    local clear = self.asteroidField:minPlanetClearance()
+    print(format('[system] field: +%d/-%d chunks -> %d chunks, %d rocks digest=%d planetClear=%.2f (ship %.0f,%.0f,%.0f)',
+                 loaded, unloaded, chunks, rocks,
+                 self.asteroidField:digest(), clear or -1,
+                 ship:getPos().x, ship:getPos().y, ship:getPos().z))
   end
 end
 

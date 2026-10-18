@@ -154,6 +154,49 @@ local SETTINGS = {
   { kind = 'float', key = 'render.fovY',        label = 'FOV',           default = 75, min = 50, max = 100, gpu = 'fovY' },
   { kind = 'enum',  key = 'render.superSample', label = 'SuperSampling', default = 1,
     options = { 'Off', '2x', '4x' }, gpu = 'superSample' },
+  -- Asteroid field streaming (Game/Entities/AsteroidField.lua).
+  --
+  -- These are LIVE and deliberately on the panel rather than buried in Config:
+  -- watching a field stream in is the point of the feature, and the only
+  -- practical way to tune how a field READS is to move a slider with the engine
+  -- running and look out of the window.
+  --
+  -- The panel has no tooltip mechanism, so what each one does is spelled out
+  -- here rather than in the label:
+  --
+  --   enable     ON streams a field in around the ship, OFF unloads every chunk.
+  --              It really unloads -- a frozen field would still cost ~2000
+  --              entities and ~2ms every frame while claiming to be off. Turning
+  --              it off also brings back the old 30-rock debug ring in LTheory,
+  --              which is suppressed while the real field is running (they
+  --              overlap in the same 8000..20000 band and look identical, so
+  --              having both makes it impossible to tell what you are seeing).
+  --
+  --   Rocks/Chunk  How many rocks each chunk generates. THIS IS DENSITY: raising
+  --              it does not make rocks bigger or further away, it packs more of
+  --              them into the same volume, so the field reads as denser and you
+  --              see more of it at once. Cost is near-linear at ~0.9 microseconds
+  --              per rock (measured: 610 rocks free, 1220 = +0.7ms, 1833 =
+  --              +1.65ms). Applies to chunks as they stream in, so the change
+  --              appears as you fly rather than all at once -- already-loaded
+  --              chunks keep the density they were built with.
+  --
+  --   Reach      How far from the ship chunks exist, in units of chunkSize
+  --              (2500), so 4 = rocks out to 10000 units. Raising it reaches
+  --              further but SPREADS the same rocks thinner: total rocks go as
+  --              reach^3 while the count per chunk stays fixed, so reach 4 gives
+  --              a dense near field and reach 8 gives a sparse, vast one (and
+  --              costs 6x the entities -- 2000 rocks at reach 4 became 11555 and
+  --              23ms at reach 8). This is the density-vs-vastness trade, and it
+  --              is why Reach and Rocks/Chunk are the only two you need.
+  --
+  -- Pop-in is handled by a distance fade, not by hiding the boundary (see
+  -- AsteroidField:applyFade), so Reach can be set for how the field reads
+  -- rather than to hide a seam. Constraint: Config fadeStart < Reach < unload.
+  { kind = 'bool',  key = 'gen.asteroidField.enable',     label = 'Asteroid Field', default = false, gpu = 'asteroidFieldEnabled' },
+  { kind = 'float', key = 'gen.asteroidField.perChunk',   label = ' - Rocks/Chunk', default = 8, min = 0, max = 24, gpu = 'asteroidFieldPerChunk' },
+  { kind = 'float', key = 'gen.asteroidField.loadRadius', label = ' - Reach',       default = 4, min = 1, max = 12, gpu = 'asteroidFieldLoadRadius' },
+
   { kind = 'enum',  key = 'render.resolutionScale', label = 'Render Scale', default = 1,
     options = { '100%', '85%', '75%', '67%', '50%' }, gpu = 'resolutionScale', optKey = strKey },
   { kind = 'bool',  key = 'render.wireframe',   label = 'Wireframe',             default = false },

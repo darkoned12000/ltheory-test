@@ -112,7 +112,22 @@ function LTheory:generate ()
   -- Visibility cloud: debug ring of 30 rocks placed around player
   local Entity = require('Game.Entity')
   local Material = require('Game.Material')
-  if ship then
+  -- The old 30-rock debug ring. It is SUPPRESSED whenever the streamed field is
+  -- on: the ring sits at 8000..20000 units in a flat plane, which is inside the
+  -- streamed field's own reach, so leaving both on double-loads that band with
+  -- ~2000 non-collidable decorative rocks that look identical to the real ones.
+  -- That makes it impossible to tell what you are looking at. Its own toggle is
+  -- the streamed field's; this ring stays only as a fallback when it is off.
+  -- Checked against Config.gpu FIRST as well as the panel: generate() runs
+  -- BEFORE Renderer seeds the panel from Config.gpu, so reading only
+  -- Settings here sees the pre-seed default (false) and builds the ring even
+  -- with the field switched on -- which is exactly what happened, giving 30
+  -- decorative rocks inside the real field's own band.
+  local fieldOn = (Config.gpu and Config.gpu.asteroidFieldEnabled)
+                  or (Settings.exists('gen.asteroidField.enable')
+                      and Settings.get('gen.asteroidField.enable'))
+                  or (Config.gen.asteroidField and Config.gen.asteroidField.enable)
+  if ship and not fieldOn then
     local rockPos = {}
     for i = 1, 30 do
       local ang = (i / 30) * 6.2831853
@@ -190,6 +205,10 @@ function LTheory:onUpdate (dt)
   -- can grind the surface (see System:handleAtmosphere).
   local ship = self.player and self.player:getControlling()
   if self.system and ship then self.system:handleAtmosphere(ship) end
+  -- Asteroid field streaming, driven from the same resolved ship for the same
+  -- reason: System has no way to tell the player's ship from a thousand
+  -- identical rocks it is itself streaming in.
+  if self.system then self.system:streamAsteroidField(ship) end
   self.canvas:update(dt)
 end
 

@@ -1408,8 +1408,164 @@ Two things worth noting:
   mask in `medium.glsl`. So a density tuned at one quality tier reads differently
   at another — which is exactly what shipped-vs-preset does.
 
+### 11.18 Endless chunk-streamed asteroid field
+
+The old field (`System:spawnAsteroidField`) built a fixed cluster once, at world
+generation, and placed each rock relative to a randomly *chosen* existing rock:
+
+```lua
+pos = rng:choose(zone.children):getPos() + rng:getDir3():scale(...)
+```
+
+Lovely for a natural clump, and unusable for streaming, for two reasons. It is
+order-dependent over the *whole* field, so chunk 5 cannot be generated without
+having generated 1–4. And it draws from `System.rng`, the shared generation
+stream — which is the bug this project already paid for once (two draws swapping
+order moved a planet from 42520 to 23001 and reshuffled the world). Streaming
+would consume draws as the player flies, so rocks would not merely stream in, they
+would **rearrange**.
+
+`Game/Entities/AsteroidField.lua` generates **per chunk** from
+`Seed.rng('asteroidField', <cell>)`, so a chunk is a pure function of
+`(worldSeed, cx, cy, cz)`: loading chunk B cannot perturb chunk A, flying away
+and back reproduces the identical field, and the shared stream is never touched.
+Clumping is kept but scoped *within* a chunk, from that chunk's own RNG.
+
+**Verified:** two runs of the same seed print the same `digest=687894646`; a
+different chunk set prints a different digest. `digest()` accumulates rock
+positions in sorted-chunk order (not `pairs()` order) with the accumulator
+modded every step — FNV's usual seed constant is above 2^53, so on LuaJIT it
+silently becomes a lossy double and prints `-9223372036854775808`, which is
+neither stable nor comparable.
+
+**Four things that were wrong on the first pass, all found by measuring:**
+
+1. **The field was invisible.** Rocks at `scale` 2–9 gave 600 differing pixels
+   against a 309-pixel noise floor. A rock covers ~4 px only when
+   `radius >= 0.0044 x distance`, which at the far edge of the field is ~44; the
+   mesh radius is ~0.54 × scale, so the working range is ~12–300, not 2–9. The
+   old 30-rock debug ring used `scale(250,250,250)` for the same reason.
+2. **`rng:getExp()` is unbounded**, so `maxScale` was a suggestion, not a
+   maximum — measured a rock at scale 12 with `maxScale = 9`. Clamped.
+3. **`radius = 60000` was a trap.** Verified: fly 40k units and the field ends
+   with **0 rocks**, which reads as the trick failing rather than as leaving a
+   system. 400000 is ~13× the system extent, so in practice it never ends while
+   remaining a real bound.
+4. **The fade locked the game up.** See below.
+
+**The curtain, and why it is a discard and not a scale.** The camera has **no
+distance cutoff** — `Camera.zFar = 1e6` — so the stream boundary is rendered in
+plain sight unless it is pushed absurdly far out. Measured at a 7500-unit
+boundary: raising the radius from 3 to 6 chunks changed **10,380 pixels**, i.e.
+the 7500–15000 band was genuinely on screen and rocks popped in.
+
+Raising the radius does not work either, and the reason is arithmetic: total
+rocks ≈ sphere volume / spacing³, so reaching 20,000 units forces ~11,555 rocks
+and **23 ms** (43 fps). Density and reach trade off directly — reach 4 is a dense
+near field, reach 8 is a sparse vast one at 6× the entities.
+
+So the boundary is *hidden* rather than moved, and the first attempt at that was
+wrong in a way only play-testing would catch. It shrank each rock linearly as it
+neared the boundary. Rejected on two counts:
+
+* *"it's very obvious the asteroids are growing in front of me instead of
+  slightly getting bigger as I get closer."* Scaling a rock to hide it makes it
+  visibly inflate **in place**, which reads as an animation, not as distance.
+  Quantising to 1/16 steps to stop the churn (below) made it worse: a smooth
+  grow became visible steps.
+* **It was also the lockup, and the framerate collapse.** `RigidBody_SetScale`
+  is not a number assignment — it does `CollisionShape_Create`, swaps the new
+  shape into the body (invalidating the broadphase proxy so the AABB recomputes)
+  and recalculates inertia. Animating scale per frame therefore reallocated a
+  collision shape for **every rock in the band, every frame**, and flying near a
+  rock puts you *inside* the band, so approaching one made it worse until the
+  game hung.
+
+The curtain is now a **fragment discard** in `material/asteroid.glsl`, driven by
+`rockFadeNear`/`rockFadeFar` pushed from `System:beginRender`. A rock is always
+at its true size and is simply not drawn until you are close enough — "hidden
+behind a curtain", which is what makes it read as depth. Nothing touches an
+entity, so there is no physics interaction at all. And because the discard is the
+*first* thing in `main`, before any texture sample or G-buffer write, the far
+rocks that make up the bulk of the field cost one distance calculation each —
+which is what makes a dense field affordable.
+
+Dithered (interleaved gradient noise), not blended, because the deferred G-buffer
+is opaque: blending would need sorted draws and would break depth writes.
+
+**Cost at 7.4 MP internal** (your 4K is 8.3 MP), seeded world, held camera:
+
+| Rocks/Chunk | rocks | frame time | fps |
+|---|---|---|---|
+| 0 (field off) | — | 4.79 ms | 209 |
+| 8 (default) | ~1,990 | 4.94 ms | 203 |
+| 14 | ~3,480 | 6.89 ms | 145 |
+| 20 | ~4,980 | 9.59 ms | 104 |
+
+Rocks/Chunk 14 at 145 fps. The **under-20 fps** reported in play was not honest
+geometry cost — it was the same per-frame `setScale` churn as the lockup, and it
+is gone with it (the field module now contains no `setScale` at all).
+
+**Cost at 1.86 MP** (lower res, where per-entity CPU dominates): ~0.9 µs/rock,
+near-linear — 610 rocks free, 1220 = +0.7 ms, 1833 = +1.65 ms.
+
+**Shader-authoring traps hit while doing this** (both pass `configure.py test`
+and still die at boot, which is the worst kind):
+* Never write a **directive literally inside a shader comment**. The engine's
+  preprocessor is a raw `StrFind(code, "#autovar")` **anywhere in the file**,
+  comments included, so a comment mentioning the directive is parsed as one and
+  aborts with `Unknown shader variable type <...>`. Same class as the known
+  `#include`-in-a-comment trap.
+* An **autovar directive does not declare the uniform.** It only registers the
+  name for the per-draw stack upload; the engine strips the directive before
+  `glShaderSource`, so the shader must also declare `uniform float name;`
+  itself (pattern: `sunFill` in `light/global.glsl`).
+* This codebase's fragment shaders use **`//` comments exclusively** (257 in
+  `material/planet.glsl`, zero `--`). Mixing in `--` produced a `DEC_OP` syntax
+  error from the validator.
+* Pushing a `ShaderVar` that no shader declares is **safe** despite §12's
+  "setting a missing uniform aborts" rule: `Shader_Start` walks only the
+  autovars that program itself declared (`self->vars`).
+
+**Ramming had to change.** `handleRamming` gated on `mass > 0`, and static rocks
+are mass 0 — so a field of them would have been **free to fly through**. The gate
+is now `mass > 0 or ramDamage == true`, strictly additive: a mass-0 body with no
+flag behaves exactly as before (planets, moons keep their protection), and only
+rocks that opt in change. Verified by steering the ship into a rock:
+`relSpeed=296.3 dmg=542.6`, both destroyed.
+
+Separately, `damage = (relSpeed - 25) * 2` against 100 ship HP is **lethal above
+75 u/s**. That was survivable against ~30 decorative rocks and is not survivable
+against 2000 destructible ones, so both numbers are now
+`Config.game.rammingMinSpeed` / `rammingDamageScale` (default 0.35, so a 100 HP
+ship survives a ~310 u/s hit). Set the scale to 0 to make collision pure scenery.
+
+**Panel:** `Debug > Asteroid Field` — on/off (off really unloads), Rocks/Chunk
+(= density), Reach (in chunkSize units). Plus a rare 2–4× large tier at 5 % so
+there are landmarks to navigate by. The old 30-rock debug ring is **suppressed**
+while the field runs — it sits in the same 8000–20000 band and looks identical, so
+having both makes it impossible to tell what you are looking at.
+
 ## 12. Traps (engine-level — cost us time; know them)
 
+- **A visual effect that scales an ENTITY touches physics.** `setScale` on an
+  entity with a rigid body allocates a new `btCollisionShape`, swaps it in and
+  recalculates inertia (`RigidBody.cpp:535`). Anything that animates scale per
+  frame — a distance fade, a spawn-in, a pulse — will reallocate collision shapes
+  for thousands of bodies per frame. It caused BOTH a hard lockup and a 20 fps
+  collapse before it was found. Animate in the fragment shader instead (see
+  §11.18), which costs nothing and touches no physics.
+- **A field that has no distance cutoff makes every streaming boundary
+  visible.** `Camera.zFar = 1e6`, so nothing occludes a rock at 7,500 units.
+  Streaming needs the boundary hidden (a fade), not just moved — and moving it is
+  limited by density, since rocks ≈ volume/spacing³. See §11.18.
+- **A GLSL directive written literally inside a shader comment is parsed as a
+  directive.** The preprocessor is a raw substring search over the whole file,
+  comments included, so `configure.py test` passes and the game aborts at boot.
+  Same for `#include` and for autovars. See §11.18.
+- **An autovar directive does not declare its uniform.** It only registers the
+  name for the stack upload; the shader must also declare the `uniform` itself,
+  or the value never arrives. See §11.18.
 - **An enum's option count must match any table indexed by its value.** The
   `- 1` idiom (`steps[q-1]`) silently shifts every entry and sends the *last*
   option off the end into a fallback — so the highest setting quietly rendered as

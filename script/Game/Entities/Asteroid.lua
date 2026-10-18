@@ -54,7 +54,8 @@ local function fragment (self, source)
   GPUParticles.explode(self:getPos(), self:getVelocity(), expEnergy)
 end
 
-Asteroid = subclass(Entity, function (self, seed, scale)
+Asteroid = subclass(Entity, function (self, seed, scale, opts)
+  opts = opts or {}
   local mesh = getMesh(seed)
   self:addRigidBody(true, mesh:get(0))
   self:addVisibleLodMesh(mesh, Material.Rock())
@@ -62,9 +63,26 @@ Asteroid = subclass(Entity, function (self, seed, scale)
   self:setDrag(0.2, 0.2)
   self:setScale(scale)
 
-  -- Mass scales with volume (radius^3)
-  local mass = self:getRadius() ^ 3.0
-  self:setMass(mass)
+  if opts.static then
+    -- Scenery rock: immovable. setMass(0) makes Bullet's inverse mass zero, so
+    -- the body is not integrated, never deactivates, and never drifts -- which
+    -- is both what a static field wants and dramatically cheaper than a
+    -- thousand dynamic bodies. It is the same idiom planets already use
+    -- (Planet.__init: setMass(opts.mass or 0)).
+    --
+    -- The consequence is that System:handleRamming's `mass > 0` test would
+    -- silently exempt these rocks from ramming damage, i.e. you would fly
+    -- through the field for free. So a static rock opts IN explicitly with
+    -- `ramDamage`, and handleRamming tests `mass > 0 or ramDamage == true`.
+    -- That is strictly additive: a body with mass 0 and no flag behaves exactly
+    -- as before (planets, moons), and only opted-in rocks change.
+    self:setMass(0)
+    self.ramDamage = true
+  else
+    -- Mass scales with volume (radius^3)
+    local mass = self:getRadius() ^ 3.0
+    self:setMass(mass)
+  end
 
   -- Scale health smoothly across small rocks and giant megastructures
   local hp = math.max(15, math.floor(scale * 15))

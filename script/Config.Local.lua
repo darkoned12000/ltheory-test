@@ -119,3 +119,9 @@ Config.gpu.lightningDebug   = 'Off'   -- 'Energy' to hunt strikes, 'Off' to watc
 Config.gpu.bloom          = true
 Config.gpu.bloomThreshold = 1.0
 Config.gpu.bloomIntensity = 1.0
+
+-- Endless asteroid field (chunk-streamed). See ltheory-planets.md 11.18.
+-- The panel also drives these live: Debug > Asteroid Field (on/off, density, reach).
+Config.gpu.asteroidFieldEnabled    = true
+Config.gpu.asteroidFieldPerChunk   = 8
+Config.gpu.asteroidFieldLoadRadius = 4

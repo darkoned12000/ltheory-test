@@ -43,6 +43,85 @@ Config.gen = {
   -- Moons per planet (planets-work Phase B).
   nMoons     = function (rng) return rng:getInt(0, 3) end,
   nBeltSize  = function (rng) return 0 end, -- Asteroids per planetary belt
+
+  -- Chunk-streamed endless asteroid field (AsteroidField.lua).
+  --
+  -- Each chunk is generated from Seed.rng('asteroidField', <chunk coords>), so
+  -- it is a pure function of the world seed and the cell: loading one chunk
+  -- cannot perturb another, flying away and back gives the identical field, and
+  -- the shared generation stream is never consumed. See the module header for
+  -- why the old fixed-cluster field could not be streamed.
+  --
+  -- Visible rock count is roughly (loaded chunks) x perChunk, but the number
+  -- that actually matters is DENSITY inside the view radius, so tune perChunk
+  -- against loadRadius by eye rather than trusting the product.
+  --
+  -- The radii are multiples of chunkSize resolved to world units, and MUST be
+  -- ordered  fadeStart < loadRadius < unloadRadius.
+  --
+  -- They have to reach past visual range, because the camera has no distance
+  -- cutoff at all (zFar = 1e6, Util/Camera.lua:13). Measured: at a 7500-unit
+  -- boundary the seam was plainly visible -- raising the radius from 3 to 6
+  -- chunks changed 10380 pixels, so the 7500..15000 band was on screen and
+  -- rocks popped in.
+  --
+  --   chunkSize    world units per chunk edge
+  --   perChunk     rocks generated per chunk
+  --   fadeStart    distance at which a rock is FULL size. Between here and
+  --               unloadDist it shrinks linearly to nothing, so the boundary is
+  --               never a hard edge: a newly streamed rock is scaled to zero
+  --               and grows as you approach. That is the whole illusion --
+  --               rocks ahead of you resolving out of the dark rather than
+  --               materialising -- and it is why loadRadius no longer has to be
+  --               tuned to hide a seam.
+  --   loadRadius   distance within which chunks exist
+  --   unloadRadius distance at which they are dropped. The gap between load and
+  --               unload is the hysteresis that stops a ship loitering on the
+  --               boundary from thrashing load/unload every frame.
+  --   radius       the field is bounded to this distance from the system origin;
+  --               0 = truly unbounded. Measured: at 60000 you exit the field
+  --               after ~40k units of travel and the rocks simply stop (0 rocks,
+  --               verified), which reads as the trick failing rather than as
+  --               leaving a system. 400000 is ~13x the system extent (planets
+  --               sit at 1e4..3e4), so in practice you never reach it and the
+  --               field behaves as endless -- while remaining a real bound, so
+  --               the generator can never be talked into allocating anywhere.
+  --               Lower it to restore a hard, visible edge.
+  --   minScale/maxScale  rock size range (Asteroid health scales with it)
+  --   clumpChance  fraction of rocks placed beside an existing rock rather
+  --               than scattered -- what makes it read as a field, not gravel
+  --   clumpRadius  clump spread as a fraction of chunkSize
+  --   planetMargin clearance outside a planet's collision radius; without it
+  --               rocks spawn inside planets (W8's bug class)
+  --   static       rocks are immovable (mass 0). Cheapest, and they still ram.
+  asteroidField = {
+    enable      = false,   -- opt-in until play-tested
+    chunkSize   = 2500,
+    perChunk    = 8,
+    fadeStart   = 2.5,     -- full size inside 6250
+    loadRadius  = 4,       -- chunks exist out to 10000
+    unloadRadius = 5,      -- dropped beyond 12500
+    radius      = 400000,
+    -- Rock size is in world units on the entity scale; the mesh radius works
+    -- out at roughly 0.54 x scale, so 40..180 means radius ~21..97. These have
+    -- to be LARGE: a rock covers ~4 px only when radius >= ~0.0044 x distance,
+    -- which at the far edge of the loaded field (~10000 units) is ~44. The
+    -- original 2..9 produced a field that was measurably invisible (600 px
+    -- difference against a 309 px noise floor).
+    minScale    = 12,
+    maxScale    = 300,
+    -- Rare large tier: this fraction of rocks gets a 2..4x multiplier on top of
+    -- its exponential base size. Play-tested feedback asked for landmarks --
+    -- rocks 2-4x the biggest ones otherwise present, but scarce enough that you
+    -- see a FEW as you fly rather than a crowd. Raising maxScale instead would
+    -- make every rock bigger, which is not the same thing at all.
+    -- At ~2000 rocks, 0.05 => ~100 large rocks over a 10000-unit sphere.
+    largeChance = 0.05,
+    clumpChance = 0.65,
+    clumpRadius = 0.18,
+    planetMargin = 1500,
+    static      = true,
+  },
   nThrusters = 1,
   nTurrets   = 2,
 
@@ -137,6 +216,20 @@ Config.game = {
   pulseSpeed             = 6e2,
   pulseRange             = 1000,
   pulseSpread            = 0.01,
+
+  -- Collision damage. damage = (relSpeed - rammingMinSpeed) * rammingDamageScale,
+  -- applied to BOTH bodies (System:handleRamming).
+  --
+  -- WAS HARDCODE: min 25, scale 2, against 100 ship HP -- which made anything
+  -- above 75 u/s instantly fatal. That was survivable when a world held ~30
+  -- decorative rocks. With a streamed field putting ~1000 DESTRUCTIBLE rocks
+  -- around the ship, "above 75 u/s is death" turns routine flight into a
+  -- minefield, so both numbers are knobs now and both are deliberately gentle.
+  --
+  -- To make collision harmless entirely (scenery you pass through), set
+  -- rammingDamageScale = 0. To restore the old lethal curve, 2.0.
+  rammingMinSpeed     = 25.0,  -- below this, no damage at all
+  rammingDamageScale  = 0.35,  -- 100 HP ship survives a ~310 u/s hit
 
   shipBuildTime          = 10,
   shipEnergy             = 100,
@@ -360,6 +453,15 @@ Config.gpu = {
   -- God-rays (postfx.godrays.*, fog-nebula Phase 3). Independent low-res shaft
   -- pass from starDir: its own on/off + strength, forward-scatter lobe + A/B
   -- debug view. Off = renderer never invoked.
+  -- Panel-seeded form of the three asteroid-field knobs. These seed the debug
+  -- panel (Renderer.lua's SETTINGS), and the PANEL is what actually drives the
+  -- field, so setting them here is what makes the panel show a value. The rest
+  -- of the field's shape (chunkSize, fadeStart, unloadRadius, sizes, clumping,
+  -- planetMargin) stays in Config.gen.asteroidField and is spawn-time only.
+  asteroidFieldEnabled    = false,
+  asteroidFieldPerChunk   = 8,
+  asteroidFieldLoadRadius = 4,
+
   godraysEnabled  = false,
   godraysStrength = 1,          -- shaft gain. 1.0 = the pass IS the single-scatter
                           -- integral, i.e. no amplification: 14k units of thin gas
