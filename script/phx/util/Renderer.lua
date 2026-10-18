@@ -1054,7 +1054,18 @@ function Renderer:volume (med)
 end
 
 function Renderer:godrays (med)
-  if not (Settings.get('postfx.godrays.enable') or (Settings.get('postfx.godrays.debug') or 0) > 0) then return end
+  -- Run the pass if it is ENABLED, or if a debug view is selected.
+  --
+  -- The debug test is `> 1`, not `> 0`: postfx.godrays.debug is an enum whose
+  -- value is an INDEX, index 1 is 'Off', and 'Shaft' is index 2. Testing `> 0`
+  -- meant index 1 already satisfied it, so the `or` short-circuited to true and
+  -- this pass ran on EVERY frame even with God Rays switched off -- the enable
+  -- toggle did nothing, and the strength/g/ceiling sliders kept changing the
+  -- image while the panel claimed the effect was off. Confirmed by capture:
+  -- with godraysEnabled=false the frame differed from enabled by 294 pixels,
+  -- inside the 309-pixel run-to-run noise floor. With the fix, enabled vs
+  -- disabled must differ by far more than the noise floor.
+  if not (Settings.get('postfx.godrays.enable') or (Settings.get('postfx.godrays.debug') or 1) > 1) then return end
   local shaderH = Cache.Shader('worldray', 'filter/godrays')
   local shaderF = Cache.Shader('ui', 'filter/godblur')
   if not (shaderH and shaderF) then return end
