@@ -59,14 +59,43 @@ vec3 anchorExtent (vec4 c, vec4 d, vec4 e) {
   return max(vec3(c.w, d.w, e.w), vec3(1e-4));
 }
 
+/* Anchor parameters are INVARIANT along a ray: position, density, scale, warp and
+ * the three extents do not depend on the sample point p. They were re-fetched
+ * with 3 texelFetch calls per anchor PER MARCH STEP -- 48 fetches per step, and
+ * at Low quality (volSteps 10) ~480 per pixel, all returning byte-identical
+ * values for the whole pixel. They are fetched once per fragment here instead.
+ *
+ * The cache is SELF-ARMING (a bool that GLSL resets to false per fragment) and
+ * is invoked from inside anchorEnvelope/cloudSection rather than by an explicit
+ * call at each march site, on purpose: there are four call sites (volume,
+ * godrays, volblur, mediumOpticalDepth) and a forgotten call would leave every
+ * gAnchor* at zero, i.e. delete every plume -- a bug that presents as "the nebula
+ * vanished", not as a perf change. */
+vec4 gAnchorC[16];
+vec4 gAnchorD[16];
+vec4 gAnchorE[16];
+bool gAnchorsCached = false;
+
+void mediumCacheAnchors () {
+  if (gAnchorsCached) return;
+  gAnchorsCached = true;
+  for (int i = 0; i < 16; ++i) {
+    if (float(i) + 0.5 >= volCount) break;
+    gAnchorC[i] = texelFetch(texAnchors, ivec2(0, i), 0);
+    gAnchorD[i] = texelFetch(texAnchors, ivec2(1, i), 0);
+    gAnchorE[i] = texelFetch(texAnchors, ivec2(2, i), 0);
+  }
+}
+
 /* Anchor plumes: ellipsoid falloff (no box/cube outlines) */
 float anchorEnvelope (vec3 p) {
+  mediumCacheAnchors();
   float rho = 0.0;
   for (int i = 0; i < 16; ++i) {
     if (float(i) + 0.5 >= volCount) break;
-    vec4 c = texelFetch(texAnchors, ivec2(0, i), 0);
-    vec4 d = texelFetch(texAnchors, ivec2(1, i), 0);
-    vec4 e = texelFetch(texAnchors, ivec2(2, i), 0);
+    vec4 c = gAnchorC[i];
+    vec4 d = gAnchorD[i];
+    vec4 e = gAnchorE[i];
 
     // Normalised ellipsoid distance with C1 smoothstep falloff at plume edge
     float dist = length((p - c.xyz) / anchorExtent(c, d, e));
@@ -101,11 +130,12 @@ vec2 cloudSection (vec3 ro, vec3 rd, float tCap) {
   float tEnter = 1e30;
   float tExit = -1e30;
 
+  mediumCacheAnchors();
   for (int i = 0; i < 16; ++i) {
     if (float(i) + 0.5 >= volCount) break;
-    vec4 c = texelFetch(texAnchors, ivec2(0, i), 0);
-    vec4 d = texelFetch(texAnchors, ivec2(1, i), 0);
-    vec4 e = texelFetch(texAnchors, ivec2(2, i), 0);
+    vec4 c = gAnchorC[i];
+    vec4 d = gAnchorD[i];
+    vec4 e = gAnchorE[i];
     // Must bound the ELLIPSOID, not a cube of extX, or the early-out clips the
     // stretched plumes (and marches empty space where it does not).
     vec3 bMin = c.xyz - anchorExtent(c, d, e);

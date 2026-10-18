@@ -387,29 +387,48 @@ function System:spawnPlanet ()
   -- `or 0.0` fallback on a nil field would have logged a plausible-looking zero
   -- instead of failing -- the same "field nobody reads" trap as the unused
   -- genColor channel.
+  -- Named locals, not anonymous functions inside the argument list. This line
+  -- carries every per-world number needed to reproduce a reported view, so it is
+  -- read and diffed constantly; it used to be one 19-specifier format call with
+  -- an inline (function () ... end)() and six repeated `or Vec3f(...)`
+  -- fallbacks, which made the field order impossible to check against the
+  -- specifier order by eye -- and specifier/argument order is exactly how a
+  -- silent transposition hides. Each value now has a name at the point it is
+  -- derived, and the specifier order is visible next to its argument.
   local planetDist = planet:getPos():length()
+  local spinRad     = planet.spinSpeed or 0.0
+  -- Period in minutes. Zero/absent spin logs 0 rather than dividing by zero.
+  local spinPeriodMin = (spinRad > 0) and (2 * math.pi / spinRad) / 60.0 or 0.0
+  -- Ring summary. ringParams() is a pure getter, so building this first does not
+  -- change what the later getters observe.
+  local ringDesc
+  do
+    local r = planet:ringParams()
+    if r then
+      ringDesc = format('%.2f-%.2f R  ice=%.2f  opacity=%.2f',
+                        r.inner, r.outer, r.ice, r.opacity)
+    else
+      ringDesc = format('none (roll %.2f, type %.2f)',
+                        planet.ringRoll or 1.0, planet.ringType or 0.0)
+    end
+  end
+  -- spinAxis and starDir are logged so a REPORTED VIEW can be reproduced:
+  -- aurorae only appear in the auroral oval (high latitude, near spinAxis) AND
+  -- on the night side (180 deg from starDir), so to aim a camera at one you
+  -- need both vectors.
+  local spinAxis = planet.spinAxis or Vec3f(0, 1, 0)
+  local starDir  = self.starDir   or Vec3f(1, 0, 0)
+
   print(format('[system] planet %s  type=%s  moons=%d  radius=%.0f  at=%.0f  surf=%+.0f  clouds=%.2f (weather %.2f + bias %+.2f)  spin=%.4f rad/s (%.1f min)  ring=%s  seed=%.6f  pos=(%.1f,%.1f,%.1f)  axis=(%.2f,%.2f,%.2f)  star=(%.2f,%.2f,%.2f)',
     planet:getName(), tostring(planet.typeName), nMoons, scale,
     planetDist,
     planetDist - scale,
     planet:cloudCoverage(), planet.weather or 0.0, planet.cloudLevel or 0.0,
-    planet.spinSpeed or 0.0,
-    ((planet.spinSpeed or 0.0) > 0) and (2 * math.pi / (planet.spinSpeed)) / 60.0 or 0.0,
-    (function ()
-       local r = planet:ringParams()
-       if not r then return format('none (roll %.2f, type %.2f)',
-                                   planet.ringRoll or 1.0, planet.ringType or 0.0) end
-       return format('%.2f-%.2f R  ice=%.2f  opacity=%.2f',
-                     r.inner, r.outer, r.ice, r.opacity)
-     end)(),
+    spinRad, spinPeriodMin, ringDesc,
     planet.genSeed or 0,
     pos.x or 0.0, pos.y or 0.0, pos.z or 0.0,
-    -- spinAxis and starDir are logged so a REPORTED VIEW can be reproduced:
-    -- aurorae only appear in the auroral oval (high latitude, near spinAxis) AND
-    -- on the night side (180 deg from starDir), so to aim a camera at one you
-    -- need both vectors.
-    (planet.spinAxis or Vec3f(0, 1, 0)).x, (planet.spinAxis or Vec3f(0, 1, 0)).y, (planet.spinAxis or Vec3f(0, 1, 0)).z,
-    (self.starDir or Vec3f(1, 0, 0)).x, (self.starDir or Vec3f(1, 0, 0)).y, (self.starDir or Vec3f(1, 0, 0)).z))
+    spinAxis.x, spinAxis.y, spinAxis.z,
+    starDir.x, starDir.y, starDir.z))
   return planet
 end
 

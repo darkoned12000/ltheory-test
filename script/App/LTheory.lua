@@ -67,28 +67,45 @@ function LTheory:generate ()
       local sp       = controlling:getPos()
       local dx, dy, dz = sp.x - center.x, sp.y - center.y, sp.z - center.z
       local dist     = math.sqrt(dx * dx + dy * dy + dz * dz)
-      -- Stand-off is now primarily RELATIVE to the planet's own radius, the same
-      -- scale-invariant principle the ring mesh uses. 2.2x the centre distance
-      -- puts the disc about 54 degrees across, filling a good part of an 80
-      -- degree FOV; it was a FIXED 250000, which was tuned back when planets had
-      -- radius ~200000 and left a radius-4000 planet a 1.7-degree speck.
+      -- Stand-off is RELATIVE to the planet's own radius, the same
+      -- scale-invariant principle the ring mesh uses: 1.75x the radius puts the
+      -- disc about 70 degrees across, filling most of an 80 degree FOV. It was a
+      -- FIXED 250000, which was tuned back when planets had radius ~200000 and
+      -- left a radius-4000 planet a 1.7-degree speck.
+      --
+      -- This is applied UNCONDITIONALLY. It used to be `if dist < clear`, which
+      -- only pushed the ship OUT when it happened to spawn too close -- and since
+      -- the planet's own placement distance is
+      -- max(kSystemScale*(1+expDraw), radius*planetClearance) with
+      -- kSystemScale = 10000, the ship normally spawns FARTHER out than the
+      -- stand-off and was left alone. The consequence was that a planet's
+      -- apparent size was an accident of the random draw rather than a setting:
+      -- measured 11.6 degrees across on a normal seed versus 54 degrees when the
+      -- ship did get pushed out, for the same ship and the same camera.
+      --
+      -- Always placing makes the apparent size depend only on planetStandoff, which
+      -- is what makes that knob meaningful at all. It also means the ship is
+      -- never inside the planet, which is the W8 guarantee: `clear` is a multiple
+      -- of the radius, so it cannot be swallowed regardless of the seed.
       --
       -- planetViewDist survives as a FLOOR, so a very small body still gets some
-      -- stand-off. It was previously the primary term, and it is also the term
-      -- that prevented a huge planet (radius 343812 > 250000) spawning the ship
-      -- INSIDE it -> Bullet "Overflow in AABB" -> ship destroyed -> getRoot()
-      -- crash -- that case is now covered by the relative term being large for a
-      -- large planet, and the floor only ever raises the distance.
-      local clear = math.max(planet:getScale() * (Config.gen.planetStandoff or 2.2),
+      -- stand-off. It is NOT a visual knob: below radius ~2860 the floor wins and
+      -- the planet renders small again (a radius-588 body subtends 13.5 degrees).
+      -- That is deliberate -- it stops a tiny moon filling the screen.
+      --
+      -- planetStandoff is a SPAWN-TIME value and is deliberately NOT a debug-panel
+      -- slider: the placement has already happened by the time the panel is drawn,
+      -- so a panel knob for it would be a slider that visibly does nothing.
+      local clear = math.max(planet:getScale() * (Config.gen.planetStandoff or 1.75),
                              Config.gen.planetViewDist or 0)
-      if dist < clear then
-        local nx, ny, nz = 0, 0, 1
-        if dist > 1e-3 then nx, ny, nz = dx / dist, dy / dist, dz / dist end
-        controlling:setPos(Vec3f(
-          center.x + nx * clear,
-          center.y + ny * clear,
-          center.z + nz * clear))
-      end
+      -- Bearing from the planet's centre out to the ship is preserved, so the ship
+      -- keeps its side of the system and the approach direction does not change.
+      local nx, ny, nz = 0, 0, 1
+      if dist > 1e-3 then nx, ny, nz = dx / dist, dy / dist, dz / dist end
+      controlling:setPos(Vec3f(
+        center.x + nx * clear,
+        center.y + ny * clear,
+        center.z + nz * clear))
     end
   end
 

@@ -344,6 +344,45 @@ self.spinSpeed = self.spinSpeedBase * self:spinScale()
   self:setRot(Quat.FromAxisAngle(self.spinAxis, self.spinAngle))
 end
 
+-- Upload the body's frame uniforms for EITHER the planet material or the ring
+-- material: the local axes in world space, plus the spin axis.
+--
+-- These were duplicated verbatim between the two draw paths when rings were
+-- added. Two copies of the same identity fallback is how a "declare it for
+-- symmetry" mistake comes back (see 12), and two copies can silently disagree
+-- about the body's orientation. One helper, both call sites.
+--
+-- `forRing` selects WHICH spin-axis uniform to set, and it matters: the planet
+-- program declares `planetSpinAxis` and the ring program declares `spinAxis`,
+-- and Shader_GetVariable ABORTS THE PROCESS on a uniform the program lacks (12 --
+-- it is not a silent no-op). Setting both unconditionally looks harmless and
+-- boots exactly once before killing the process, so the choice is explicit
+-- rather than "set whichever exists".
+local function uploadPlanetFrame (self, rot, forRing)
+  if rot then
+    local ax, ay, az = rot:getAxisX(), rot:getAxisY(), rot:getAxisZ()
+    Shader.SetFloat3('planetAxisX', ax.x, ax.y, ax.z)
+    Shader.SetFloat3('planetAxisY', ay.x, ay.y, ay.z)
+    Shader.SetFloat3('planetAxisZ', az.x, az.y, az.z)
+  else
+    Shader.SetFloat3('planetAxisX', 1, 0, 0)
+    Shader.SetFloat3('planetAxisY', 0, 1, 0)
+    Shader.SetFloat3('planetAxisZ', 0, 0, 1)
+  end
+  -- Spin axis. Valid in LOCAL space unchanged: the body rotates ABOUT this axis,
+  -- and a rotation about an axis leaves that axis invariant, so local and world
+  -- expressions agree. Passing it (rather than letting the shader assume +Y) is
+  -- what stops the drift basis jumping across the latitude circle where a +Y/+X
+  -- reference switch used to live -- that discontinuity was the "circle"
+  -- artefact.
+  local sax = self.spinAxis or Vec3f(0, 1, 0)
+  if forRing then
+    Shader.SetFloat3('spinAxis', sax.x, sax.y, sax.z)
+  else
+    Shader.SetFloat3('planetSpinAxis', sax.x, sax.y, sax.z)
+  end
+end
+
 function Planet:render (state)
   -- The planet shader is heavy (fbm + scattering); it contributes nothing to a
   -- thruster's point-light shadow map, so skip it there. It still goes into the
@@ -416,8 +455,11 @@ function Planet:render (state)
     if stormKnob == nil then stormKnob = 1.0 end
     Shader.SetFloat('stormAmount', self.hasAtmo and ((self.weather or 0.0) * stormKnob) or 0.0)
     -- Intra-cloud lightning brightness. Separate knob so the flashes can be
-    -- auditioned against a calm sky.
-    Shader.SetFloat('stormFlash', Settings.get('render.planet.stormFlash') or 1.0)
+    -- auditioned against a calm sky. Default OFF, matching Config.gpu and the
+    -- SETTINGS default: a missing key must mean "no lightning", not "lightning",
+    -- or the fallback silently re-enables the exact thing that was turned off.
+    -- (0 is truthy in Lua, so a slider dragged to 0 arrives here as 0, not nil.)
+    Shader.SetFloat('stormFlash', Settings.get('render.planet.stormFlash') or 0.0)
 
     -- ---- Aurorae ----------------------------------------------------------
     -- Gated on the per-type `aurora` flag (see Config.App types): a dynamo AND
@@ -430,31 +472,14 @@ function Planet:render (state)
     -- Green emission sits at 100-300 km on a 6371 km Earth, so ~2-4% of radius;
     -- the red band above it is derived in the shader at 2.2x this altitude.
     Shader.SetFloat('auroraHeight', Settings.get('render.planet.auroraHeight') or 0.03)
-    -- The body's local axes in WORLD space. The surface cube is authored in local
-    -- space so the terrain spins with the planet; the cloud shell needs to convert
-    -- a world-space ray hit back into that local frame. Passed explicitly rather
-    -- than reusing the mWorldIT autovar because no fragment shader has ever
-    -- declared it, and an autovar that never gets uploaded is silently IDENTITY --
-    -- which would look like "parallax just doesn't work" rather than an error.
-    local rot = self:getRot()
-    if rot then
-      local ax, ay, az = rot:getAxisX(), rot:getAxisY(), rot:getAxisZ()
-      Shader.SetFloat3('planetAxisX', ax.x, ax.y, ax.z)
-      Shader.SetFloat3('planetAxisY', ay.x, ay.y, ay.z)
-      Shader.SetFloat3('planetAxisZ', az.x, az.y, az.z)
-    else
-      Shader.SetFloat3('planetAxisX', 1, 0, 0)
-      Shader.SetFloat3('planetAxisY', 0, 1, 0)
-      Shader.SetFloat3('planetAxisZ', 0, 0, 1)
-    end
-    -- Spin axis, used by the cloud drift's tangent basis. Valid in LOCAL space
-    -- unchanged: the body rotates ABOUT this axis, and a rotation about an axis
-    -- leaves that axis invariant, so local and world expressions agree. Passing
-    -- it (rather than letting the shader assume +Y) is what stops the basis
-    -- jumping across the latitude circle where a +Y/+X reference switch used
-    -- to live -- that discontinuity was the "circle" artefact.
-    local sax = self.spinAxis or Vec3f(0, 1, 0)
-    Shader.SetFloat3('planetSpinAxis', sax.x, sax.y, sax.z)
+    -- Local axes in world space + spin axis. Shared with the ring draw by
+    -- uploadPlanetFrame. The surface cube is authored in local space so the
+    -- terrain spins with the body, and the cloud shell must convert a
+    -- world-space ray hit back into that frame. Passed explicitly rather than
+    -- reusing the mWorldIT autovar because no fragment shader has ever declared
+    -- it, and an autovar that never gets uploaded is silently IDENTITY -- which
+    -- would look like "parallax just doesn't work" rather than an error.
+    uploadPlanetFrame(self, self:getRot(), false)
     -- Terminator shape: 0 = cosine law (a diffuse planet dims toward the limb),
     -- 1 = the old flat wrap that glowed almost to the edge.
     Shader.SetFloat('terminator', Settings.get('render.planet.terminator') or 0.35)
@@ -508,21 +533,11 @@ function Planet:render (state)
       Shader.SetFloat('ringIce', iceness)
       -- How strongly the ring picks up the skybox / nebula around it.
       Shader.SetFloat('ringEnv', Settings.get('render.planet.ringEnv') or 1.0)
-      -- Ring plane normal in world space: the planet's equatorial axis, which
-      -- the entity transform already carries (this is why the mesh is flat).
-      local sax = self.spinAxis or Vec3f(0, 1, 0)
-      Shader.SetFloat3('spinAxis', sax.x, sax.y, sax.z)
-      local rot = self:getRot()
-      if rot then
-        local ax, ay, az = rot:getAxisX(), rot:getAxisY(), rot:getAxisZ()
-        Shader.SetFloat3('planetAxisX', ax.x, ax.y, ax.z)
-        Shader.SetFloat3('planetAxisY', ay.x, ay.y, ay.z)
-        Shader.SetFloat3('planetAxisZ', az.x, az.y, az.z)
-      else
-        Shader.SetFloat3('planetAxisX', 1, 0, 0)
-        Shader.SetFloat3('planetAxisY', 0, 1, 0)
-        Shader.SetFloat3('planetAxisZ', 0, 0, 1)
-      end
+      -- Local axes in world space + the ring-plane normal (the planet's
+      -- equatorial axis, which the entity transform already carries -- that is
+      -- why the mesh is flat). Same helper as the planet pass; these two used to
+      -- be duplicated verbatim and could disagree about the body's orientation.
+      uploadPlanetFrame(self, self:getRot(), true)
       Shader.SetMatrix('mWorld', self:getToWorldMatrix())
       Shader.SetMatrixT('mWorldIT', self:getToLocalMatrix())
       self.meshRing:draw()

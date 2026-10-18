@@ -3,6 +3,7 @@
 #include color
 #include noise
 #include gamma
+#include planetlocal
 
 #autovar vec3 eye
 #autovar vec3 starDir
@@ -30,9 +31,8 @@ layout(location = 0) out vec4 fragColor;
 
 uniform vec3  origin;        // planet centre, world space
 uniform float rPlanet;       // world radius, for the shadow solve only
-uniform vec3  planetAxisX;   // planet local axes in world space, so the sun can
-uniform vec3  planetAxisY;   // be taken into the planet's own frame
-uniform vec3  planetAxisZ;
+// planetAxisX/Y/Z and worldToLocalDir come from include/planetlocal, shared with
+// material/planet.glsl -- they were duplicated when rings were added.
 uniform vec3  spinAxis;      // ring plane normal (world). The ring lies in the
                              // planet's equatorial plane, so this is the axis.
 uniform float ringInner;     // inner edge, in planet radii
@@ -49,10 +49,6 @@ uniform float ringIce;       // 0 = pure dust, 1 = pure ice. Drives COLOUR *and*
 uniform float ringEnv;       // how strongly the ring picks up the skybox /
                              // nebula irradiance around it
 uniform float sunScale;
-
-vec3 worldToLocalDir (vec3 w) {
-  return vec3(dot(w, planetAxisX), dot(w, planetAxisY), dot(w, planetAxisZ));
-}
 
 void main() {
   // vertPos is the LOCAL vertex position, i.e. already in planet radii.

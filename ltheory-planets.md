@@ -1418,8 +1418,20 @@ Two things worth noting:
 - **A uniform the shader declares but Lua never uploads sits at 0 — no error.**
   `filter/aberration.glsl` divided by one (`0.0/0.0` → NaN) and the result was
   blue horizontal scanlines over the whole frame. The inverse also happens: knobs
-  whose uniform was never uploaded (`radialblur.scanlines`, `ssao.blur`) read as
-  working but did nothing. Audit both directions.
+  whose uniform was never uploaded read as working but do nothing. Audit both
+  directions — with `grep -rn <uniform> script/ res/shader/`, and treat *one hit,
+  in the .glsl only* as the tell.
+  - **Still unwired (harmless today, but dead knobs):** `bloompre.maxBrightness`
+    is never uploaded, so it sits at 0 and the `> 0.0` test falls through to the
+    hardcoded 5.0 clamp — correct by luck, not by wiring. `tonemap.lensDirt*` is
+    dead for a subtler reason: `uniform float lensDirtStrength = 0.0;` relies on a
+    GLSL **default initializer**, which links the initial value into the program,
+    so the branch is provably never taken and `lensDirtTex` is an unbound sampler
+    inside unreachable code. An unbound sampler is fine *only* while unreachable.
+  - **Wired now (this list used to name them wrongly):** `radialblur.scanlines`
+    (`GameView.lua:849`) and `ssao.blur` (`GameView.lua:361`) were reported dead in
+    an earlier revision of this section. Both are live. Treat this bullet as a
+      standing audit, not a fixed list — it was already wrong once.
 - **`Resolution:` printed at boot is stale.** `LTheory.lua` logs `resX/resY` once
   from `getDefaultSize()`; `Application` then updates them live on every window
   resize. Headless dumps came out 936×969, 1691×1232 and 1891×969 on nominally

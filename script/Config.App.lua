@@ -56,11 +56,24 @@ Config.gen = {
   -- Minimum distance to keep the player's ship from a planet center at spawn:
   -- keeps you just clear of the surface (and out of its "huge in your face" zone)
   -- so there's room to see and fly around it. Tune freely; default ~1.25x radius.
-  -- Ship stand-off from a planet is now primarily planetStandoff x the planet's
-  -- own radius; this is only a FLOOR for very small bodies (see LTheory.lua).
-  -- It used to be the primary term, as a fixed 250000.
+  -- Ship stand-off from a planet is planetStandoff x the planet's own radius, and
+  -- is applied UNCONDITIONALLY at spawn (see LTheory.lua). It used to be
+  -- conditional (`if dist < clear`), which meant the stand-off usually did not
+  -- apply at all and the planet's apparent size varied 11.6-54 deg purely by
+  -- seed draw. Because the ship's apparent size is set by the chase camera and
+  -- not by its distance to the planet, this is the ONLY knob that changes how big
+  -- the planet reads next to the ship.
+  --
+  -- Disc angular diameter = 2*asin(1/planetStandoff), independent of the planet's
+  -- size: 2.2 -> 54 deg, 1.75 -> 70 deg, 1.5 -> 84 deg. Below ~1.45 it exceeds
+  -- the 80 deg FOV and the disc runs off every edge.
+  --
+  -- Because it is scale-invariant, raising `scalePlanet` does NOT make the planet
+  -- look bigger -- radius and stand-off rise together. Only this value does.
+  -- Below radius ~2860 the planetViewDist floor wins and small bodies stay small
+  -- (radius 588 -> 13.5 deg), deliberately.
   planetViewDist = 5000,
-  planetStandoff = 2.2,       -- x planet radius; ~54 deg disc at 80 deg FOV
+  planetStandoff = 1.75,      -- x planet radius; ~70 deg disc at 80 deg FOV
 
   -- Planet size (System:spawnPlanet). `scalePlanet` is the HONOURED base:
   -- radius = scalePlanet * Erlang(2), so the mean radius is ~2x this.
@@ -456,9 +469,18 @@ Config.gpu = {
                           --     (ocean .70 / terr .60 / ice .40 / lava .15 /
                           --     desert .08 / barren+moon 0). Storms read as
                           --     DARKER convective cells, per ISS photography.
-  planetStormFlash  = 1.0,     -- intra-cloud lightning. Cells fire independently
+  planetStormFlash  = 0.0,     -- intra-cloud lightning. OFF by default: it fires
+                          --     unprompted the moment a clouded world loads, which
+                          --     reads as a rendering glitch rather than weather.
+                          --     Raise it (or drag the panel's " - Flashes"
+                          --     slider) to audition. Cells fire independently
                           --     (hashed per cell per time window), so the planet
                           --     twinkles rather than strobing in unison.
+                          --     NOTE: keep this, the SETTINGS `default` in
+                          --     Renderer.lua, and the `or` fallback in
+                          --     Planet:render in agreement -- Config.gpu is what
+                          --     actually seeds the panel at launch, so changing
+                          --     only one of the three leaves the world flashing.
   planetAurora      = 1.0,     -- auroral emission. TYPE-GATED: only worlds whose
                           --     type sets `aurora` (needs a magnetic dynamo AND
                           --     an atmosphere) emit at all -- terrestrial and

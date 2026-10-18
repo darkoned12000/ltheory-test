@@ -5,6 +5,7 @@
 #include noise
 #include gamma
 #include scattering2
+#include planetlocal
 
 #autovar vec3 eye
 #autovar vec3 starDir
@@ -37,23 +38,13 @@ uniform float stormAmount;  // storminess 0..1 (per-type weather prior x panel k
 uniform float stormFlash;   // intra-cloud lightning brightness (0 = none)
 uniform float auroraAmt;    // auroral emission 0..1 (0 = none; type-gated, see Planet.lua)
 uniform float auroraHeight; // lower shell altitude as a FRACTION of rPlanet
-uniform vec3  planetAxisX;  // world-space directions of the planet's local axes. The cube is
-uniform vec3  planetAxisY;  // authored in LOCAL space (so the deck spins with the body), so
-uniform vec3  planetAxisZ;  // sampling the cloud shell needs world -> local. Passed explicitly
+// planetAxisX/Y/Z and the world<->local direction helpers now live in
+// include/planetlocal, shared with material/ring.glsl.
 uniform vec3  planetSpinAxis;// the body's own spin axis; the drift tangent basis is built
                              // from it so it cannot jump across a latitude circle (see below)
                            // rather than reusing mWorldIT: no fragment shader has ever declared
                            // that autovar, and an unset one is silently identity (see 12).
 uniform float terminator;   // 0 = cosine (physical), 1 = flat wrap (legacy)
-
-// World-space direction -> the planet's local direction, and back. Valid for any
-// rigid transform; uniform scale cancels under normalize().
-vec3 worldToLocalDir (vec3 w) {
-  return vec3(dot(w, planetAxisX), dot(w, planetAxisY), dot(w, planetAxisZ));
-}
-vec3 localToWorldDir (vec3 l) {
-  return planetAxisX * l.x + planetAxisY * l.y + planetAxisZ * l.z;
-}
 
 // Rodrigues rotation of a DIRECTION about the body's spin axis. This is the
 // cloud drift. Three properties the old `normalize(dir + D*drift)` construction

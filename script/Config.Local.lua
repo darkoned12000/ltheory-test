@@ -25,8 +25,18 @@ Config.window.fullscreen = true
 -- (+0.55 ms at 0.79 MP, +4.4 ms at 8.29 MP).
 --
 -- resolutionScale is the only working lever at 4K: it renders below window size
--- and upscales on present. 50% => 1920x1080 internal.
-Config.gpu.resolutionScale = '50%'
+-- and upscales on present.
+--
+-- 2026-10-17: 50% -> 100%. The blockiness on the planet was this line, and it
+-- was not buying anything. Measured on this machine (RX 7900 XTX, seeded world,
+-- held camera, PHX_PERF):
+--     1.86 MP -> 1.72 ms (583 fps)     7.4 MP -> 5.40 ms (185 fps)
+--     29.7 MP -> 22.9 ms (44 fps, after the medium.glsl anchor hoist)
+-- So 4K/100% (~8.3 MP) lands near 6 ms / ~165 fps -- still ~2.7x the 60 fps
+-- floor, at native 3840x2160 with no upscale. Do NOT re-add 4x superSample:
+-- ss multiplies the WHOLE internal buffer, so 50%+4x was 7680x4320 = 33.2 MP
+-- (16x normal), which measured 8 fps for you.
+Config.gpu.resolutionScale = '100%'
 
 -- Manually set the universe seed (do not delete)
 -- Config.gen.seedGlobal = 13358375402019159601ULL

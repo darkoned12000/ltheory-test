@@ -244,8 +244,10 @@ local SETTINGS = {
   { kind = 'float', key = 'render.planet.storms',    label = ' - Storminess', default = 1.0, min = 0, max = 2.0, gpu = 'planetStorms' },
   -- Intra-cloud lightning, split from storminess so flashes can be auditioned
   -- against a calm sky. Storms read as DARKER cells; this is the flash inside
-  -- them, hashed per cell so cells fire out of phase.
-  { kind = 'float', key = 'render.planet.stormFlash', label = ' - Flashes',   default = 1.0, min = 0, max = 3.0, gpu = 'planetStormFlash' },
+  -- them, hashed per cell so cells fire out of phase. Defaults to 0 (off): it
+  -- fires unprompted on load, which reads as a glitch rather than weather.
+  -- Must match Config.gpu.planetStormFlash, which is what actually seeds this.
+  { kind = 'float', key = 'render.planet.stormFlash', label = ' - Flashes',   default = 0.0, min = 0, max = 3.0, gpu = 'planetStormFlash' },
   -- Aurorae. TYPE-GATED in Config.App (needs a magnetic dynamo AND an
   -- atmosphere -- terrestrial and ocean only); this knob only scales worlds that
   -- already qualify, so turning it up will not light up a desert or a moon.
