@@ -882,8 +882,15 @@ function Renderer:volume (med)
   local shaderF = Cache.Shader('worldray', 'filter/volblur')
   if not (shaderH and shaderF) then return end
 
-  local volW = math.max(1, math.floor(self.sx / 2))
-  local volH = math.max(1, math.floor(self.sy / 2))
+  -- Volume march resolution is relative to the BASE render size, not the
+  -- supersampled one. `superSample` scales the whole internal buffer
+  -- (Renderer:start: sx = ss*resX), so sizing this off self.sx made SSAA
+  -- inflate the march 4x as well -- the exact cost supersampling is supposed to
+  -- avoid. The medium is low-frequency and is upsampled through volblur anyway,
+  -- so the march gains nothing from the extra pixels.
+  -- At ss = 1 self.resX == self.sx and this is unchanged, bit for bit.
+  local volW = math.max(1, math.floor(self.resX / 2))
+  local volH = math.max(1, math.floor(self.resY / 2))
   local volMip = 1.0
 
   if not self.volView or self.volView:getSize().x ~= volW then
@@ -1070,8 +1077,13 @@ function Renderer:godrays (med)
   local shaderF = Cache.Shader('ui', 'filter/godblur')
   if not (shaderH and shaderF) then return end
 
-  local gW = math.max(1, math.floor(self.sx / 4))
-  local gH = math.max(1, math.floor(self.sy / 4))
+  -- Same reasoning as Renderer:volume: the shaft march is sized off the BASE
+  -- render size so supersampling does not inflate it. Shafts are the lowest
+  -- frequency thing in the frame -- a radial blur over quarter-res is already
+  -- indistinguishable -- so this is the cheapest place in the whole renderer to
+  -- refuse the extra samples.
+  local gW = math.max(1, math.floor(self.resX / 4))
+  local gH = math.max(1, math.floor(self.resY / 4))
   if not self.godView or self.godView:getSize().x ~= gW then
     if self.godView then self.godView:free() end
     self.godView = Tex2D.Create(gW, gH, TexFormat.RGBA16F)
