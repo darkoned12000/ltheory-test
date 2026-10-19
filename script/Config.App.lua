@@ -453,6 +453,13 @@ Config.gpu = {
   -- God-rays (postfx.godrays.*, fog-nebula Phase 3). Independent low-res shaft
   -- pass from starDir: its own on/off + strength, forward-scatter lobe + A/B
   -- debug view. Off = renderer never invoked.
+  -- Temporal anti-aliasing. Supersampling scales the ENTIRE internal buffer, so
+  -- 4x cost 16x the pixels of every pass; TAA gets comparable edge quality for
+  -- two full-screen passes at ~1x. They are alternatives, not a stack -- with
+  -- both on you pay for both.
+  taaEnabled  = false,   -- off until play-tested
+  taaBlend    = 0.9,     -- history weight; lower = less ghosting on movers
+
   -- Panel-seeded form of the three asteroid-field knobs. These seed the debug
   -- panel (Renderer.lua's SETTINGS), and the PANEL is what actually drives the
   -- field, so setting them here is what makes the panel show a value. The rest
@@ -620,7 +627,9 @@ Config.gpu = {
   resolutionScale = '100%', -- render 3D below window size, upscale on present
                             -- (100%|85%|75%|67%|50%; big perf lever at 4K)
 
-  -- Future: antiAlias = 'TAA' — temporal AA (planned, not yet wired).
+  -- Anti-aliasing: superSample (SSAA) above, or TAA via Config.gpu.taaEnabled /
+  -- taaBlend (also on the debug panel as render.taa.enable / render.taa.blend).
+  -- They are alternatives -- both on means paying for both.
 }
 
 Config.ui = {

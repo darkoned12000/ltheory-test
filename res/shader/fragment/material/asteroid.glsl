@@ -50,10 +50,27 @@ uniform float rockFadeFar;
 uniform sampler2D texDiffuse;
 uniform float scale;
 
-// Interleaved gradient noise (Jimenez). Cheap, and far better distributed than a
-// hash of gl_FragCoord, so the stipple does not clump into visible blotches.
+// Dither threshold for the curtain fade.
+//
+// This was interleaved gradient noise, which was WRONG: IGN is designed to be
+// low-discrepancy ACROSS the frame, and at one sample per pixel that structure
+// is visible on its own. Play-testing caught it as a regular grid woven across
+// mid-distance asteroid surfaces and vertical banding across the smooth nebula
+// -- the artifacts appeared in exactly the fade band, which is the tell.
+//
+// A plain integer hash is unstructured, so it reads as even grain rather than as
+// a pattern. It is stable per pixel (no shimmer), and it is the right choice until
+// the 64x64 blue-noise texture can be bound here: blue noise is visibly better,
+// but it needs plumbing through Material, whereas this is self-contained.
 float rockFadeDither (vec2 p) {
-  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+  // Integer hash (Wang / sin-free). sin-based hashes band badly on some drivers.
+  uint x = uint(int(p.x) + 32768);
+  uint y = uint(int(p.y) + 32768);
+  uint h = x * 0x27d4eb2du + y * 0x165667b1u;
+  h ^= h >> 15; h *= 0x2c1b3c6du;
+  h ^= h >> 12; h *= 0x297a2d39u;
+  h ^= h >> 15;
+  return float(h) / 4294967295.0;
 }
 
 void main() {

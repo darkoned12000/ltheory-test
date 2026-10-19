@@ -197,6 +197,23 @@ local SETTINGS = {
   { kind = 'float', key = 'gen.asteroidField.perChunk',   label = ' - Rocks/Chunk', default = 8, min = 0, max = 24, gpu = 'asteroidFieldPerChunk' },
   { kind = 'float', key = 'gen.asteroidField.loadRadius', label = ' - Reach',       default = 4, min = 1, max = 12, gpu = 'asteroidFieldLoadRadius' },
 
+  -- Temporal anti-aliasing. This is the modern replacement for SuperSampling, and
+  -- the two are NOT additive: SuperSampling scales the WHOLE internal buffer, so
+  -- running both means paying 16x pixels AND the resolve. Turn SS off when TAA is on.
+  --
+  --   enable  master switch
+  --   blend   how much of the previous frame to keep. 0 = no temporal effect at
+  --           all (just a sub-pixel resample), 1 = maximum history and therefore
+  --           maximum ghosting on anything that moves. 0.9 is the usual
+  --           compromise; lower it if moving objects smear, raise it if edges crawl.
+  --
+  -- Costs two full-screen passes at ~1x pixels, against 16x for 4x SSAA.
+  -- Depth-based reprojection, no velocity buffer -- viable because the world is
+  -- static (streamed rocks never move, planets turn at ~0.02 rad/s) so for a
+  -- moving camera it is essentially exact. NPCs are the known artifact.
+  { kind = 'bool',  key = 'render.taa.enable', label = 'TAA (Temporal AA)', default = false, gpu = 'taaEnabled' },
+  { kind = 'float', key = 'render.taa.blend',  label = ' - History',      default = 0.9, min = 0, max = 1, gpu = 'taaBlend' },
+
   { kind = 'enum',  key = 'render.resolutionScale', label = 'Render Scale', default = 1,
     options = { '100%', '85%', '75%', '67%', '50%' }, gpu = 'resolutionScale', optKey = strKey },
   { kind = 'bool',  key = 'render.wireframe',   label = 'Wireframe',             default = false },
@@ -504,6 +521,102 @@ function Renderer:blur (dst, src, dx, dy, radius)
   dst:pop()
 end
 
+--[[ TAA -- temporal anti-aliasing resolve.
+
+  Runs BEFORE Camera:endDraw, not in the post chain, because the resolve declares
+  the camera's matrices as autovars and Shader_Start Fatal-aborts when a declared
+  autovar is missing from the ShaderVar stack (Shader.cpp:313). By the time the
+  post chain runs, endDraw has already popped mView/mViewInv/mViewProjPrev.
+
+  Two full-screen passes rather than one: the resolve writes into its own history
+  target (so the history survives the next frame's scene render, which overwrites
+  buffer0), then a copy puts the resolved image back into the scene buffer. The
+  copy is the cheap part; the resolve is a 3x3 neighbourhood clamp plus one
+  history fetch.
+
+  The Halton(2,3) jitter lives in Camera:beginDraw, not here, because the
+  geometry must be rasterised with the SAME jitter the resolve samples at. ]]
+function Renderer:freeTAA ()
+  if self.taaHist then
+    for _, t in ipairs(self.taaHist) do t:free() end
+  end
+  self.taaHist = nil
+  self.taaRead = nil
+  self.taaValid = false
+  self.taaFrame = 0
+end
+
+function Renderer:taa (blend)
+  local sx, sy = self.sx, self.sy
+  if not self.taaHist
+     or self.taaHist[1]:getSize().x ~= sx
+     or self.taaHist[1]:getSize().y ~= sy then
+    self:freeTAA()
+    local a = Tex2D.Create(sx, sy, TexFormat.RGBA16F)
+    local b = Tex2D.Create(sx, sy, TexFormat.RGBA16F)
+    for _, t in ipairs({ a, b }) do
+      t:setMagFilter(TexFilter.Linear)
+      t:setMinFilter(TexFilter.Linear)
+      t:setWrapMode(TexWrapMode.Clamp)
+    end
+    self.taaHist = { a, b }
+    -- 1-based: taaHist[taaRead] holds the PREVIOUS frame's resolved image, and
+    -- the resolve writes the other slot. (A 0-based taaRead looks natural and is
+    -- a nil-index crash, because Lua tables start at 1.)
+    self.taaRead = 1
+    self.taaValid = false
+  end
+
+  local shader = Cache.Shader('identity', 'filter/taa')
+  local copy   = Cache.Shader('identity', 'filter/identity')
+  if not (shader and copy) then return end
+
+  self.taaFrame = (self.taaFrame or 0) + 1
+  local read = self.taaRead
+  local write = read == 1 and 2 or 1
+
+  -- Pass 1: resolve scene + history[read] -> history[write]
+  RenderTarget.Push(sx, sy)
+  RenderTarget.BindTex2D(self.taaHist[write])
+  RenderState.PushDepthTest(false)
+  shader:start()
+    Shader.SetTex2D('texScene',   self.buffer0)
+    Shader.SetTex2D('texDepth',   self.zBufferL)
+    Shader.SetTex2D('texHistory', self.taaHist[read])
+    Shader.SetFloat2('taaTexel',  1.0 / sx, 1.0 / sy)
+    Shader.SetFloat('taaBlend',   blend or 0.9)
+    -- False on the frame the history buffers were (re)allocated, and on every
+    -- frame after that until one has been written. Read it BEFORE this resolve,
+    -- because (re)allocation above just cleared it -- that is what stops a resize
+    -- (or switching TAA on mid-session) from blending one frame against a
+    -- freshly-allocated, UNINITIALISED history texture.
+    Shader.SetFloat('taaValid',  self.taaValid and 1.0 or 0.0)
+    -- taaJitter / taaJitterPrev are NOT set here: they are autovars pushed by
+    -- Camera:beginDraw, because the geometry must be rasterised with the SAME
+    -- jitter the resolve samples at. Setting them per-draw here would silently
+    -- disagree with the projection that produced the frame.
+    Draw.Color(1, 1, 1, 1)
+    Draw.Rect(-1, -1, 2, 2)
+  shader:stop()
+  RenderState.PopDepthTest()
+  RenderTarget.Pop()
+
+  -- Pass 2: resolved image -> scene buffer (the renderer's usual src->dst + swap)
+  self.buffer1:pushLevel(self.level)
+  RenderState.PushDepthTest(false)
+  copy:start()
+    Shader.SetTex2D('src', self.taaHist[write])
+    Draw.Color(1, 1, 1, 1)
+    Draw.Rect(-1, -1, 2, 2)
+  copy:stop()
+  RenderState.PopDepthTest()
+  self.buffer1:pop()
+  self:swap()
+
+  self.taaRead = write
+  self.taaValid = true
+end
+
 function Renderer:sharpen (radius, sigma, strength)
   Draw.Color(1, 1, 1, 1)
 
@@ -651,6 +764,10 @@ function Renderer:bloom (radius)
 end
 
 function Renderer:free ()
+  -- TAA history is sized to the internal buffer, so it must go whenever the
+  -- buffers do (resize, mode change, shutdown) or it leaks a full RGBA16F
+  -- target per resolution the window has ever been.
+  self:freeTAA()
   if self.buffer0 then
     self.buffer0:free()
     self.buffer1:free()

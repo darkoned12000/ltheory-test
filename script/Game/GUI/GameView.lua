@@ -700,6 +700,17 @@ function GameView:draw (focus, active)
   end
   self.renderer:stopAlpha()
 
+  -- TAA resolve. HERE, before camera:endDraw, not in the post chain: the resolve
+  -- declares the camera's matrices as autovars and Shader_Start Fatal-aborts when
+  -- a declared autovar is not on the ShaderVar stack. endDraw pops them.
+  --
+  -- The scene is complete at this point (opaque + additive + alpha), and it runs
+  -- before the UI pass -- which is correct anyway, because the UI lives in its own
+  -- buffer composited after post, so the HUD and debug panel are never smeared.
+  if Settings.get('render.taa.enable') then
+    self.renderer:taa(Settings.get('render.taa.blend') or 0.9)
+  end
+
   world:endRender()
   ShaderVar.Pop('sunColor')
   ShaderVar.Pop ('sunFill')
