@@ -30,6 +30,10 @@ local Camera = class(function (self)
   self.taaFrame = 0
   self.taaJitter = Vec2f(0, 0)
   self.taaJitterPrev = Vec2f(0, 0)
+  -- Per-frame rotation for screen-space dithered alpha; see beginDraw. (0,0)
+  -- means "do not rotate", i.e. the TAA-off behaviour.
+  self.ditherFrame = 0
+  self.ditherOffset = Vec2f(0, 0)
 end)
 
 local stack = {}
@@ -75,6 +79,24 @@ function Camera:beginDraw ()
   end
   ShaderVar.PushFloat2('taaJitter',     self.taaJitter.x,     self.taaJitter.y)
   ShaderVar.PushFloat2('taaJitterPrev', self.taaJitterPrev.x, self.taaJitterPrev.y)
+  -- ditherOffset decorrelates screen-space dithered alpha (the streamed
+  -- asteroid-field curtain) between frames. It walks a golden-ratio sequence so
+  -- successive frames select maximally different pixels.
+  --
+  -- WHY THIS IS ONLY NON-ZERO WITH TAA ON: a dither that changes every frame is
+  -- a shimmer generator when nothing integrates it. TAA's history blend is
+  -- exactly that integrator, so with TAA on the per-frame variation resolves into
+  -- smooth partial coverage over ~20 frames. With TAA off there is no integrator
+  -- and the offset stays (0,0), which is the old stable-hash behaviour.
+  if Settings.get('render.taa.enable') then
+    self.ditherFrame = (self.ditherFrame or 0) + 1
+    self.ditherOffset = Vec2f(64.0 * ((self.ditherFrame * 0.7548776662) % 1.0),
+                              64.0 * ((self.ditherFrame * 0.5698402909) % 1.0))
+  else
+    self.ditherFrame   = 0
+    self.ditherOffset = Vec2f(0, 0)
+  end
+  ShaderVar.PushFloat2('ditherOffset', self.ditherOffset.x, self.ditherOffset.y)
   -- taaValid is deliberately NOT pushed here. It is owned by the Renderer (set
   -- per-pass in Renderer:taa) because only the Renderer knows whether the history
   -- buffers exist and have been written yet -- see the note in filter/taa.glsl.
@@ -100,6 +122,7 @@ function Camera:endDraw ()
   -- frame forever (~8 bytes x 3 x framerate; ~5 MB/hour). Balance them here.
   ShaderVar.Pop('taaJitter')
   ShaderVar.Pop('taaJitterPrev')
+  ShaderVar.Pop('ditherOffset')
   self:pop()
 end
 

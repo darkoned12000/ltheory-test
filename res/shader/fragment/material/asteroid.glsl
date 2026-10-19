@@ -31,9 +31,14 @@
 // a streamed field cost one distance calculation each.
 //
 // Dithered rather than blended, because the deferred G-buffer is opaque. Blending
-// would need sorted draws and would break depth writes. Interleaved gradient
-// noise resolves a partial value into a fine screen-space stipple that reads as a
-// smooth fade, and TAA (the next task) collapses it completely.
+// would need sorted draws and would break depth writes.
+//
+// It resolves a partial value into stochastic alpha -- "discard this pixel with
+// probability (1 - vis)". That is only SMOOTH if the threshold varies over time
+// and something integrates it; see ditherOffset and Camera:beginDraw. A static
+// per-pixel threshold produces a fixed screen-space stipple that crawls across
+// moving geometry, and TAA cannot fix it (every frame yields the same dots, so
+// the history converges straight back onto them).
 #autovar float rockFadeNear
 #autovar float rockFadeFar
 
@@ -47,6 +52,12 @@
 uniform float rockFadeNear;
 uniform float rockFadeFar;
 
+// Per-frame rotation of the dither threshold, pushed by Camera:beginDraw. It is
+// (0,0) unless TAA is running -- see the note in Camera.lua for why a dither
+// that varies per frame is only safe when something integrates it.
+#autovar vec2 ditherOffset
+uniform vec2 ditherOffset;
+
 uniform sampler2D texDiffuse;
 uniform float scale;
 
@@ -59,9 +70,13 @@ uniform float scale;
 // -- the artifacts appeared in exactly the fade band, which is the tell.
 //
 // A plain integer hash is unstructured, so it reads as even grain rather than as
-// a pattern. It is stable per pixel (no shimmer), and it is the right choice until
-// the 64x64 blue-noise texture can be bound here: blue noise is visibly better,
-// but it needs plumbing through Material, whereas this is self-contained.
+// a pattern. On its own it is stable per pixel, which is what you want with TAA
+// OFF (no integrator, so a moving threshold would just shimmer). With TAA ON the
+// caller's ditherOffset decorrelates it per frame instead.
+//
+// Blue noise (the 64x64 texture already built for GTAO's slice rotation) is
+// visibly better than either on its own, but binding it needs plumbing through
+// Material; this stays self-contained.
 float rockFadeDither (vec2 p) {
   // Integer hash (Wang / sin-free). sin-based hashes band badly on some drivers.
   uint x = uint(int(p.x) + 32768);
@@ -78,7 +93,13 @@ void main() {
   // entirely for a rock that is not going to be drawn.
   float camDist = length(pos - eye);
   float vis = 1.0 - smoothstep(rockFadeNear, rockFadeFar, camDist);
-  if (vis < rockFadeDither(gl_FragCoord.xy)) discard;
+  // ditherOffset is what makes this a STOCHASTIC alpha rather than a fixed
+  // screen-space stipple. With TAA running it changes every frame (golden-ratio
+  // sequence), so consecutive frames discard different subsets of pixels and the
+  // history blend integrates them into true partial coverage. With a static
+  // threshold the same dots are produced every frame, TAA converges straight back
+  // onto them, and they crawl visibly across a moving rock.
+  if (vis < rockFadeDither(gl_FragCoord.xy + ditherOffset)) discard;
 
   vec3 N = normalize(normal);
   vec3 V = normalize(pos - eye);
