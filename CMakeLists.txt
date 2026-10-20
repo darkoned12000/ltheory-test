@@ -81,6 +81,20 @@ add_custom_target (phx_validate_frustum
 add_dependencies (lt phx_validate_frustum)
 add_dependencies (phx_validate_frustum phx)
 
+# The SpaceField is the shared description of "what kind of place is this?",
+# and every world generator will read it. Its contract -- deterministic,
+# continuous across lattice boundaries, uncorrelated between channels, and
+# producing DISTINCT seeds for adjacent sectors -- is checked offline, with
+# no GL context, exactly as the frustum cull's geometry is.
+add_custom_target (phx_validate_spacefield
+  COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_spacefield.lua
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating the procedural SpaceField contract"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_spacefield)
+add_dependencies (phx_validate_spacefield phx)
+
 # --- Build-time SDL validation gates ---------------------------------------
 add_custom_target (phx_validate_sdl
   COMMAND "${PHX_VALIDATOR_PY}" tools/validate_sdl.py

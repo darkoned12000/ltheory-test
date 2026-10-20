@@ -93,6 +93,17 @@ def run_frustum_tests():
         luajit = 'luajit'
     return subprocess.run([luajit, exe]).returncode
 
+def run_spacefield_tests():
+    print('[configure.py] Validating the procedural SpaceField contract')
+    exe = os.path.join('tools', 'validate_spacefield.lua')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_spacefield.lua found - skipping')
+        return 0
+    luajit = os.path.join('libphx', 'ext', 'bin', 'linux64', 'luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    return subprocess.run([luajit, exe]).returncode
+
 def run_sdl_tests():
     print('[configure.py] Validating SDL pkg/header/init + input wiring')
     rc = 0
@@ -149,6 +160,7 @@ def run_tests():
     result |= run_immdraw_tests()
     result |= run_renderqueue_tests()
     result |= run_frustum_tests()
+    result |= run_spacefield_tests()
     result |= run_sdl_tests()
     result |= run_hud_tests()
     result |= run_nodegraph_tests()
