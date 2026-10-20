@@ -87,6 +87,9 @@ local sqrt = math.sqrt
 local floor = math.floor
 local max = math.max
 local min = math.min
+local abs = math.abs
+local cos = math.cos
+local sin = math.sin
 
 -- ---------------------------------------------------------------------------
 -- Placement
@@ -311,18 +314,176 @@ end
 function Region.sectorEdgeBearing (origin, radius, x, y, z)
   local dx, dy, dz = x - origin.x, y - origin.y, z - origin.z
   local d = sqrt(dx*dx + dy*dy + dz*dz)
-  if d < 1e-3 then return nil end
+  if d < 1e-3 then
+    -- Exactly at the centre every edge is equally far, so "outward" has no
+    -- answer. Rather than leave the marker with nothing to point at, pick a
+    -- FIXED direction: the centre is a measure-zero point, and a fixed
+    -- answer at least never jitters from frame to frame.
+    return { x = 1, y = 0, z = 0 }, radius
+  end
   -- Straight out from the sector's centre is the shortest way to the edge.
   return { x = dx / d, y = dy / d, z = dz / d }, radius - d
 end
 
--- The direction to the nearest region boundary from a position.
+-- ---------------------------------------------------------------------------
+-- Boundaries
+-- ---------------------------------------------------------------------------
+
+-- A region's membership falls off with the distance to its centre, scaled by
+-- its reach: membership is a smooth function of  d / reach, and it is ZERO
+-- once d >= reach.
 --
--- The boundary between two regions is where their memberships are EQUAL. So
--- the direction to it is the direction in which the membership difference
--- between the current region and the runner-up changes fastest -- which is
--- found by sampling that difference in a ring of directions and taking the
--- steepest descent.
+-- So two regions have EQUAL membership exactly when
+--
+--     d_a / reach_a  ==  d_b / reach_b
+--
+-- (the smoothstep is monotonic, so equal weights mean equal arguments, and
+-- the common falloff scale cancels).
+--
+-- THAT IS AN APOLLONIUS SURFACE: the set of points whose distance to one
+-- centre is a fixed RATIO of the distance to the other. It is a sphere when
+-- the reaches differ, and the perpendicular bisector plane when they are
+-- equal.
+--
+-- So the boundary can be found in CLOSED FORM -- no sampling of directions,
+-- no bisection, no iteration. That matters for two reasons:
+--
+--   * Correctness. The earlier version probed a ring of directions for the
+--     steepest descent of the membership difference. That was an
+--     APPROXIMATION, and it failed badly: it probed only the XZ plane (the
+--     regions are 3D spheres, so a boundary can lie above or below the
+--     player), and even once it probed the whole sphere the ray it picked
+--     often never crossed a boundary at all -- 74 of 125 sample points in a
+--     five-region sector got no distance, and 86 of 125 after the 3D fix.
+--     The exact answer is not just faster, it is right.
+--
+--   * Range. The boundary can be 200,000 units away, far beyond the visible
+--     reach of the medium (~14k), so the marker has to work at any distance.
+--
+-- The nearest point on a sphere is radial from its centre, so both the
+-- direction and the distance fall out of the same arithmetic.
+
+-- The nearest point on the Apollonius surface between two regions.
+--
+-- Returns the direction toward it and the distance to it, or nil.
+local function apollonius (a, b, x, y, z)
+  local ca, cb = a.center, b.center
+  local ra, rb = a.reach, b.reach
+  if not ra or not rb or ra <= 0 or rb <= 0 then return nil end
+
+  -- k is the ratio of the reaches. Equal reaches give a PLANE.
+  local k = ra / rb
+  if abs(k - 1) < 1e-9 then
+    local nx, ny, nz = cb.x - ca.x, cb.y - ca.y, cb.z - ca.z
+    local len = sqrt(nx*nx + ny*ny + nz*nz)
+    if len < 1e-6 then return nil end
+    nx, ny, nz = nx/len, ny/len, nz/len
+    local mx, my, mz = (ca.x+cb.x)*0.5, (ca.y+cb.y)*0.5, (ca.z+cb.z)*0.5
+    -- Signed distance to the plane. We are on a's side (a is the nearer
+    -- region), so the crossing is in the +n direction; if we were somehow
+    -- on b's side it is the other way.
+    local sd = (x-mx)*nx + (y-my)*ny + (z-mz)*nz
+    local s = sd <= 0 and 1 or -1
+    return { x = nx*s, y = ny*s, z = nz*s }, abs(sd)
+  end
+
+  -- The sphere. With  |X - ca| = k |X - cb|:
+  --   (1 - k^2) |X|^2 - 2 (ca - k^2 cb) . X + (|ca|^2 - k^2 |cb|^2) = 0
+  -- which completes the square to  |X - C| = R  with
+  --   C = (ca - k^2 cb) / (1 - k^2)
+  --   R^2 = |C|^2 - (|ca|^2 - k^2 |cb|^2) / (1 - k^2)
+  local k2 = k * k
+  local one = 1 - k2
+  local cx = (ca.x - k2 * cb.x) / one
+  local cy = (ca.y - k2 * cb.y) / one
+  local cz = (ca.z - k2 * cb.z) / one
+  local cc = cx*cx + cy*cy + cz*cz
+  local dd = (ca.x*ca.x + ca.y*ca.y + ca.z*ca.z -
+              k2 * (cb.x*cb.x + cb.y*cb.y + cb.z*cb.z)) / one
+  local r2 = cc - dd
+  if r2 <= 0 then return nil end
+  local R = sqrt(r2)
+
+  -- The nearest point on the sphere is radial from its centre.
+  local dx, dy, dz = x - cx, y - cy, z - cz
+  local d = sqrt(dx*dx + dy*dy + dz*dz)
+  if d < 1e-6 then return nil end
+  local ux, uy, uz = dx/d, dy/d, dz/d
+  -- S - P = (R - d) * u, so the direction and the distance have the same
+  -- sign: a point INSIDE the sphere is heading out, a point outside is
+  -- heading in.
+  local s = R - d
+  local sign = s < 0 and -1 or 1
+  return { x = ux*sign, y = uy*sign, z = uz*sign }, abs(s)
+end
+
+-- The nearest region boundary from a position.
+--
+-- Returns the direction toward it, the distance to it, and the region it
+-- leads into (nil for the sector's own fade-out edge).
+--
+-- The boundary of the region you are in is the nearest of:
+--   * every rival's Apollonius surface -- where that rival takes over, and
+--   * the region's own reach limit -- where it fades out entirely.
+--
+-- A sector with only ONE region has no rival, so only the second applies
+-- there; and if that is out of reach too, the caller falls back to the
+-- sector's own edge, which is the outermost boundary there is.
+function Region.boundaryInfo (regions, x, y, z)
+  local here = weightsAt(regions, x, y, z)
+  if #here < 1 then return nil end
+
+  -- The DOMINANT region -- the one you are actually in.
+  --
+  -- `weightsAt` returns the regions in LIST order, not sorted by weight, so
+  -- this cannot just be `here[1]`. Getting this wrong is subtle: the
+  -- arithmetic still finds a real boundary (between some pair of regions),
+  -- so the direction and the distance look plausible -- but it is the
+  -- boundary of the WRONG region, and the name of the region you would
+  -- cross into is then wrong as well.
+  local a, aW = nil, -1
+  for i = 1, #here do
+    if here[i].w > aW then aW = here[i].w; a = here[i].region end
+  end
+  if not a then return nil end
+
+  local bestDir, bestDist, bestOther = nil, nil, nil
+
+  -- The rivals: every region that has any membership here.
+  for i = 2, #here do
+    local b = here[i].region
+    local dir, dist = apollonius(a, b, x, y, z)
+    if dir and dist and (not bestDist or dist < bestDist) then
+      -- The crossing only counts if BOTH regions still have membership there.
+      -- Past their reaches the memberships are zero on both sides and the
+      -- "crossing" is a coincidence in a dead zone.
+      local sx, sy, sz = x + dir.x*dist, y + dir.y*dist, z + dir.z*dist
+      local da = sqrt((sx-a.center.x)^2 + (sy-a.center.y)^2 + (sz-a.center.z)^2)
+      if da <= a.reach then
+        bestDir, bestDist, bestOther = dir, dist, b
+      end
+    end
+  end
+
+  -- The region's own fade-out: the point on the reach sphere in the
+  -- direction away from its centre. This is where its membership hits zero
+  -- and it stops being a region at all.
+  local ca = a.center
+  local dca = sqrt((x-ca.x)^2 + (y-ca.y)^2 + (z-ca.z)^2)
+  if dca < a.reach and dca > 1e-6 then
+    local fadeDist = a.reach - dca
+    if not bestDist or fadeDist < bestDist then
+      bestDir = { x = (x-ca.x)/dca, y = (y-ca.y)/dca, z = (z-ca.z)/dca }
+      bestDist = fadeDist
+      bestOther = nil
+    end
+  end
+
+  if not bestDir then return nil end
+  return bestDir, bestDist, bestOther
+end
+
+-- The direction to the nearest region boundary, and the distance to it.
 --
 -- This is computed on the FIELD, not on geometry, so it works at any
 -- distance: a boundary 200k units away still has a direction. That matters,
@@ -333,58 +494,12 @@ end
 -- A sector with only ONE region has no interior boundary, and `boundaryBearing`
 -- returns nil for it. The caller then falls back to the sector edge, which is
 -- the outermost boundary there is.
-function Region.boundaryBearing (regions, x, y, z, samples)
-  samples = samples or 12
-  local here = weightsAt(regions, x, y, z)
-  if #here < 2 then return nil end
-
-  -- The two regions that matter: the one you are in, and the nearest rival.
-  local a, b = here[1], nil
-  for i = 2, #here do
-    if not b or here[i].w > b.w then b = here[i] end
-  end
-  if not b then return nil end
-  if here[1].w > b.w then a, b = b, here[1] end
-
-  local aRegion, bRegion = a.region, b.region
-
-  -- The membership difference at an offset, for a pair of regions.
-  local function diff (px, py, pz)
-    local w = weightsAt(regions, px, py, pz)
-    local wa, wb = 0, 0
-    for i = 1, #w do
-      if w[i].region == aRegion then wa = w[i].w
-      elseif w[i].region == bRegion then wb = w[i].w end
-    end
-    return wa - wb
-  end
-
-  -- Probe a ring. The probe distance is a fraction of the distance to the
-  -- pair's centres -- far enough to move the membership measurably, close
-  -- enough to stay local.
-  local ca, cb = aRegion.center, bRegion.center
-  local sep = sqrt((cb.x-ca.x)^2 + (cb.y-ca.y)^2 + (cb.z-ca.z)^2)
-  if sep < 1e-3 then return nil end
-  local probe = max(sep * 0.15, 1.0)
-
-  local base = diff(x, y, z)
-  local bestDir, bestSlope = nil, 0
-  for i = 1, samples do
-    local ang = (i - 1) * (2 * math.pi / samples)
-    local dx, dz = cos(ang), sin(ang)
-    local d = diff(x + dx * probe, y, z + dz * probe)
-    -- Steepest DESCENT of the difference: the direction where the current
-    -- region's hold on you fades fastest, which is the direction toward the
-    -- boundary.
-    local slope = (base - d) / probe
-    if slope > bestSlope then
-      bestSlope = slope
-      bestDir = { x = dx, y = 0, z = dz }
-    end
-  end
-  if not bestDir then return nil end
-  return bestDir, bestSlope
+function Region.boundaryBearing (regions, x, y, z)
+  local dir, dist = Region.boundaryInfo(regions, x, y, z)
+  if not dir then return nil end
+  return dir, dist
 end
+
 
 -- ---------------------------------------------------------------------------
 -- The sector a position belongs to

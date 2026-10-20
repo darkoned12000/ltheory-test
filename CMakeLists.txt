@@ -95,6 +95,21 @@ add_custom_target (phx_validate_spacefield
 add_dependencies (lt phx_validate_spacefield)
 add_dependencies (phx_validate_spacefield phx)
 
+# The regions are the IDENTITY of a place -- the names in the HUD, and the
+# arrow to the next one -- and the HUD is the only place they show up, so a
+# mistake is invisible in a screenshot but obvious to a player who flies for
+# five minutes and never reaches a second region. The contract -- coverage,
+# determinism, soft boundaries, and the boundary being EXACTLY where the two
+# regions' memberships are equal -- is checked offline, with no GL context.
+add_custom_target (phx_validate_regions
+  COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_regions.lua
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating the region layout and boundary contract"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_regions)
+add_dependencies (phx_validate_regions phx)
+
 # --- Build-time SDL validation gates ---------------------------------------
 add_custom_target (phx_validate_sdl
   COMMAND "${PHX_VALIDATOR_PY}" tools/validate_sdl.py

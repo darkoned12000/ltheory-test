@@ -104,6 +104,17 @@ def run_spacefield_tests():
         luajit = 'luajit'
     return subprocess.run([luajit, exe]).returncode
 
+def run_region_tests():
+    print('[configure.py] Validating the region layout and boundary contract')
+    exe = os.path.join('tools', 'validate_regions.lua')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_regions.lua found - skipping')
+        return 0
+    luajit = os.path.join('libphx', 'ext', 'bin', 'linux64', 'luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    return subprocess.run([luajit, exe]).returncode
+
 def run_sdl_tests():
     print('[configure.py] Validating SDL pkg/header/init + input wiring')
     rc = 0
@@ -161,6 +172,7 @@ def run_tests():
     result |= run_renderqueue_tests()
     result |= run_frustum_tests()
     result |= run_spacefield_tests()
+    result |= run_region_tests()
     result |= run_sdl_tests()
     result |= run_hud_tests()
     result |= run_nodegraph_tests()

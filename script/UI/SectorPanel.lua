@@ -24,6 +24,7 @@
 ]]
 
 local Container = require('UI.Container')
+local Widget = require('UI.Widget')
 local Label = require('UI.Label')
 local DrawEx = require('UI.DrawEx')
 
@@ -92,6 +93,12 @@ function SectorPanel.Create ()
 
   -- The panel: a thin, mostly-transparent plate, sized to its content.
   --
+  -- MARGIN: the plate is inset from the screen corner, so it does not sit
+  -- flush against the edge. The HUD's own rect already carries a little
+  -- padding, but the panel was landing hard against the corner, and a plate
+  -- that touches two screen edges reads as a rendering glitch rather than as
+  -- an instrument.
+  --
   -- ASYMMETRIC PADDING: the left is 12 and the right is 30. The right needs
   -- more because the panel's width is measured from the text's INK bounds
   -- (Font_GetSize returns the ink extent, not the advance width), so the last
@@ -102,6 +109,11 @@ function SectorPanel.Create ()
   self:setAlign(0.0, 0.0)
   self:setPadX(12, 30)
   self:setPadY(10, 12)
+  -- The inset from the corner the HUD's rect gives it. The HUD carries a
+  -- pad of its own (8), so the plate ends up 18 from the screen edge -- which
+  -- is the "about 10 pixels of my own padding" the panel was asked for.
+  self.marginX = 10
+  self.marginY = 10
 
   for _, line in ipairs(LINES) do
     -- Each line is TWO labels: a title ("Sector") and a value ("The Vexing
@@ -172,6 +184,16 @@ function SectorPanel:onLayoutSizeChildren ()
   end
   self.desiredSX = self.padSumX + w
   self.desiredSY = self.padSumY + h
+end
+
+-- The panel is INSET from the corner its parent gives it. The HUD's rect
+-- already carries a little padding, but the plate was landing hard against
+-- the screen edge, and a panel touching two screen edges reads as a
+-- rendering glitch rather than as an instrument.
+function SectorPanel:onLayoutPos (px, py, psx, psy)
+  Widget.onLayoutPos(self, px, py, psx, psy)
+  self.x = self.x + (self.marginX or 0)
+  self.y = self.y + (self.marginY or 0)
 end
 
 function SectorPanel:onLayoutPosChildren ()

@@ -129,8 +129,35 @@ NameGen.genName = genName
 -- share a name.
 local SpaceField = require('Game.SpaceField')
 
+-- The engine's RNG global is not available when this module is loaded by an
+-- OFFLINE tool -- the region validator runs under a bare luajit with no
+-- engine environment -- so there is a fallback: a small deterministic
+-- generator with the same interface.
+--
+-- In the engine the global is always present, so the names are the engine's
+-- and the fallback never runs in game. The names a fallback produces are
+-- still deterministic, which is all the offline checks need.
+local function fallbackRng (seed)
+  local state = seed % 2147483647
+  if state <= 0 then state = state + 2147483646 end
+  local rng = {}
+  -- Park-Miller: small, well-distributed, and deterministic.
+  function rng:getUniform ()
+    state = (state * 16807) % 2147483647
+    return (state - 1) / 2147483646
+  end
+  function rng:getInt (a, b)
+    if not a then a, b = 1, b end
+    if b < a then a, b = b, a end
+    return a + math.floor(self:getUniform() * (b - a + 1))
+  end
+  return rng
+end
+
 local function rngFor (seed, salt)
-  return RNG.Create(SpaceField.deriveSeed(seed, salt))
+  local derived = SpaceField.deriveSeed(seed, salt)
+  if RNG then return RNG.Create(derived) end
+  return fallbackRng(derived)
 end
 
 -- sector(seed) -> "The Vexing Reach"

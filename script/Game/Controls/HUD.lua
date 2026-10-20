@@ -463,33 +463,28 @@ function HUD:updateSectorInfo (shipPos)
   self.bearingTick = (self.bearingTick or 0) + 1
   if not self.bearingDir or self.bearingTick >= BEARING_INTERVAL then
     self.bearingTick = 0
-    local dir = Sector.Region.boundaryBearing(regions, shipPos.x, shipPos.y, shipPos.z)
+    -- The direction and the distance to the nearest boundary come from the
+    -- same call: the boundary is an Apollonius surface, so both fall out of
+    -- one closed-form computation (see Game/Region.lua).
+    local dir, dist = Sector.Region.boundaryInfo(regions,
+                                                  shipPos.x, shipPos.y, shipPos.z)
     if dir then
       self.bearingDir = dir
+      self.bearingDist = dist
     else
       -- A sector with only ONE region has no interior boundary, so point at
       -- the sector's edge instead -- the outermost boundary there is. Without
       -- this the arrow would have nothing to point at in a small sector.
-      local edge = Sector.Region.sectorEdgeBearing(Config.gen.origin,
-                                                  sectorRadius,
-                                                  shipPos.x, shipPos.y, shipPos.z)
-      self.bearingDir = edge and edge[1] or nil
+      local edge, edgeDist = Sector.Region.sectorEdgeBearing(Config.gen.origin,
+                                                             sectorRadius,
+                                                             shipPos.x, shipPos.y,
+                                                             shipPos.z)
+      self.bearingDir = edge
+      self.bearingDist = edgeDist
     end
   end
 
-  -- How close is the boundary? Used for the readouts, and to decide whether
-  -- the arrow is worth showing at all: if you are deep inside a region, an
-  -- arrow to the boundary is noise.
-  local boundaryDist = nil
-  if weights then
-    for i = 1, #weights do
-      local w = weights[i]
-      if w.region ~= region then
-        local d = w.d
-        if not boundaryDist or d < boundaryDist then boundaryDist = d end
-      end
-    end
-  end
+  local boundaryDist = self.bearingDist
 
   local info = self.sectorInfo or {}
   info.sectorLabel  = sectorName
@@ -498,11 +493,19 @@ function HUD:updateSectorInfo (shipPos)
   info.bearingDir   = self.bearingDir
   info.bearingDist  = boundaryDist
 
-  -- The bearing readout: how far the nearest boundary is. Shown only when it
-  -- is close enough to matter -- an arrow pointing at a boundary 40 km away
-  -- is noise, and the panel should not fill with numbers.
-  if boundaryDist and boundaryDist < 12000 then
-    info.bearingLabel = string.format('%.1f km to boundary', boundaryDist / 1000)
+  -- The bearing readout: how far the nearest boundary is. Always shown when
+  -- there IS a boundary -- the arrow points at it, so the number belongs
+  -- beside it. The earlier version hid it beyond 12 km, which meant the
+  -- line was usually absent exactly when the player was looking for it.
+  if boundaryDist then
+    if boundaryDist < 0 then
+      -- A negative distance means the position is already PAST the boundary
+      -- (the sector edge, in the fallback case) -- so there is no boundary
+      -- ahead to fly to, and saying "-9 km to boundary" would be nonsense.
+      info.bearingLabel = 'outside the sector'
+    else
+      info.bearingLabel = string.format('%.0f km to boundary', boundaryDist / 1000)
+    end
   else
     info.bearingLabel = ''
   end
