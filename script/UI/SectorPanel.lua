@@ -36,14 +36,22 @@ SectorPanel.name = 'Sector Panel'
 
 -- The two shades the readout is drawn in.
 --
--- TITLE_COLOR is a dim, cool version of the theme accent -- present but
--- recessive, because it is a repeated field name and the reader's eye should
--- go to the VALUE first. VALUE_COLOR is the accent itself, warmed and
--- lightened, so the actual name (a proper noun, and the thing you want to
--- read) is the brightest thing on the panel.
+-- THREE shades, because the panel carries three kinds of thing and they
+-- should not all shout:
 --
--- Both are derived from Config.ui.color.accent rather than hard-coded, so
--- they follow the theme if it is ever re-tinted.
+--   * TITLE  -- the field name ("Sector"). The theme's accent, DEEP and
+--     saturated. It is the "bold" of the panel: the bitmap font has no bold
+--     face, so weight is not available to separate it from the value --
+--     colour is.
+--   * VALUE  -- the name itself ("The Vexing Reach"). A lighter shade of the
+--     same hue. Lighter than the title, which is what makes the name the
+--     thing the eye lands on.
+--   * SUBTLE -- the supporting lines (the archetype, the distance to the
+--     boundary). Dimmer than both, so the panel has a hierarchy instead of
+--     four equally loud lines.
+--
+-- All three are derived from Config.ui.color.accent rather than hard-coded,
+-- so they follow the theme if it is ever re-tinted.
 local function shade (color, mul, add)
   return Color(
     math.min(1.0, color.r * mul + add),
@@ -53,8 +61,19 @@ local function shade (color, mul, add)
 end
 
 local ACCENT = Config.ui.color.accent
-local TITLE_COLOR = shade(ACCENT, 0.55, 0.15)
-local VALUE_COLOR = shade(ACCENT, 0.85, 0.35)
+-- The accent is a saturated crimson (1.00, 0.00, 0.30), so scaling it
+-- straight down gives a muddy dark red rather than a strong one. The title
+-- is pulled back only in the RED channel, keeping the hue, and given a floor
+-- so it stays saturated rather than turning grey.
+local TITLE_COLOR = Color(
+  math.min(1.0, ACCENT.r * 0.62),
+  math.min(1.0, ACCENT.g * 0.30),
+  math.min(1.0, ACCENT.b * 0.42), ACCENT.a)
+-- The value: a pale tint of the accent -- the same hue, lifted towards
+-- white, so it reads as "the accent, but softer".
+local VALUE_COLOR = shade(ACCENT, 0.45, 0.55)
+-- The supporting lines: present, but clearly behind the names.
+local SUBTLE_COLOR = shade(ACCENT, 0.30, 0.34)
 
 -- The lines, in order. The key is the field of the info table the HUD fills
 -- in; the prefix is the text shown BEFORE the value, so the readout reads
@@ -72,8 +91,8 @@ local VALUE_COLOR = shade(ACCENT, 0.85, 0.35)
 local LINES = {
   { key = 'sectorLabel',    prefix = 'Sector:' },
   { key = 'regionLabel',    prefix = 'Region:' },
-  { key = 'archetypeLabel', prefix = '' },
-  { key = 'bearingLabel',   prefix = '' },
+  { key = 'archetypeLabel', prefix = '', subtle = true },
+  { key = 'bearingLabel',   prefix = '', subtle = true },
 }
 
 function SectorPanel.Create ()
@@ -142,7 +161,7 @@ function SectorPanel.Create ()
 
     local value = Label('')
     value:setAlign(0.0, 0.0)
-    value:setFontColor(VALUE_COLOR)
+    value:setFontColor(line.subtle and SUBTLE_COLOR or VALUE_COLOR)
     value:setPollFn(function ()
       local info = self.infoFn and self.infoFn()
       if not info then return '' end

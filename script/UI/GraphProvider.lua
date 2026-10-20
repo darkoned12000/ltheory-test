@@ -26,25 +26,42 @@ function GraphProvider.system ()
   -- Returns worthy, major, cat ('station' | 'ship' | 'rock').
   function P.classify (entity)
     if entity.deleted then return false end
-    local scale = 0
-    if entity.getScale then
-      local ok, s = pcall(entity.getScale, entity)
-      if ok and type(s) == 'number' then scale = s end
-    end
-    -- Regions (Zones): named + 5+ children = drill-down anchors, always major.
+    -- A PLACE: somewhere you can go and do things.
+    --   * it has a name and a crowd of children -- a named zone or field
+    --   * it has economy capability -- a factory, a trader, a market
+    --   * it is a planet (typeName carries the planet type)
+    --   * it has children of its own and no actions -- a station with
+    --     turrets and modules
+    --
+    -- The old rule was "scale >= 50 means a place". That was written when a
+    -- rock was 2..5 units across. The STREAMED asteroid field now makes
+    -- rocks 40..540 units (AsteroidField's minScale/maxScale), so that rule
+    -- promoted EVERY ROCK to a place -- and the map became hundreds of
+    -- labelled rings over the asteroid field, instead of the dots the legend
+    -- says a rock is. Size is not what makes a body a place.
+    --
+    -- The scale is still read, but only to SIZE the node, never to decide
+    -- what kind of thing it is.
+    local isPlanet = entity.typeName ~= nil
     if entity.name then
       local okC, ch = pcall(entity.getChildren, entity)
       if okC and ch and #ch >= 5 then return true, true, 'station' end
     end
-    -- Big bodies (stations ~100, planets ~1e5) are places, always major.
-    if scale >= 50 then return true, true, 'station' end
     if entity.hasFactory and entity:hasFactory() then return true, true, 'station' end
     if entity.hasTrader and entity:hasTrader() then return true, true, 'station' end
     if entity.hasMarket and entity:hasMarket() then return true, true, 'station' end
+    if isPlanet then return true, true, 'station' end
+    -- Ships have SOCKETS -- a hull with hardpoints. A station does not, and
+    -- that is what separates the two: both have actions and both have
+    -- children, so neither the action nor the child count can tell them
+    -- apart on its own.
+    if entity.hasSockets and entity:hasSockets() then return true, false, 'ship' end
+    -- A body with children and no sockets is a station with modules.
+    if entity.hasChildren and entity:hasChildren() then return true, true, 'station' end
+    -- Anything else that can act is a small craft.
+    if entity.hasActions and entity:hasActions() then return true, false, 'ship' end
     -- Yield alone is minor: whole ore fields carry yield, and 60 labeled rocks
     -- are an unreadable band. Mineables are dots labeled on zoom/focus.
-    if entity.hasActions and entity:hasActions() then return true, false, 'ship' end
-    if entity.hasSockets and entity:hasSockets() then return true, false, 'ship' end
     return true, false, 'rock'
   end
 

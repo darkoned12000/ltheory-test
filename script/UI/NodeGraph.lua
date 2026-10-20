@@ -32,7 +32,10 @@ local kLabelSize = 14
 -- Reference blues (ltheory-node-ui.md §12); Config wiring is Phase 5.
 local cNode      = { r = 0.25, g = 0.60, b = 1.00, a = 0.90 }
 local cCore      = { r = 0.70, g = 0.90, b = 1.00, a = 1.00 }
-local cMinor     = { r = 0.30, g = 0.55, b = 0.90, a = 0.55 }
+-- The minor dots are DIM on purpose. A field is two thousand asteroids and
+-- they are drawn ADDITIVELY, so at the old alpha (0.55) the field summed
+-- into a solid glowing blob rather than reading as a scatter of rocks.
+local cMinor     = { r = 0.30, g = 0.55, b = 0.90, a = 0.30 }
 local cPlayer    = { r = 1.00, g = 1.00, b = 1.00, a = 1.00 }
 local cSelected  = { r = 1.00, g = 0.30, b = 0.35, a = 1.00 } -- red = selected (only red on screen)
 local cEdge      = { r = 0.30, g = 0.55, b = 0.90, a = 0.50 }
@@ -242,6 +245,12 @@ function NodeGraph:seedEdges ()
 end
 
 function NodeGraph:onUpdate (state)
+  -- The sector state, refreshed each frame from the app. The map reads the
+  -- SAME state the HUD's panel reads, so the panel and the map can never
+  -- disagree about which region you are in.
+  if self.getSectorState then
+    self.regionState = self.getSectorState()
+  end
   if (self.context or self.system) then
     self:seedFromSystem()
     self:seedEdges()
@@ -697,6 +706,84 @@ local function drawSymbolKey (x, y)
   Draw.Color(1, 1, 1, 1)
 end
 
+-- The regions: the sector's NAMED PLACES.
+--
+-- A region is an AREA, not a body, so it does not belong in the node table
+-- (which holds bodies with a position and a radius). It gets its own layer,
+-- drawn in two passes:
+--
+--   * the BOUNDARY of the region you are in, UNDER the nodes -- it is a
+--     circle, because the boundary is a sphere in space and the map is a
+--     top-down projection onto X/Z, so the sphere crosses the player's plane
+--     in a circle. That circle is the line you cross to be somewhere else,
+--     and showing it is the whole point of putting a region on a map.
+--   * the region MARKERS, OVER the nodes -- a ring and a name at each
+--     region's centre. They go over the top because the node field is dense
+--     (an asteroid field is hundreds of labelled dots) and a place name that
+--     is buried under them is a place name nobody can read.
+--
+-- The markers are clamped into the view: a place whose centre is off-screen
+-- still reads, which matters because the regions are spread across a sector
+-- and the map is usually zoomed in on the ship. A clamped marker gets a
+-- leader line, so its name does not appear to belong to a place that is
+-- somewhere else entirely.
+--
+-- The colour is AMBER, deliberately: the nodes are blue and the theme accent
+-- is crimson, so a third hue is what makes a place read as a place and not
+-- as another kind of body.
+local cRegion      = { r = 0.98, g = 0.76, b = 0.30, a = 0.95 }
+local cRegionOther = { r = 0.85, g = 0.62, b = 0.28, a = 0.60 }
+local cRegionEdge  = { r = 0.98, g = 0.76, b = 0.30, a = 0.35 }
+
+function NodeGraph:drawRegionBoundary ()
+  local st = self.regionState
+  if not (st and st.boundaryCircle) then return end
+  local c = st.boundaryCircle
+  local bx, by = self:toScreen(c.x, c.z)
+  local br = c.r * self.zoom
+  if br > 3 then
+    DrawEx.Ring(bx, by, br, cRegionEdge)
+  end
+end
+
+function NodeGraph:drawRegionMarkers (vx, vy, vsx, vsy)
+  local st = self.regionState
+  if not (st and st.regions) then return end
+  for _, r in ipairs(st.regions) do
+    local cur = (st.region == r)
+    local rx, ry = self:toScreen(r.center.x, r.center.z)
+    local mx = math.min(math.max(rx, vx + 44), vx + vsx - 44)
+    local my = math.min(math.max(ry, vy + 34), vy + vsy - 24)
+    local clamped = (mx ~= rx) or (my ~= ry)
+    local col = cur and cRegion or cRegionOther
+    if clamped then
+      DrawEx.Line(mx, my, rx, ry, { r = col.r, g = col.g, b = col.b, a = 0.25 })
+    end
+    -- A PIN: an opaque chip carrying a cross and the name.
+    --
+    -- Everything in DrawEx blends ADDITIVELY, which is right for lines over a
+    -- dark sky but useless over a bright one -- and the node field here is
+    -- bright (an asteroid field is a dense blob of near-white labels), so an
+    -- additive amber ring on top of it simply vanishes. The chip is OPAQUE
+    -- and drawn with the normal blend, so the cross on it reads.
+    --
+    -- The chip is opaque for the same reason the plate had to be: even 20%
+    -- of a near-white node label showing through is brighter than the ink.
+    local tw = #r.name * 7 + 12
+    local pw = tw + 22
+    Draw.Color(0.02, 0.03, 0.06, cur and 1.0 or 0.85)
+    Draw.Rect(mx - pw * 0.5, my - 11, pw, 22)
+    DrawEx.Cross(mx - pw * 0.5 + 11, my, 6, col)
+    -- The name is centred in the part of the chip to the RIGHT of the cross,
+    -- and vertically centred in the chip -- the text's top edge is the y the
+    -- draw call is given (the font's own height is added below it), so
+    -- my - 8 puts the glyphs inside the chip rather than hanging out of it.
+    local tcx = mx + 8
+    DrawEx.TextAlpha(kLabelFont, r.name, kLabelSize, tcx - 110, my - 8, 220, 20,
+      col.r, col.g, col.b, col.a, 0.5, 0.0)
+  end
+end
+
 function NodeGraph:onDraw (focus, active)
   local x, y, sx, sy = self:getRectGlobal()
 
@@ -704,6 +791,11 @@ function NodeGraph:onDraw (focus, active)
   Draw.Color(0.02, 0.03, 0.05, 0.55)
   Draw.Rect(x, y, sx, sy)
   DrawEx.RectOutline(x, y, sx, sy, { r = 0.2, g = 0.5, b = 0.8, a = 0.6 })
+
+  -- The regions: the sector's NAMED PLACES. The boundary goes under the
+  -- nodes (it is the ground they sit on); the markers go over them (a place
+  -- name buried under hundreds of asteroid labels is a name nobody reads).
+  self:drawRegionBoundary()
 
   -- Edges under nodes. Solid rides the shared batch; dotted uses Dash (§6).
   -- Routes toggle hides trade lanes for a clean spatial read.
@@ -726,13 +818,13 @@ function NodeGraph:onDraw (focus, active)
     end
   end
 
-  -- Minors earn labels when zoomed close or focused (100 ships can't all
-  -- carry text at sector zoom — the reference shows dots for the same reason).
-  -- Minor labels: only when zoomed in AND near the view centre. Labelling
-  -- every minor (100 ships) produced an unreadable pile.
-  local showMinorLabels = self.zoom > 0.3
-  local cxScreen, cyScreen = x + sx * 0.5, y + sy * 0.5
-  local labelRadius = math.min(sx, sy) * 0.34
+  -- Minors are DOTS. Their labels appear only on the SELECTED one.
+  --
+  -- The legend says so: a rock is a dot. Labelling them anyway -- even only
+  -- the ones near the centre, and even only when zoomed in -- turned the
+  -- map into an unreadable pile of "Body #123" over the asteroid field, and
+  -- it buried the things that matter (the region names, the ship, the
+  -- places). A label on every body is the same as a label on none.
   for id, n in pairs(self.nodes) do
     if self:isHidden(n) then
       -- filtered out: skip draw entirely
@@ -748,18 +840,16 @@ function NodeGraph:onDraw (focus, active)
           Draw.Color(0.3, 0.5, 0.8, 0.35)
           Draw.Line(tx0, ty0, nx, ny)
         end
-        DrawEx.Point(nx, ny, 2.5, n.color or cMinor)
-        local ddx, ddy = nx - cxScreen, ny - cyScreen
-        local nearCentre = (ddx * ddx + ddy * ddy) < labelRadius * labelRadius
-        if selected or (showMinorLabels and nearCentre) then
+        DrawEx.Point(nx, ny, 2.2, n.color or cMinor)
+        if selected then
+          -- The selected body earns its label -- and a reticle, so a
+          -- selected dot reads as selected.
           if not n.label then
-            n.label = (n.entity and Util.resolveLabel(n.entity)) or ('Body #' .. tostring(id % 1000))
+            n.label = (n.entity and Util.resolveLabel(n.entity)) or ('Body #' .. tostring(id))
           end
           DrawEx.TextAlpha(kLabelFont, n.label, kLabelSize,
             nx - 100, ny + 6, 200, 20,
             cLabel.r, cLabel.g, cLabel.b, cLabel.a, 0.5, 0.0)
-        end
-        if selected then -- small reticle so a selected dot reads as selected
           local s = 9
           Draw.Color(cReticle.r, cReticle.g, cReticle.b, cReticle.a)
           Draw.Line(nx - s, ny - s, nx - s + 5, ny - s)
@@ -906,6 +996,26 @@ function NodeGraph:onDraw (focus, active)
         1, 1, 1, 0.75, 0.0, 0.0)
     end
   end
+  -- The sector and region, on the RIGHT of the breadcrumb.
+  --
+  -- The map says which PLACE it is a map of. Without it, a sector map is a
+  -- field of dots with no indication of where in the galaxy you are, and
+  -- the region's own name is the thing the HUD panel shows -- so it belongs
+  -- on the map too.
+  do
+    local st = self.regionState
+    if st then
+      local txt = st.sectorName or ''
+      if st.region then txt = txt .. '  --  ' .. st.region.name end
+      if txt ~= '' then
+        local tw = #txt * 7 + 16
+        local tx = x + sx - tw - 16
+        if tx < x + 16 then tx = x + 16 end
+        DrawEx.TextAlpha(kLabelFont, txt, kLabelSize, tx, y + 14, tw, 20,
+          0.75, 0.90, 1.00, 0.85, 0.0, 0.0)
+      end
+    end
+  end
   -- Locked-target readout: always visible at top-centre while a node is
   -- selected, so range/bearing stay readable with or without the inspector.
   do
@@ -930,6 +1040,8 @@ function NodeGraph:onDraw (focus, active)
   -- Symbol key: decodes the shapes/colours (the text legend below only covers
   -- keys and filters).
   drawSymbolKey(x + 16, y + sy - 62)
+  -- The region markers go LAST, over the node field.
+  self:drawRegionMarkers(x, y, sx, sy)
   -- Cursor readout: world X/Z under the pointer + range from YOU.
   do
     local mp = Input.GetMousePosition()
@@ -1112,6 +1224,11 @@ function NodeGraph.Create (system, opts)
   self.system = system
   local o = opts or {}
   self.provider = o.provider or GraphProvider.system()
+  -- The sector state (which region you are in, and where its boundary is).
+  -- A FUNCTION, not a value: the sector changes when the ship warps, and the
+  -- map must not hold a stale copy of where you were.
+  self.getSectorState = o.getSectorState
+  self.regionState = nil
   self.focusEntity = o.focusEntity
   self.nodes = {}
   self.edges = {}

@@ -365,7 +365,8 @@ end
 
 -- The nearest point on the Apollonius surface between two regions.
 --
--- Returns the direction toward it and the distance to it, or nil.
+-- Returns the direction toward it, the distance to it, and the sphere it
+-- lies on (which the map uses to draw the boundary), or nil.
 local function apollonius (a, b, x, y, z)
   local ca, cb = a.center, b.center
   local ra, rb = a.reach, b.reach
@@ -384,7 +385,9 @@ local function apollonius (a, b, x, y, z)
     -- on b's side it is the other way.
     local sd = (x-mx)*nx + (y-my)*ny + (z-mz)*nz
     local s = sd <= 0 and 1 or -1
-    return { x = nx*s, y = ny*s, z = nz*s }, abs(sd)
+    -- A plane has no sphere, so there is nothing for the map to draw as a
+    -- circle; the map falls back to the region's own extent.
+    return { x = nx*s, y = ny*s, z = nz*s }, abs(sd), nil
   end
 
   -- The sphere. With  |X - ca| = k |X - cb|:
@@ -414,13 +417,15 @@ local function apollonius (a, b, x, y, z)
   -- heading in.
   local s = R - d
   local sign = s < 0 and -1 or 1
-  return { x = ux*sign, y = uy*sign, z = uz*sign }, abs(s)
+  return { x = ux*sign, y = uy*sign, z = uz*sign }, abs(s),
+         { x = cx, y = cy, z = cz, r = R }
 end
 
 -- The nearest region boundary from a position.
 --
--- Returns the direction toward it, the distance to it, and the region it
--- leads into (nil for the sector's own fade-out edge).
+-- Returns the direction toward it, the distance to it, the region it leads
+-- into (nil for the sector's own fade-out edge), and the SPHERE the boundary
+-- lies on (nil when the boundary is a plane).
 --
 -- The boundary of the region you are in is the nearest of:
 --   * every rival's Apollonius surface -- where that rival takes over, and
@@ -447,12 +452,12 @@ function Region.boundaryInfo (regions, x, y, z)
   end
   if not a then return nil end
 
-  local bestDir, bestDist, bestOther = nil, nil, nil
+  local bestDir, bestDist, bestOther, bestSphere = nil, nil, nil, nil
 
   -- The rivals: every region that has any membership here.
   for i = 2, #here do
     local b = here[i].region
-    local dir, dist = apollonius(a, b, x, y, z)
+    local dir, dist, sphere = apollonius(a, b, x, y, z)
     if dir and dist and (not bestDist or dist < bestDist) then
       -- The crossing only counts if BOTH regions still have membership there.
       -- Past their reaches the memberships are zero on both sides and the
@@ -460,7 +465,7 @@ function Region.boundaryInfo (regions, x, y, z)
       local sx, sy, sz = x + dir.x*dist, y + dir.y*dist, z + dir.z*dist
       local da = sqrt((sx-a.center.x)^2 + (sy-a.center.y)^2 + (sz-a.center.z)^2)
       if da <= a.reach then
-        bestDir, bestDist, bestOther = dir, dist, b
+        bestDir, bestDist, bestOther, bestSphere = dir, dist, b, sphere
       end
     end
   end
@@ -476,11 +481,12 @@ function Region.boundaryInfo (regions, x, y, z)
       bestDir = { x = (x-ca.x)/dca, y = (y-ca.y)/dca, z = (z-ca.z)/dca }
       bestDist = fadeDist
       bestOther = nil
+      bestSphere = { x = ca.x, y = ca.y, z = ca.z, r = a.reach }
     end
   end
 
   if not bestDir then return nil end
-  return bestDir, bestDist, bestOther
+  return bestDir, bestDist, bestOther, bestSphere
 end
 
 -- The direction to the nearest region boundary, and the distance to it.
@@ -536,6 +542,72 @@ end
 -- Forget the cached sector layouts. Needed when the galaxy seed changes.
 function Sector.clearCache ()
   regionCache = {}
+end
+
+-- The state of a position in the sector: what the place is called, which
+-- region you are in, and which way the next boundary lies.
+--
+-- ONE function computes this, so the HUD's readout and the map's overlay can
+-- never disagree -- a panel naming one region while the map highlights
+-- another would be worse than having neither.
+--
+-- `galaxySeed` is the world's seed. `index` is which sector of it; there is
+-- only one sector today, and the parameter is where the multi-sector lookup
+-- will go.
+function Sector.state (galaxySeed, x, y, z, index)
+  local radius = 60000
+  local origin = { x = 0, y = 0, z = 0 }
+  -- Config is absent in the OFFLINE validators, which run under a bare
+  -- luajit with no engine environment -- hence the guards rather than a
+  -- direct read.
+  local cfg = Config
+  if cfg then
+    if cfg.game and cfg.game.sectorRadius then radius = cfg.game.sectorRadius end
+    if cfg.gen and cfg.gen.origin then origin = cfg.gen.origin end
+  end
+
+  local seed = Sector.seedFor(galaxySeed, index or 0)
+  local regions, sectorName = Sector.regions(seed, origin, radius)
+  local region, weights = Region.containing(regions, x, y, z)
+
+  local dir, dist, other, sphere = Region.boundaryInfo(regions, x, y, z)
+
+  -- The boundary as a CIRCLE on the map.
+  --
+  -- The boundary is a SPHERE in space, and the map is a top-down projection
+  -- onto X/Z -- so what the map shows is the circle where that sphere
+  -- crosses the player's plane. Its centre is the sphere's centre projected
+  -- down, and its radius is the sphere's radius shortened by how far the
+  -- player's plane is from the sphere's centre.
+  local circle = nil
+  if sphere then
+    local dy = y - sphere.y
+    local r2 = sphere.r * sphere.r - dy * dy
+    if r2 > 0 then circle = { x = sphere.x, z = sphere.z, r = sqrt(r2) } end
+  end
+
+  if region and not dir then
+    -- A sector with only ONE region has no interior boundary, so the
+    -- outermost boundary there is -- the sector's own edge -- is the one to
+    -- report.
+    local edge, edgeDist = Region.sectorEdgeBearing(origin, radius, x, y, z)
+    dir, dist = edge, edgeDist
+    circle = { x = region.center.x, z = region.center.z, r = region.reach }
+  end
+
+  return {
+    sectorName     = sectorName,
+    sectorSeed     = seed,
+    radius         = radius,
+    origin         = origin,
+    regions        = regions,
+    region         = region,
+    weights        = weights,
+    boundaryDir    = dir,
+    boundaryDist   = dist,
+    boundaryOther  = other,
+    boundaryCircle = circle,
+  }
 end
 
 Sector.Region = Region

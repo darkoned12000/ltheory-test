@@ -1,6 +1,7 @@
 local Entities = requireAll('Game.Entities')
 local Seed = require('Game.Seed')
 local DebugControl = require('Game.Controls.DebugControl')
+local Sector = require('Game.Region')
 
 local LTheory = Application()
 
@@ -187,9 +188,14 @@ function LTheory:onInit ()
   -- ship as the white node.
   self.nodeGraph = UI.NodeGraph.Create(self.system, {
     focusEntity = self.player and self.player:getControlling(),
+    -- The sector state, shared with the HUD's panel.
+    getSectorState = function () return self.sectorState end,
   })
   self.gameView.nodeGraph = self.nodeGraph
-  self.gameView:add(self.nodeGraph:setStretch(1, 1), false)
+  -- The map starts hidden (F10 opens it). PHX_MAP=1 opens it at boot, which
+  -- is what a headless capture wants: the map is a widget, so it is only in
+  -- the UI layer, and a capture of the scene alone cannot see it.
+  self.gameView:add(self.nodeGraph:setStretch(1, 1), os.getenv('PHX_MAP') ~= nil)
 end
 
 function LTheory:onInput ()
@@ -209,6 +215,18 @@ function LTheory:onUpdate (dt)
   -- reason: System has no way to tell the player's ship from a thousand
   -- identical rocks it is itself streaming in.
   if self.system then self.system:streamAsteroidField(ship) end
+  -- The sector state: what this place is called, which region you are in,
+  -- and which way the next boundary lies.
+  --
+  -- Computed ONCE, here, and shared -- the HUD's readout and the map's
+  -- overlay both read it. Two places computing it independently is how a
+  -- panel ends up naming one region while the map highlights another.
+  if ship and self.seed then
+    local p = ship:getPos()
+    self.sectorState = Sector.state(self.seed, p.x, p.y, p.z)
+  else
+    self.sectorState = nil
+  end
   self.canvas:update(dt)
 end
 

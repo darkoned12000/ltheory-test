@@ -450,6 +450,13 @@ function GameView:draw (focus, active)
           CaptureHarness.viewActive() and 'fixed' or 'live',
           tostring(CaptureHarness.fixedDt or 'unpinned')))
         mkDump('3_final')(self.renderer.buffer0)
+        -- The UI LAYER. The HUD, the sector panel and the node-graph map are
+        -- widgets, and widgets are composited into `uiBuffer` AFTER the scene
+        -- has been rendered -- so `3_final` (which is the scene) has never
+        -- contained any of them. Every "the panel is not rendering" hunt
+        -- went looking for UI in a dump that could not hold it. This one
+        -- can.
+        if self.renderer.uiBuffer then mkDump('4_ui')(self.renderer.uiBuffer) end
         GameView.__dump = nil
       end
     end

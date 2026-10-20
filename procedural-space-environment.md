@@ -1183,6 +1183,78 @@ generator, so they are answered before the SpaceField is built.
       structure, but it needs to be decided before the map is built,
       because the map is where "the sector remembers itself" lives.
 
+29c. Phase C — the map knows where you are
+------------------------------------------
+
+The first two phases made a region a PLACE you can read (the panel, upper
+left) and navigate by (the bearing arrow). Phase C puts it on the MAP,
+because a name the player has to remember and a boundary they have to
+guess are both worse than a picture.
+
+**What the map shows**
+
+    * The BOUNDARY of the region you are in, drawn as a circle.
+
+      The boundary is a sphere in space (see the Apollonius derivation in
+      Game/Region.lua), and the map is a top-down projection onto X/Z, so
+      the sphere crosses the player's plane in a circle. That circle is the
+      line you cross to be somewhere else. It is drawn UNDER the nodes,
+      because it is the ground they sit on.
+
+    * A MARKER and a NAME for every region, drawn OVER the nodes.
+
+      Over, because the node field is dense — an asteroid field is two
+      thousand dots — and a place name buried under them is a name nobody
+      reads. The markers are clamped into the view (a place whose centre is
+      off-screen still reads) and a clamped marker gets a leader line, so
+      its name does not appear to belong to somewhere else.
+
+      The marker is an OPAQUE chip carrying a cross and the name, not a
+      translucent label. Two reasons, both learned from looking at it:
+      everything in DrawEx blends ADDITIVELY, which is right for lines over
+      a dark sky and useless over a bright one; and even 20% of a
+      near-white node label showing through a translucent plate is brighter
+      than the plate's own ink.
+
+    * The SECTOR AND REGION in the map's header, top right.
+
+      A map that does not say which place it is a map of is a field of dots
+      with no context. The same state the HUD's panel reads — computed
+      ONCE, by the app, and shared — so the panel and the map can never
+      disagree about which region you are in.
+
+**The map's own clutter, fixed**
+
+Labelling every minor body turned the map into an unreadable pile of
+"Body #123" over the asteroid field. The legend already says what a rock
+is: a DOT. So minors are dots, and a minor's label appears only when it is
+selected.
+
+The reason they were labelled at all was a classification bug: a body was
+a "place" if its SCALE was >= 50. That was written when a rock was 2..5
+units across. The streamed asteroid field now makes rocks 40..540, so the
+rule promoted every rock to a place — hundreds of labelled rings, and the
+F7 "places" filter showing nothing but rocks.
+
+Size is not what makes a body a place. A place is something you can go to
+and do things with:
+
+    * it has economy capability (a factory, a trader, a market), or
+    * it is a planet, or
+    * it has children of its own and no sockets (a station with modules).
+
+A ship is a body with SOCKETS — that is what separates it from a station,
+since both have actions and both have children.
+
+**Still open after Phase C**
+
+    * The map still fits to the node field, not to the sector. The regions
+      are visible, but the sector's full extent is not what the opening
+      view shows.
+    * Region markers are drawn in AMBER, deliberately: the nodes are blue
+      and the theme accent is crimson, so a third hue is what makes a
+      place read as a place rather than as another kind of body.
+
 30. Visual "Wow Factor" Stack
 
 The desired experience should build in layers.

@@ -13,6 +13,22 @@ Env.Call(function ()
   dofile('./script/Config.App.lua')
   if io.exists ('./script/Config.Local.lua') then dofile('./script/Config.Local.lua') end
 
+  -- A GLOBAL mute, from the environment.
+  --
+  -- The engine has no master volume, so muting means zeroing the music and
+  -- every SFX gain. Doing it here -- once, after the config is loaded --
+  -- means every app is muted, including the main one, and it cannot be
+  -- forgotten by a test app that forgets to mute itself.
+  --
+  -- This matters: the capture harness has always said so in its header
+  -- ("mute audio for any headless boot"), because `sfx.engine` is a
+  -- continuous loop with a 60-unit full-volume radius and a dev machine
+  -- audibly hums. A headless boot should be SILENT unless it says otherwise.
+  if os.getenv('PHX_MUTE') then
+    Config.audio.musicVolume = 0
+    for _, sfx in pairs(Config.audio.sfx) do sfx.volume = 0 end
+  end
+
   Namespace.LoadInline('Util')
   Namespace.Load      ('UI')
   Namespace.Load      ('WIP')

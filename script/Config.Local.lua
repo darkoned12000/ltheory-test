@@ -6,7 +6,14 @@
 Config.debug.instantJobs = true
 Config.debug.jobSpeed = 10000
 
-Config.debug.window = true
+-- MUTED. The engine has no master volume, so this zeroes the music and
+-- every SFX gain -- including the continuous engine loop, which has a
+-- 60-unit full-volume radius and hums on a dev machine.
+-- To hear it again: delete these two lines (or set the volumes back).
+Config.audio.musicVolume = 0
+for _, sfx in pairs(Config.audio.sfx) do sfx.volume = 0 end
+
+Config.debug.window = false
 Config.debug.metrics = true
 Config.ui.showTrackers = false
 

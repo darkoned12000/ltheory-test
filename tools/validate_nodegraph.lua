@@ -98,8 +98,38 @@ ok(w == true and m == true and c == 'station', 'trader classified station/major'
 w, m, c = NodeGraph.isGraphWorthy(entity{ hasMarket = function () return true end })
 ok(w == true and m == true and c == 'station', 'market classified station/major')
 
+-- A body is a PLACE because of what it CAN DO, not because of how big it
+-- is. The old rule was "scale >= 50 means a place", written when a rock was
+-- 2..5 units across; the streamed asteroid field now makes rocks 40..540,
+-- so that rule promoted EVERY ROCK to a place and the map became hundreds
+-- of labelled rings instead of the dots a rock is.
 w, m, c = NodeGraph.isGraphWorthy(entity{ scale = 100 })
-ok(w == true and m == true and c == 'station', 'large scale body classified station/major')
+ok(w == true and m == false and c == 'rock',
+  'a large bare body is still a rock -- size does not make a place')
+
+w, m, c = NodeGraph.isGraphWorthy(entity{ scale = 100, typeName = 'terrestrial' })
+ok(w == true and m == true and c == 'station', 'a planet classified station/major')
+
+w, m, c = NodeGraph.isGraphWorthy(entity{ scale = 100, hasChildren = function () return true end })
+ok(w == true and m == true and c == 'station', 'a body with children of its own is a place')
+
+-- A station and a ship BOTH have actions and BOTH have children, so the
+-- socket is what separates them. Get this wrong and every station in the
+-- galaxy becomes an anonymous dot.
+w, m, c = NodeGraph.isGraphWorthy(entity{
+  scale = 100,
+  hasActions = function () return true end,
+  hasChildren = function () return true end })
+ok(w == true and m == true and c == 'station',
+  'a station (actions + children, no sockets) is a place')
+
+w, m, c = NodeGraph.isGraphWorthy(entity{
+  scale = 10,
+  hasActions = function () return true end,
+  hasChildren = function () return true end,
+  hasSockets = function () return true end })
+ok(w == true and m == false and c == 'ship',
+  'a ship (sockets) is a ship even with actions and children')
 
 w, m, c = NodeGraph.isGraphWorthy(entity{ name = 'X Field', children = { 1, 2, 3, 4, 5 },
   getChildren = function (s) return s.children end })

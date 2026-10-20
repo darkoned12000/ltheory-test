@@ -439,21 +439,16 @@ function HUD:updateSectorInfo (shipPos)
     return
   end
 
-  -- The sector's seed. For now there is one sector, so this is the world
-  -- seed; when there are several, this is where the current sector's index
-  -- goes.
-  local galaxySeed = app.seed or Seed.get()
-  local sectorSeed = Sector.seedFor(galaxySeed, 0)
+  -- The sector state is computed ONCE per frame, by the app, and shared with
+  -- the map -- so the panel and the map can never disagree about which
+  -- region you are in. (The HUD computes its own copy only if the app has
+  -- not provided one, which keeps the HUD usable on its own.)
+  local st = app.sectorState
+  if not st then
+    st = Sector.state(app.seed or Seed.get(), shipPos.x, shipPos.y, shipPos.z)
+  end
 
-  -- The sector's extent. The asteroid field streams to loadRadius * chunkSize
-  -- around the ship, so the sector has to be at least that big for its
-  -- regions to contain the playable volume.
-  local sectorRadius = Config.game.sectorRadius or 60000
-
-  local regions, sectorName = Sector.regions(sectorSeed, Config.gen.origin,
-                                             sectorRadius)
-
-  local region, weights = Sector.Region.containing(regions, shipPos.x, shipPos.y, shipPos.z)
+  local region = st.region
   if not region then
     self.sectorInfo = nil
     return
@@ -466,28 +461,14 @@ function HUD:updateSectorInfo (shipPos)
     -- The direction and the distance to the nearest boundary come from the
     -- same call: the boundary is an Apollonius surface, so both fall out of
     -- one closed-form computation (see Game/Region.lua).
-    local dir, dist = Sector.Region.boundaryInfo(regions,
-                                                  shipPos.x, shipPos.y, shipPos.z)
-    if dir then
-      self.bearingDir = dir
-      self.bearingDist = dist
-    else
-      -- A sector with only ONE region has no interior boundary, so point at
-      -- the sector's edge instead -- the outermost boundary there is. Without
-      -- this the arrow would have nothing to point at in a small sector.
-      local edge, edgeDist = Sector.Region.sectorEdgeBearing(Config.gen.origin,
-                                                             sectorRadius,
-                                                             shipPos.x, shipPos.y,
-                                                             shipPos.z)
-      self.bearingDir = edge
-      self.bearingDist = edgeDist
-    end
+    self.bearingDir  = st.boundaryDir
+    self.bearingDist = st.boundaryDist
   end
 
   local boundaryDist = self.bearingDist
 
   local info = self.sectorInfo or {}
-  info.sectorLabel  = sectorName
+  info.sectorLabel  = st.sectorName
   info.regionLabel  = region.name
   info.archetypeLabel = region.archetype and region.archetype.name or ''
   info.bearingDir   = self.bearingDir
