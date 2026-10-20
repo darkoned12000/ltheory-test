@@ -107,10 +107,36 @@ local sin = math.sin
 local function placeRegions (sectorSeed, origin, radius)
   local s = sectorSeed
 
-  -- 1..6 regions. A low count means one big region with a small influence
-  -- overlap; a high count means several small ones.
-  local count = 1 + floor(SpaceField.hash32(0, 0, 0, s, 91) * 6)
-  count = min(count, 6)
+  -- The COUNT is a design parameter: one vast region, or five or six. It is
+  -- chosen deterministically from the sector seed, so a sector's shape is part
+  -- of its identity -- the same seed always gives the same sector layout.
+  --
+  -- NOT a uniform 1..6. A sector with two or three regions is neither of the
+  -- two things the design describes -- it is the half-measure, and the
+  -- regions end up small enough that the sector reads as several similar
+  -- patches rather than as places.
+  --
+  -- And the ONE-region case is kept to a minority, because a single-region
+  -- sector has nowhere to travel TO: the region IS the sector, so flying out
+  -- of it is flying out of the sector, and there is nothing beyond that yet
+  -- (no jumpgates). It is a legitimate shape -- a vast, uniform place -- but
+  -- it is a minority shape.
+  --
+  -- The salt is 90 rather than 91 because 91 happened to put the PROJECT'S
+  -- OWN DEFAULT SEED (Config.Local's seedGlobal) in the one-region case --
+  -- so the demo world had a single name for the whole sector and the region
+  -- system was invisible in it. The salt is a free design parameter with no
+  -- contract on it; picking one that showcases the feature in the default
+  -- world is a deliberate choice, not a fudge.
+  local roll = SpaceField.hash32(0, 0, 0, s, 90)
+  local count
+  if roll < 0.20 then
+    count = 1
+  elseif roll < 0.60 then
+    count = 5
+  else
+    count = 6
+  end
 
   local regions = {}
   for i = 1, count do
@@ -309,8 +335,15 @@ end
 -- several regions the interior boundaries are more interesting, so this is the
 -- fallback -- but in a one-region sector it is the only boundary there is,
 -- and without it the bearing arrow would have nothing to point at.
--- Returns the direction and the distance to the edge, or nil if the position
--- IS the centre (where "outward" is undefined).
+-- The direction toward the sector's edge, the distance to it, and whether
+-- the position is inside the sector.
+--
+-- The direction ALWAYS points AT the boundary. Inside, that is straight out;
+-- outside, it is straight back in -- because once you are past the edge,
+-- pointing further out is pointing at nothing, and the marker's whole job
+-- is to say which way to fly.
+--
+-- The distance is unsigned: it is the distance to the boundary either way.
 function Region.sectorEdgeBearing (origin, radius, x, y, z)
   local dx, dy, dz = x - origin.x, y - origin.y, z - origin.z
   local d = sqrt(dx*dx + dy*dy + dz*dz)
@@ -319,10 +352,15 @@ function Region.sectorEdgeBearing (origin, radius, x, y, z)
     -- answer. Rather than leave the marker with nothing to point at, pick a
     -- FIXED direction: the centre is a measure-zero point, and a fixed
     -- answer at least never jitters from frame to frame.
-    return { x = 1, y = 0, z = 0 }, radius
+    return { x = 1, y = 0, z = 0 }, radius, true
   end
-  -- Straight out from the sector's centre is the shortest way to the edge.
-  return { x = dx / d, y = dy / d, z = dz / d }, radius - d
+  local ux, uy, uz = dx/d, dy/d, dz/d
+  if d <= radius then
+    -- Inside: the nearest point of the edge is straight out from the centre.
+    return { x = ux, y = uy, z = uz }, radius - d, true
+  end
+  -- Outside: the nearest point of the edge is straight back toward the centre.
+  return { x = -ux, y = -uy, z = -uz }, d - radius, false
 end
 
 -- ---------------------------------------------------------------------------
@@ -571,6 +609,7 @@ function Sector.state (galaxySeed, x, y, z, index)
   local region, weights = Region.containing(regions, x, y, z)
 
   local dir, dist, other, sphere = Region.boundaryInfo(regions, x, y, z)
+  local inside = true
 
   -- The boundary as a CIRCLE on the map.
   --
@@ -590,8 +629,8 @@ function Sector.state (galaxySeed, x, y, z, index)
     -- A sector with only ONE region has no interior boundary, so the
     -- outermost boundary there is -- the sector's own edge -- is the one to
     -- report.
-    local edge, edgeDist = Region.sectorEdgeBearing(origin, radius, x, y, z)
-    dir, dist = edge, edgeDist
+    local edge, edgeDist, edgeInside = Region.sectorEdgeBearing(origin, radius, x, y, z)
+    dir, dist, inside = edge, edgeDist, edgeInside
     circle = { x = region.center.x, z = region.center.z, r = region.reach }
   end
 
@@ -607,6 +646,21 @@ function Sector.state (galaxySeed, x, y, z, index)
     boundaryDist   = dist,
     boundaryOther  = other,
     boundaryCircle = circle,
+    -- False when the position is PAST the sector edge. There is nothing out
+    -- there yet (no jumpgates), so the marker points back IN.
+    boundaryInside = inside,
+    -- Is a position in a given region? The rule is the DOMINANT region at
+    -- that position -- the same rule the HUD uses to decide which region you
+    -- are in, so the map and the panel cannot disagree about what is where.
+    inRegion = function (r, px, py, pz)
+      if not r then return false end
+      local w = Region.weightsAt(regions, px, py, pz)
+      local best, bestW = nil, 0
+      for i = 1, #w do
+        if w[i].w > bestW then bestW = w[i].w; best = w[i].region end
+      end
+      return best == r
+    end,
   }
 end
 

@@ -363,6 +363,21 @@ void Font_GetSize (Font* self, Vec4i* out, cstr text) {
   uint32 codepoint = *text++;
   if (!codepoint) {
     *out = Vec4i_Create(0, 0, 0, 0);
+    // FRAME_END BEFORE the return. This used to be missing, and it was a
+    // genuinely nasty bug: an EMPTY string -- which is what every UI label
+    // measures before it has any text -- skipped the End, so the profiler
+    // scope stack grew by one per empty measurement.
+    //
+    // Because Profiler_End pops whatever is on TOP of the stack, a missing
+    // End does not just lose a scope: it makes every later End() pop the
+    // WRONG scope, and the stack grows a couple of entries per frame until
+    // Profiler_Begin hits MAX_STACK_DEPTH and aborts the process.
+    //
+    // The symptom was an app that died a second or two after the player
+    // pressed F10 -- because F10 is BOTH the profiler toggle and the map
+    // toggle, so the leak that had been running silently from frame one
+    // suddenly became fatal the moment the profiler was switched on.
+    FRAME_END;
     return;
   }
 

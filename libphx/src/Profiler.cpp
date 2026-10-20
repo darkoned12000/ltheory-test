@@ -7,6 +7,8 @@
 #include "PhxString.h"
 #include "TimeStamp.h"
 
+#include <string.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -232,6 +234,43 @@ void Profiler_End () {
     Scope* curr = self.stack[self.stackIndex];
     curr->last = now;
   }
+#endif
+}
+
+int Profiler_GetStackDepth () {
+#if ENABLE_PROFILER
+  return self.stackIndex;
+#else
+  return -1;
+#endif
+}
+
+void Profiler_EndNamed (cstr name) {
+#if ENABLE_PROFILER
+  if (!profiling) return;
+  if (self.stackIndex < 0) {
+    Profiler_Backtrace();
+    Fatal("Profiler_End: Attempting to pop an empty stack");
+  }
+  // The scope being popped must be the one this function opened. If it is
+  // not, then some Begin was never matched by its End, and every scope from
+  // here on is being attributed to the wrong parent -- which is how a scope
+  // stack ends up growing a couple of entries per frame until the profiler
+  // aborts the process with "Maximum stack depth exceeded".
+  //
+  // Say so, loudly and specifically. The alternative is a crash that looks
+  // like it happened somewhere else entirely.
+  Scope* prev = self.stack[self.stackIndex];
+  if (name && prev->name && strcmp(prev->name, name) != 0) {
+    printf("PHX PROFILER: scope mismatch -- ending '%s' but the stack top is '%s'.\n",
+           name, prev->name);
+    printf("             A Begin was never matched by its End; scopes from here on\n");
+    printf("             are attributed to the wrong parent, and the stack will grow\n");
+    printf("             until the profiler aborts. The unmatched Begin is above.\n");
+    Profiler_Backtrace();
+    fflush(stdout);
+  }
+  Profiler_End();
 #endif
 }
 

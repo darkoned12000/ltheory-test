@@ -12,6 +12,7 @@ do -- C Definitions
     void Profiler_SetValue   (cstr, int);
     void Profiler_LoopMarker ();
     void Profiler_Backtrace  ();
+    int32 Profiler_GetStackDepth ();
   ]]
 end
 
@@ -24,6 +25,7 @@ do -- Global Symbol Table
     SetValue   = libphx.Profiler_SetValue,
     LoopMarker = libphx.Profiler_LoopMarker,
     Backtrace  = libphx.Profiler_Backtrace,
+    GetStackDepth = libphx.Profiler_GetStackDepth,
   }
 
   if onDef_Profiler then onDef_Profiler(Profiler, mt) end

@@ -1255,6 +1255,93 @@ since both have actions and both have children.
       and the theme accent is crimson, so a third hue is what makes a
       place read as a place rather than as another kind of body.
 
+29d. Phase D — the sector map, and the crash it hid
+---------------------------------------------------
+
+**THE MAP OPENS ON THE SECTOR, NOT ON THE SHIP'S FEET**
+
+The map's fit used to frame the node field -- the asteroid field, a few
+thousand rocks within ~30k of the ship. That is not a sector map; it is a
+dot cloud at your own feet, and it says nothing about where you are in the
+sector. The map now opens framed on the sector itself (60k across, centred
+on the sector origin), so the named places are all on screen at once.
+
+**REGIONS ARE CLICKABLE, AND DRILL IN**
+
+A region is a place, not a body: it has no entity, so it lives beside the
+node table rather than inside it, and it is hit-tested on its own against
+the marker rectangle the draw code uses.
+
+  * a single click selects the region and centres the view on it
+  * a double click drills in: the map becomes "the things in this place"
+
+The members of a region are the bodies whose DOMINANT region it is -- the
+same rule the HUD uses to decide which region you are in, so the map and
+the panel cannot disagree about what is where. (The provider's unit
+records now carry the body's world Y as well as its X/Z: the map is a
+top-down projection, but "is this body in that region" is a 3D question.)
+
+The drilled region is drawn in GREEN, so it cannot be confused with the
+region the ship is in (amber) or with a region that is merely nearby (dim
+amber). Drilling out (right-click, or backtick) restores the sector view
+exactly as it was.
+
+**THE REGION COUNT NOW MATCHS THE DECISION**
+
+§29a says a sector has "one vast region, or five or six smaller ones".
+The code was doing a uniform 1..6, which produced two and three -- the
+half-measure the design does not describe -- and made one-region sectors
+as common as any other shape.
+
+A one-region sector has nowhere to travel TO: the region IS the sector, so
+flying out of it is flying out of the sector, and there is nothing beyond
+that yet (no jumpgates). It is a legitimate shape -- a vast, uniform place
+-- but it is a minority shape, so it is now 20%.
+
+The salt moved from 91 to 90 because 91 happened to put the PROJECT'S OWN
+DEFAULT SEED in the one-region case, so the demo world had a single name
+for the whole sector and the region system was invisible in it. The salt
+is a free design parameter with no contract on it.
+
+**THE SECTOR EDGE POINTS BACK**
+
+Past the sector edge there is nothing yet, so a marker pointing further
+out is pointing at nothing. The sector-edge bearing now always points AT
+the edge: straight out when inside, straight back IN when outside. The
+panel says "outside the sector" in that case.
+
+**THE CRASH F10 CAUSED**
+
+F10 is bound to BOTH the profiler toggle and the map toggle, so opening the
+map switched the profiler on as well. And the profiler had a latent bug
+that had been running silently since frame one:
+
+    Font_GetSize returns early on an EMPTY string without popping its
+    profiler scope.
+
+An empty string is what every UI label measures before it has any text --
+and the sector panel has two labels that are ALWAYS empty (the archetype
+line and the boundary line have no title prefix). So two scopes leaked
+every frame.
+
+Because Profiler_End pops whatever is on TOP of the scope stack, a missing
+End does not just lose a scope: it makes every later End() pop the WRONG
+scope. The stack grew by two entries per frame until Profiler_Begin hit
+MAX_STACK_DEPTH and called Fatal -- about sixty frames, or two to four
+seconds, after the player pressed F10.
+
+The fixes:
+
+  * Font_GetSize ends its scope before the early return.
+  * Application:profiled catches, ends the scope, and re-raises, so a
+    Lua error can never leave the scope stack unbalanced.
+  * FRAME_END now passes the function name, and the profiler CHECKS that
+    it is popping the scope it is supposed to pop. A mismatch is reported
+    immediately, with a backtrace, instead of surfacing sixty frames later
+    as a fatal overflow.
+  * PHX_PROFILER=1 turns the profiler on at boot, so the imbalance is
+    reproducible without pressing F10.
+
 30. Visual "Wow Factor" Stack
 
 The desired experience should build in layers.

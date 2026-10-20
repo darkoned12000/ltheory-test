@@ -99,7 +99,10 @@ end
 do
   local missing, total = 0, 0
   local multiRegionSectors, singleRegionSectors = 0, 0
-  for g = 0, 7 do
+  -- Twenty sectors, not eight: the single-region shape is a MINORITY (one
+  -- sector in five), so a small sample can miss it entirely -- and a check
+  -- that only ever sees one shape is not checking the distribution.
+  for g = 0, 19 do
     local seed = RegionMod.seedFor(GALAXY + g * 7919, 0)
     local regions = RegionMod.regions(seed, ORIGIN, RADIUS)
     if #regions == 1 then singleRegionSectors = singleRegionSectors + 1
@@ -118,6 +121,20 @@ do
   check('sectors have both single-region and multi-region layouts',
     multiRegionSectors > 0 and singleRegionSectors > 0,
     string.format('%d multi-region, %d single-region', multiRegionSectors, singleRegionSectors))
+  -- The count is a design parameter: one vast region, or five or six smaller
+  -- ones. NOT a uniform 1..6 -- two or three is the half-measure the design
+  -- does not describe.
+  local badCount = 0
+  local seenCounts = {}
+  for g = 0, 19 do
+    local seed = RegionMod.seedFor(GALAXY + g * 7919, 0)
+    local regions = RegionMod.regions(seed, ORIGIN, RADIUS)
+    seenCounts[#regions] = (seenCounts[#regions] or 0) + 1
+    if #regions ~= 1 and #regions ~= 5 and #regions ~= 6 then badCount = badCount + 1 end
+  end
+  check('a sector has one vast region, or five or six smaller ones',
+    badCount == 0,
+    string.format('%d sectors had a count the design does not describe', badCount))
 end
 
 -- ---------------------------------------------------------------------------
@@ -236,9 +253,10 @@ do
   -- A one-region sector has no rival, so the HUD falls back to the sector's
   -- own edge. That fallback must always give a direction and a distance.
   --
-  -- The distance is SIGNED: negative when the position is already OUTSIDE
-  -- the sector, which the HUD reports as "outside the sector" rather than
-  -- as a negative distance to a boundary.
+  -- The direction always points AT the boundary: straight out when inside,
+  -- straight back IN when outside -- because past the edge there is nothing
+  -- out there yet (no jumpgates), and pointing further out would be
+  -- pointing at nothing.
   local ok = true
   local detail = ''
   local inside, outside = 0, 0
@@ -248,22 +266,89 @@ do
     if #regions == 1 then
       for _, p in ipairs(samplePoints(20000)) do
         local d = math.sqrt(p.x*p.x + p.y*p.y + p.z*p.z)
-        local dir, dist = Region.sectorEdgeBearing(ORIGIN, RADIUS, p.x, p.y, p.z)
-        if not dir or dist == nil then
+        local dir, dist, isInside = Region.sectorEdgeBearing(ORIGIN, RADIUS, p.x, p.y, p.z)
+        if not dir or dist == nil or dist < 0 then
           ok = false
           detail = string.format('no edge bearing at (%d,%d,%d)', p.x, p.y, p.z)
-        elseif d <= RADIUS and dist < 0 then
+        elseif d <= RADIUS and not isInside then
           ok = false
-          detail = string.format('negative distance inside the sector at (%d,%d,%d)', p.x, p.y, p.z)
-        elseif d > RADIUS and dist >= 0 then
+          detail = string.format('reported outside at (%d,%d,%d), which is inside', p.x, p.y, p.z)
+        elseif d > RADIUS and isInside then
           ok = false
-          detail = string.format('positive distance outside the sector at (%d,%d,%d)', p.x, p.y, p.z)
-        elseif d <= RADIUS then inside = inside + 1
-        else outside = outside + 1 end
+          detail = string.format('reported inside at (%d,%d,%d), which is outside', p.x, p.y, p.z)
+        elseif d <= RADIUS then
+          -- Inside: the bearing must point AWAY from the sector centre.
+          -- (The exact centre has no outward direction, so it is skipped --
+          -- the bearing there is a fixed arbitrary one, which is the point.)
+          local len = math.sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z)
+          if d > 1 then
+            local dot = (dir.x*p.x + dir.y*p.y + dir.z*p.z) / math.max(1e-6, len * d)
+            if dot < 0.99 then
+              ok = false
+              detail = string.format('the bearing points inward at (%d,%d,%d)', p.x, p.y, p.z)
+            end
+          end
+          inside = inside + 1
+        else
+          -- Outside: the bearing must point BACK toward the centre.
+          local len = math.sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z)
+          local dot = (dir.x*p.x + dir.y*p.y + dir.z*p.z) / math.max(1e-6, len * d)
+          if dot > -0.99 then
+            ok = false
+            detail = string.format('the bearing points further out at (%d,%d,%d)', p.x, p.y, p.z)
+          end
+          outside = outside + 1
+        end
       end
     end
   end
-  check('the sector edge always gives a bearing and a signed distance', ok, detail)
+  check('the sector edge always gives a bearing that points AT the edge', ok, detail)
+end
+
+-- ---------------------------------------------------------------------------
+-- The map's region filter
+-- ---------------------------------------------------------------------------
+do
+  -- The map drills into a region by showing the bodies whose DOMINANT region
+  -- is that one. The rule has to be the same one the HUD uses to say which
+  -- region you are in, or the map and the panel disagree about what is
+  -- where.
+  --
+  -- Two properties matter: the regions PARTITION the sector (every position
+  -- belongs to exactly one, so nothing is shown twice and nothing is
+  -- missing), and every region is reachable (it is the dominant region
+  -- somewhere, so drilling into it shows something).
+  local overlap, missing, emptyRegion = 0, 0, 0
+  for g = 0, 5 do
+    local seed = RegionMod.seedFor(GALAXY + g * 7919, 0)
+    local regions = RegionMod.regions(seed, ORIGIN, RADIUS)
+    local counts = {}
+    for _, r in ipairs(regions) do counts[r] = 0 end
+    for _, p in ipairs(samplePoints(15000)) do
+      local hits = 0
+      for _, r in ipairs(regions) do
+        -- The dominant region at this position.
+        local w = Region.weightsAt(regions, p.x, p.y, p.z)
+        local best, bestW = nil, 0
+        for i = 1, #w do
+          if w[i].w > bestW then bestW = w[i].w; best = w[i].region end
+        end
+        if best == r then
+          hits = hits + 1
+          counts[r] = counts[r] + 1
+        end
+      end
+      if hits == 0 then missing = missing + 1
+      elseif hits > 1 then overlap = overlap + 1 end
+    end
+    for _, c in pairs(counts) do if c == 0 then emptyRegion = emptyRegion + 1 end end
+  end
+  check('the regions partition the sector -- every position is in exactly one',
+    missing == 0 and overlap == 0,
+    string.format('%d positions in no region, %d in more than one', missing, overlap))
+  check('every region is somewhere dominant, so drilling into it shows something',
+    emptyRegion == 0,
+    string.format('%d regions were never the dominant one', emptyRegion))
 end
 
 print(string.format('\n%d checks, %d failure(s)', checks, failures))

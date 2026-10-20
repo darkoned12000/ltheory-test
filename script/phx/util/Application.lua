@@ -24,6 +24,14 @@ function Application:getWindowMode ()
   -- `Resolution: 1280x720`. Fixed-size is only forced by the harness, never in
   -- normal play.
   local resizable = CaptureHarness.stripResizable() and 0 or WindowMode.Resizable
+  -- PHX_WINDOWED=1 forces a windowed run, whatever Config says.
+  --
+  -- Config.window.fullscreen is a LOCAL setting, and a local setting that
+  -- says "fullscreen" will take over the whole screen and steal focus from
+  -- whatever the user is playing. A test run must never do that.
+  if os.getenv('PHX_WINDOWED') then
+    return Bit.Or32(WindowMode.Shown, resizable)
+  end
   if Config.window.fullscreen then
     return Bit.Or32(WindowMode.Fullscreen, resizable)
   end
@@ -51,8 +59,24 @@ end
 function Application:profiled (label, fn)
   Profiler.SetValue('gcmem', GC.GetMemory())
   Profiler.Begin(label)
-  fn()
+  -- The pcall matters more than it looks. Profiler_End() pops whatever is on
+  -- top of the scope stack, so an exception that skips an End() does not just
+  -- lose a scope -- it leaves the stack one deeper, and every later End()
+  -- then pops the WRONG scope. The stack grows by a scope or two per frame
+  -- until Profiler_Begin hits MAX_STACK_DEPTH and calls Fatal.
+  --
+  -- That turns one recoverable Lua error into an app that dies a minute
+  -- later with "Profiler_Begin: Maximum stack depth exceeded" and a backtrace
+  -- pointing at the FRAME LOOP instead of at the error. Which is exactly what
+  -- happened: a real failure in GameView:draw surfaced as a fatal profiler
+  -- overflow sixty-odd frames later, with the actual error buried under a
+  -- hundred repeated 'Frame' / 'App.onUpdate' scopes.
+  --
+  -- So: catch, END the scope, then re-raise. The stack stays balanced AND
+  -- the error still propagates.
+  local ok, err = pcall(fn)
   Profiler.End()
+  if not ok then error(err, 0) end
 end
 
 -- Bottom-of-screen perf readout (Config.debug.metrics). Pure extraction from
@@ -128,6 +152,16 @@ function Application:run ()
   if Config.jit.verbose then Jit.StartVerbose() end
 
   local profiling = false
+  -- PHX_PROFILER=1 turns the profiler on at boot.
+  --
+  -- The profiler is OFF by default, which means any Begin/End imbalance in
+  -- the frame loop is INVISIBLE until somebody switches it on. And F10 -- the
+  -- profiler toggle -- is ALSO the node-graph map toggle, so opening the map
+  -- switches the profiler on as a side effect.
+  if os.getenv('PHX_PROFILER') then
+    profiling = true
+    Profiler.Enable()
+  end
   local toggleProfiler = false
   -- PHX_PERF=<frames>: unattended frame-time statistics (see the block at the
   -- bottom of the loop). Declared out here, NOT beside `timeScale`: everything

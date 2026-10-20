@@ -112,6 +112,10 @@ function GraphProvider.system ()
               major  = major,
               cat    = cat or 'rock',
               x = p.x, y = p.z,
+              -- The world Y as well: the map is a top-down X/Z projection, but
+              -- "is this body in that region" is a 3D question, and the
+              -- region membership is defined in 3D.
+              wy = p.y,
               r = (okS and type(s) == 'number') and s or 1,
             }
           end
@@ -149,7 +153,7 @@ function GraphProvider.system ()
             if rr > 4000 then rr = 4000 end
             out[#out + 1] = {
               entity = z, major = true, cat = 'station',
-              x = zp.x, y = zp.z, r = rr,
+              x = zp.x, y = zp.z, wy = zp.y, r = rr,
             }
           end
         end
@@ -167,7 +171,8 @@ function GraphProvider.system ()
           local okS, s = pcall(ctx.getScale, ctx)
           out[#out + 1] = {
             entity = ctx, major = true, cat = 'station',
-            x = p.x, y = p.z, r = (okS and type(s) == 'number') and s or 1,
+            x = p.x, y = p.z, wy = p.y,
+            r = (okS and type(s) == 'number') and s or 1,
             context = true,
           }
         end

@@ -463,6 +463,9 @@ function HUD:updateSectorInfo (shipPos)
     -- one closed-form computation (see Game/Region.lua).
     self.bearingDir  = st.boundaryDir
     self.bearingDist = st.boundaryDist
+    -- Whether the position is still inside the sector. Past the edge the
+    -- marker points BACK, because there is nothing out there yet.
+    self.bearingInside = st.boundaryInside
   end
 
   local boundaryDist = self.bearingDist
@@ -473,16 +476,19 @@ function HUD:updateSectorInfo (shipPos)
   info.archetypeLabel = region.archetype and region.archetype.name or ''
   info.bearingDir   = self.bearingDir
   info.bearingDist  = boundaryDist
+  -- The map shows the region the PLAYER is in, so the two always agree.
+  info.mapRegion    = region
 
   -- The bearing readout: how far the nearest boundary is. Always shown when
   -- there IS a boundary -- the arrow points at it, so the number belongs
   -- beside it. The earlier version hid it beyond 12 km, which meant the
   -- line was usually absent exactly when the player was looking for it.
   if boundaryDist then
-    if boundaryDist < 0 then
-      -- A negative distance means the position is already PAST the boundary
-      -- (the sector edge, in the fallback case) -- so there is no boundary
-      -- ahead to fly to, and saying "-9 km to boundary" would be nonsense.
+    if self.bearingInside == false then
+      -- Past the sector edge. There is NOTHING out there yet -- no jumpgates
+      -- exist -- so the useful thing to say is that you are out of the
+      -- sector, and the arrow points back in (the bearing direction is
+      -- flipped to face the boundary once you are past it).
       info.bearingLabel = 'outside the sector'
     else
       info.bearingLabel = string.format('%.0f km to boundary', boundaryDist / 1000)

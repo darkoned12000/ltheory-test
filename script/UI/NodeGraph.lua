@@ -87,10 +87,28 @@ function NodeGraph:seedFromSystem ()
   local seen = self._seen
   if not seen then seen = {}; self._seen = seen end
   for k in pairs(seen) do seen[k] = nil end
+  -- When the map is drilled into a REGION, only the bodies whose dominant
+  -- region is that one are shown. The rule is the same one the HUD uses to
+  -- say which region you are in, so the map and the panel cannot disagree
+  -- about what is where.
+  local regionFilter = self.regionContext
+  local inRegion = (regionFilter and self.regionState
+                    and self.regionState.inRegion) or nil
   for i = 1, #units do
     local u = units[i]
     local e = u.entity
     if e then
+      -- The region filter needs the body's POSITION, which the unit record
+      -- already carries (the map is a top-down X/Z projection, but the
+      -- membership is a 3D question, so the full position is used).
+      local keep = true
+      if regionFilter and inRegion then
+        keep = inRegion(regionFilter, u.x, u.wy or 0, u.y)
+      end
+      if not keep then
+        -- Not in this region: drop it from the level entirely.
+        seen[e.id] = nil
+      else
       seen[e.id] = true
       local n = self.nodes[e.id]
       if not n then
@@ -121,6 +139,7 @@ function NodeGraph:seedFromSystem ()
       -- frame would pcall over children for every entity). Drives the UI tell.
       if n.drillable == nil then n.drillable = self.provider.drillable(e) end
       if u.context then n.isContext = true end
+      end
     end
   end
   for id, n in pairs(self.nodes) do
@@ -191,6 +210,31 @@ function NodeGraph:seedFromSystem ()
         else
           self.pos = Vec2f((x0 + x1) * 0.5, (y0 + y1) * 0.5)
           self.zoom = clampZoom(math.min(sx / w, sy / h) * 0.85)
+        end
+      end
+      -- The SECTOR view.
+      --
+      -- The fit above frames the node field, which is the asteroid field --
+      -- a few thousand rocks within ~30k of the ship. That is not what a
+      -- "sector map" should open on: the sector is 60k across and has
+      -- NAMED PLACES in it, and the player opening the map wants to see
+      -- where they are in the sector, not a dot cloud at their own feet.
+      --
+      -- So the sector wins, and the fit is only used when there is no sector
+      -- (a test app, or a level that is not a sector at all).
+      --
+      -- Drilled into a REGION, the region is the frame instead -- the map is
+      -- "the things in this place", so it frames the place.
+      local st = self.regionState
+      if st and not restoring then
+        local rc = self.regionContext
+        if rc then
+          self.pos = Vec2f(rc.center.x, rc.center.z)
+          self.zoom = clampZoom(math.min(sx, sy) / (2 * math.max(1, rc.reach)) * 0.9)
+        elseif st.radius and st.radius > 0 then
+          local o = st.origin or { x = 0, y = 0, z = 0 }
+          self.pos = Vec2f(o.x, o.z)
+          self.zoom = clampZoom(math.min(sx, sy) / (2 * st.radius) * 0.9)
         end
       end
       -- Compression frame for this level: centre + reference radius (the
@@ -297,6 +341,11 @@ end
 -- Drill context (Phase 4): swap the seeding target without touching the
 -- lens. The stack carries {context, camera{zoom,pos}} so Back restores the
 -- level you came FROM exactly (per-level camera, per-the-plan §7).
+--
+-- A REGION is a drill context too, and it is not an entity -- it is a place,
+-- and the things in it are the bodies whose dominant region it is. The stack
+-- carries the region alongside the entity context, so drilling out of a
+-- region returns to the sector view exactly as it was.
 function NodeGraph:drillInto (entity, keepZoom)
   if entity == self.context then return false end
   -- Only contexts whose children can actually seed may be drilled into.
@@ -309,6 +358,7 @@ function NodeGraph:drillInto (entity, keepZoom)
     -- Fit zoom of the level we are leaving (the zoom-out floor on return).
     frame   = self._zFit and { zFit = self._zFit } or nil,
     focusId = self.focus,   -- re-selected on drillOut
+    region  = self.regionContext,
   }
   self.context = entity
   self.nodes, self.edges = {}, {}
@@ -325,6 +375,32 @@ function NodeGraph:drillInto (entity, keepZoom)
     self.pos = Vec2f(0, 0)
   end
   return self.stack[#self.stack]
+end
+
+-- Drill into a REGION: the map becomes "the things in this place".
+--
+-- The region's members are the bodies whose DOMINANT region is this one --
+-- the same rule the HUD uses to decide which region you are in, so the map
+-- and the panel cannot disagree about what is where.
+function NodeGraph:drillIntoRegion (region)
+  if not (region and self.regionState) then return false end
+  local st = self.regionState
+  if st.regionContext == region then return false end
+  self.stack[#self.stack + 1] = {
+    context = self.context,
+    camera  = { zoom = self.zoom, pos = { x = self.pos.x, y = self.pos.y } },
+    frame   = self._zFit and { zFit = self._zFit } or nil,
+    focusId = self.focus,
+    region  = self.regionContext,
+  }
+  self.regionContext = region
+  self.nodes, self.edges = {}, {}
+  self.focus, self.follow = nil, nil
+  self._fitted = false
+  -- Centre on the region and frame it.
+  self.pos = Vec2f(region.center.x, region.center.z)
+  self.zoom = 1.0
+  return true
 end
 
 -- Attempts the drill for a node. Uses the stamped `drillable` (computed once
@@ -344,6 +420,7 @@ function NodeGraph:drillOut ()
   local prev = self.stack[#self.stack]
   self.stack[#self.stack] = nil
   self.context = prev.context
+  self.regionContext = prev.region
   self.nodes, self.edges = {}, {}
   self.focus, self.follow = nil, nil
   self._fitted = false
@@ -734,6 +811,10 @@ end
 local cRegion      = { r = 0.98, g = 0.76, b = 0.30, a = 0.95 }
 local cRegionOther = { r = 0.85, g = 0.62, b = 0.28, a = 0.60 }
 local cRegionEdge  = { r = 0.98, g = 0.76, b = 0.30, a = 0.35 }
+-- The region the map is DRILLED INTO. Green, so it cannot be mistaken for
+-- the region the ship is in (amber) or for a region that is merely nearby
+-- (dim amber).
+local cRegionDrill = { r = 0.45, g = 0.95, b = 0.60, a = 0.95 }
 
 function NodeGraph:drawRegionBoundary ()
   local st = self.regionState
@@ -751,11 +832,13 @@ function NodeGraph:drawRegionMarkers (vx, vy, vsx, vsy)
   if not (st and st.regions) then return end
   for _, r in ipairs(st.regions) do
     local cur = (st.region == r)
+    local drilled = (self.regionContext == r)
     local rx, ry = self:toScreen(r.center.x, r.center.z)
     local mx = math.min(math.max(rx, vx + 44), vx + vsx - 44)
     local my = math.min(math.max(ry, vy + 34), vy + vsy - 24)
     local clamped = (mx ~= rx) or (my ~= ry)
     local col = cur and cRegion or cRegionOther
+    if drilled then col = cRegionDrill end
     if clamped then
       DrawEx.Line(mx, my, rx, ry, { r = col.r, g = col.g, b = col.b, a = 0.25 })
     end
@@ -1006,7 +1089,10 @@ function NodeGraph:onDraw (focus, active)
     local st = self.regionState
     if st then
       local txt = st.sectorName or ''
-      if st.region then txt = txt .. '  --  ' .. st.region.name end
+      -- Which region the map is showing: the drilled one if there is one,
+      -- otherwise the one the player is in.
+      local shown = self.regionContext or st.region
+      if shown then txt = txt .. '  --  ' .. shown.name end
       if txt ~= '' then
         local tw = #txt * 7 + 16
         local tx = x + sx - tw - 16
@@ -1092,6 +1178,30 @@ function NodeGraph:onDraw (focus, active)
   Draw.Color(1, 1, 1, 1)
 end
 
+-- The region marker under the cursor, if any.
+--
+-- Regions are not nodes -- they are places, and they have no entity -- so
+-- they are hit-tested separately, against the same marker rectangle the
+-- draw code uses.
+function NodeGraph:regionAt (mx, my)
+  local st = self.regionState
+  if not (st and st.regions) then return nil end
+  local vx, vy, vsx, vsy = self:getRectGlobal()
+  local best, bestDist = nil, math.huge
+  for _, r in ipairs(st.regions) do
+    local rx, ry = self:toScreen(r.center.x, r.center.z)
+    local cx = math.min(math.max(rx, vx + 44), vx + vsx - 44)
+    local cy = math.min(math.max(ry, vy + 34), vy + vsy - 24)
+    -- The marker is the cross plus the name plate beside it.
+    local halfW = (#r.name * 7 + 34) * 0.5
+    local dx = math.max(0, math.abs(mx - cx) - halfW)
+    local dy = math.max(0, math.abs(my - cy) - 11)
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d <= 6 and d < bestDist then best, bestDist = r, d end
+  end
+  return best
+end
+
 function NodeGraph:onInput (state)
   -- Arrows only (no WASD): as an in-game overlay the ship owns WASD, and
   -- panning the map must never fly the ship. Standalone SystemMap keeps WASD
@@ -1139,9 +1249,27 @@ function NodeGraph:onInput (state)
       end
     end
   end  if down and not self._wasDown then
-    -- Press edge: hit-test once; node => drag+select, empty => pan.
+    -- Press edge: hit-test once; node => drag+select, region => select the
+    -- place, empty => pan.
     self._drag = self:nodeAt(mp.x, mp.y)
-    if self._drag then
+    -- A region marker is a PLACE, not a body, so it is not in the node table
+    -- and has to be hit-tested on its own.
+    self._dragRegion = (not self._drag) and self:regionAt(mp.x, mp.y) or nil
+    if self._dragRegion then
+      -- A single click selects the region and centres the view on it; a
+      -- double click drills into it, so the map shows what is IN that place.
+      local now = Engine.GetTime()
+      if self._lastRegionClick
+        and now - self._lastRegionClick < 0.35
+        and self._lastRegionClickName == self._dragRegion.name then
+        self:drillIntoRegion(self._dragRegion)
+        self._lastRegionClick = nil
+      else
+        self.pos.x, self.pos.y = self._dragRegion.center.x, self._dragRegion.center.z
+        self._lastRegionClick = now
+        self._lastRegionClickName = self._dragRegion.name
+      end
+    elseif self._drag then
       local dn = self._drag
       self.focus = dn.id
       self.follow = dn.id -- ease the view onto the selection (§13)
@@ -1213,6 +1341,7 @@ function NodeGraph:onInput (state)
     end
     self._drag, self._panAt, self._pressAt = nil, nil, nil
     self._dragFrom, self._dragMoved = nil, false
+    self._dragRegion = nil
   end
   self._wasDown = down
 end
@@ -1229,6 +1358,10 @@ function NodeGraph.Create (system, opts)
   -- map must not hold a stale copy of where you were.
   self.getSectorState = o.getSectorState
   self.regionState = nil
+  -- The REGION the map is drilled into, if any. A region is a place, not a
+  -- body: it has no entity, so it lives beside the entity context rather
+  -- than inside it.
+  self.regionContext = nil
   self.focusEntity = o.focusEntity
   self.nodes = {}
   self.edges = {}
