@@ -90,6 +90,13 @@ anisotropy
 The renderer, object generator, and event system all consume the same underlying field.
 
 This is what makes procedural environments feel authored rather than random.
+
+It is also what makes §6 and §7 possible at all: because every subsystem
+reads the SAME function, they cannot disagree about what kind of place
+they are in. See §29a — "a region is a field value, not an object in a
+list" is the load-bearing idea here, and it is why the four subsystems that
+today own private hash schemes (nebula, asteroids, lightning, dust) are
+replaced by one field rather than extended.
 3. Procedural Space Should Exist at Multiple Scales
 
 A major source of visual scale is hierarchical spatial frequency.
@@ -199,6 +206,10 @@ mid  → simplified procedural representation
 far  → density/statistical representation
 
 This should eventually integrate naturally with the streaming/LOD work in ROADMAP #13.
+
+The same cell structure applies one level up: a SECTOR is the unit that is
+generated and named, and a REGION is a named volume inside it. See §29a and
+ROADMAP #13i.
 6. Give Every Large Region a Personality
 
 A region should not merely have a different color.
@@ -256,6 +267,12 @@ frequent storms
 strong sun interaction
 
 The player should feel that they have entered a different environment, not simply crossed an invisible gameplay boundary.
+
+SEE §29a. The archetype list above is a set of PRESETS for a region's
+parameters, not an enumeration of what a sector may contain: a sector may
+be one vast region with no archetype at all (a belt, a trade hub, contested
+space), or six regions that include some of these. Regions are PLACED, and
+their boundaries are SOFT — identity is discrete, appearance is continuous.
 7. Region Transitions Are as Important as Regions
 
 Avoid hard procedural boundaries.
@@ -294,6 +311,12 @@ The player should think:
 not:
 
     "I entered a new procedural zone."
+
+SEE §29a. "Soft boundary" here means the region IDENTITY is discrete (a
+name changes, and later a rule may change) while the APPEARANCE is
+continuous (every parameter interpolates across a transition band). One
+mechanism, not two: the field is blended toward its neighbours' fields at
+the boundary, so §6 and §7 are satisfied by the same thing.
 
 8. Procedural Nebulae Should Be Structures, Not Just Fog
 
@@ -965,7 +988,201 @@ Suggested roadmap structure:
     cockpit response
     particle interaction
 
+#13i — Sectors, Regions and Places
+    the named hierarchy: sector → region → place
+    sector seeds pinned in the player's map
+    region generation (placed count, soft boundaries)
+    category-aware naming
+
+#13j — Inter-Sector Travel
+    jumpgates as shared edges between sectors
+    the sector graph as a whole, generated from the galaxy seed
+    fly-in acceleration, tunnel transition, arrival
+    FTL warp drive for long intra-sector travel
+
 The existing fog-nebula branch should primarily establish #13b, while keeping the interfaces compatible with the larger system.
+
+#13i and #13j were added after the decision log in §29a. They are listed
+separately from #13a–#13h because they are a different KIND of work:
+#13a–#13h change how the ENVIRONMENT looks, while #13i–#13j change what
+the world CONTAINS and how you move through it. The environment can be
+built without them — and the environment is the part everything else
+depends on — but a sector with named regions and no way to leave it is
+not yet a galaxy.
+
+29a. Decision Log — what was actually decided, and why
+---------------------------------------------------------
+
+This section records decisions taken in design discussion, so the reasoning
+survives. They are decisions, not proposals; the open questions are listed in
+§29b.
+
+**Regions are PLACED, and their boundaries are SOFT.**
+
+A region is a named volume that is generated (not carved out of a noise
+field), so the number of regions in a sector is a design parameter: one vast
+region, or five or six smaller ones. But the *visual* transition across a
+boundary is continuous — you fly into a new region and the environment
+changes around you rather than at you.
+
+These two are not in conflict, and the resolution is to separate the two
+concerns that §6 and §7 were conflating:
+
+    * IDENTITY is discrete. A region has a name, an archetype, a seed, and
+      (later) rules. Flying from the Shattered Belt into the Violet Veil
+      changes the name on your HUD, and may change what is legal there.
+    * APPEARANCE is continuous. The environmental parameters (density,
+      palette, star visibility, turbulence, radiation, storm potential) are
+      interpolated across a boundary band, so there is no visible seam.
+
+Concretely: each region owns a field, and the field is blended toward its
+neighbours' fields over a transition band at the boundary. Walking into a
+region is therefore a slow fade of every parameter at once, which is what
+§7 asks for, while the region itself remains an addressable object with a
+name.
+
+Note that this means "region" is NOT the same thing as §6's "region
+archetype". The archetype (Silent Deep / Violet Veil / …) is a *descriptor*
+of a region, and a region is not limited to the archetype list — a sector
+with one region may simply be a vast asteroid field, and a sector with six
+may contain a trade hub and a contested space among them. The archetype
+list is a set of *presets* for a region's parameters, not an enumeration of
+what a sector may contain.
+
+**A region is a FIELD VALUE, not an object in a list.**
+
+This is the single most important architectural correction to the original
+text, and it is what makes §6 and §7 work with one mechanism instead of two.
+
+The original §6 reads as though a region is a thing you generate, populate
+with content, store, and transition between. That requires a region
+generator, a region store, a membership test, a transition system and a
+save format — and it still cannot guarantee that the nebula in region A
+and the asteroids in region A agree with each other, because they were
+placed by different systems.
+
+Instead:
+
+    SpaceField(worldPosition, galaxySeed) → parameters
+
+and every subsystem — nebula, asteroids, dust, lightning, star visibility
+— reads the SAME function. Regions are then a coarse description of where
+that function's output changes character. A "Violet Veil" is simply a
+place where the field's palette happens to sit at violet and its
+nebulaDensity is high.
+
+The practical consequence: the four subsystems that today each own a
+private hash scheme (NebulaVolumes' per-cell hash, AsteroidField's per-chunk
+seed, LightningStorm's vapor gate, Dust's single global stream) are
+replaced by one shared field. That is what makes correlated placement
+possible at all — and correlation is the thing random placement cannot
+give you, no matter how it is seeded.
+
+Concretely, the failure this fixes: today the asteroid field has no
+reference to the nebula whatsoever. A nebula-heavy chunk next to an
+asteroid-heavy chunk produces a beautiful clear void next to a rock field
+purely by chance, and a chunk where BOTH are dense produces rocks that are
+invisible inside the gas — you paid for ten thousand rocks and see none of
+them. With a shared field, "rocks in the clear" and "rocks lost in the fog"
+become choices rather than coincidences.
+
+**Inter-sector travel: jumpgates only, sector to sector.**
+
+Jumpgates are the ONLY inter-sector movement. There are no intra-sector
+gates: travelling within a sector is the ship's own business, and a later
+FTL warp drive is what makes long intra-sector trips bearable. That keeps
+the gate graph a simple thing — a fully-connected mesh of sectors, with
+each gate a shared edge between exactly two sectors.
+
+A gate is therefore a PLACE that belongs to two sectors at once, which is
+what makes the sector structure a graph rather than a tree. This has one
+big consequence: **sectors cannot be generated independently.** If
+sector A has a gate to sector B, then B must exist and be consistent, so
+the sector graph has to be generated as a whole (or at least as a connected
+component) from the galaxy seed before any individual sector is entered.
+
+Travel is intended to be physical: fly into the gate, accelerate hard, get
+a tunnel transition, and arrive in the next sector. Not a map click.
+
+**Seeds are pinned per sector, and the player's map remembers them.**
+
+A sector's seed is what makes its contents reproducible, so the seed is
+part of the sector's identity and is recorded in the player's map. Two
+requirements follow:
+
+    * POINTS OF INTEREST STAY PUT. A station you left is still there when
+      you come back. Nothing in a sector may be regenerated differently on
+      re-entry, so every seeded element must derive from the sector seed,
+      never from arrival order or elapsed time.
+    * LOOK-AND-FEEL DOES NOT CHANGE. The nebula palette, the skybox, the
+      star field and the region layout of a sector must be identical every
+      time you visit it.
+
+This is a hard constraint on the generator design, and it is why §4's
+"hierarchical deterministic seeds" and "coordinate-derived hashing" are not
+optional polish — they are what makes revisit stability possible at all.
+
+**Naming is a first-class hierarchy, not a decoration.**
+
+Every level of the structure gets a stable, distinct, category-appropriate
+name:
+
+    Sector          e.g. "The Vexing Reach"
+    Region          e.g. "Shattered Belt"
+    Station         e.g. "Tannin Station"
+    Outpost         e.g. "Waypost 7"
+    Mining station  e.g. "Shaft 12"
+    Planet          already implemented (genName)
+    Asteroid field  e.g. "The Cinder Drift"
+    Jumpgate        e.g. "Gate of Karr"
+    Moon            already implemented (planet name + roman numeral)
+
+The generator already exists (System.lua's genName — a consonant/vowel
+syllable generator) and planets, stations and moons already use it. What
+is missing is (a) category awareness, so a station name and a sector name
+are distinguishable in the HUD, and (b) a per-scope uniqueness registry,
+so two stations in one sector never share a name.
+
+29b. Open questions
+---------------------
+
+These are the decisions still open. Each one changes the shape of the
+generator, so they are answered before the SpaceField is built.
+
+    * HOW FAR DOES A SECTOR REACH, AND HOW BIG IS A REGION?
+
+      Sector extent and region size set the scale of every field channel.
+      If a sector is 10^6 units across and a region 10^5, then the macro
+      field has room for real variation. If a sector is 10^4 and a region
+      10^3, the region count per sector is small and the "field"
+      degenerates into per-region constants.
+
+    * DO REGIONS HAVE RULES, OR ONLY A LOOK?
+
+      §6's archetypes imply contested space and trade hubs are
+      gameplay-distinct, not just visually distinct. If regions carry
+      rules (hostility, tariffs, which faction owns what), a region needs
+      an identity that survives a save — a handle, not just a seed.
+
+    * IS THE SECTOR GRAPH FULLY CONNECTED, OR DISTANCE-WEIGHTED?
+
+      A fully-connected mesh is simple and always solvable. A
+      distance-weighted graph ("only connect to sectors within N hops")
+      is more interesting — it makes some sectors remote — but it means
+      the graph is a global constraint and cannot be grown lazily.
+
+    * DOES THE PLAYER GENERATE THE UNIVERSE, OR IS IT FIXED?
+
+      A fixed universe (one galaxy seed, known to the player) makes
+      "the same sector" mean the same thing to everyone. A player-
+      generated universe is more personal and makes sharing harder.
+
+    * WHAT IS THE SAVE FORMAT?
+
+      The player's map holds sector seeds. That is a small, well-defined
+      structure, but it needs to be decided before the map is built,
+      because the map is where "the sector remembers itself" lives.
+
 30. Visual "Wow Factor" Stack
 
 The desired experience should build in layers.
