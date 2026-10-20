@@ -42,6 +42,14 @@ uniform vec3  planetSpinAxis;// the body's own spin axis; the drift tangent basi
                              // from it so it cannot jump across a latitude circle (see below)
                            // rather than reusing mWorldIT: no fragment shader has ever declared
                            // that autovar, and an unset one is silently identity (see 12).
+// The SAME axis in WORLD space. `planetSpinAxis` is the LOCAL axis, and the
+// two agree only for a body that rotates ABOUT that axis -- planets do
+// (rot = FromAxisAngle(spinAxis, angle) leaves the axis invariant). A MOON's
+// rotation is an unrelated frame (FromLookUp), so for a moon the local axis
+// is NOT the world axis, and dotting a WORLD-space normal with it measures
+// latitude in a hybrid frame: the polar bands sit off-axis and DRIFT as the
+// moon orbits. The biome blend needs the world axis.
+uniform vec3  planetSpinAxisWorld;
 uniform float terminator;   // 0 = cosine (physical), 1 = flat wrap (legacy)
 
 // ---- Biomes (W7c) ---------------------------------------------------------
@@ -196,7 +204,13 @@ void main() {
   // latitude circle, the bug the relief code already hit -- see the tangent
   // basis above).
   if (biomeAmount > 0.001) {
-    float lat = abs(dot(N, normalize(planetSpinAxis)));   // 0 equator .. 1 pole
+    // CLAMP before it drives a mix(): `biomeAmount` reaches the shader from a
+    // config value that is NOT clamped on the way in (the panel slider clamps,
+    // but a hand-edited Config.Local does not), and mix() with t > 1
+    // EXTRAPOLATES past the palette instead of clamping. Same bug class as
+    // stormAmount below.
+    float bAmt = clamp(biomeAmount, 0.0, 1.0);
+    float lat = abs(dot(N, normalize(planetSpinAxisWorld)));   // 0 equator .. 1 pole
     // Temperature: 1 = hot. Equator warm, poles cold, altitude cold.
     float temp = clamp(1.0 - lat * 1.10 - h1 * 0.55, 0.0, 1.0);
     // Moisture: the generator's biome field. Bias it by latitude -- the
@@ -226,7 +240,7 @@ void main() {
     // fight for the same pixels and the peaks keep the planet's type identity
     // (an ice world's caps stay ice, not green).
     float biomeMix = smoothstep(0.45, 0.85, h1) * 0.85 + 0.15;
-    color = mix(color, biome, biomeAmount * (1.0 - biomeMix));
+    color = mix(color, biome, bAmt * (1.0 - biomeMix));
   }
 
   color = 1.0 - exp(-pow2(3.0 * color));

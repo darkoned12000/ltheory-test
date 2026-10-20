@@ -63,8 +63,16 @@ function PlanetTest:onInit ()
   self.player:setControlling(ship)
 
   -- A terrestrial planet, close enough and big enough to fill a good part of
-  -- the frame. `forceType` is read from Config.render.planet, so it is set on
-  -- the config table rather than through the panel.
+  -- the frame.
+  --
+  -- `forceType` is read from Config.render.planet (Planet.lua), so it is set
+  -- on the CONFIG TABLE, not through the panel -- and it MUST be set before
+  -- the planet is constructed, because the type is picked in the constructor.
+  -- Without it the type is a weighted random pick, so 68% of the time this
+  -- "terrestrial biome audition scene" was not terrestrial at all -- and a
+  -- `barren` world is a gen/moon body, which is the case with no palette
+  -- range to spread the biomes across.
+  Config.render.planet.forceType = 'terrestrial'
   local planet = Entities.Planet(self.seed, { detail = 5 })
   planet:setPos(Vec3f(0, 0, -9000))
   planet:setRot(Quat.Identity())

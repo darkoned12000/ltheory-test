@@ -28,8 +28,10 @@ local Frustum = require('Game.Frustum')
   its collision sphere -- a station's greebles, a ship's fins -- would
   otherwise be culled while still partly on screen. ]]
 
--- Cache of the current frame's frustum, rebuilt by the camera.
-local currentFrustum = nil
+-- Cache of the current frame's frustum, rebuilt by the camera. The accessor
+-- lives in Frustum.lua (see Frustum.setCurrent / Frustum.getCurrent) -- it is
+-- core state, not a property of this component, and putting it here made
+-- GameView depend on this file being loaded first.
 local scratchPos = Vec3f()
 
 -- Diagnostic counters, read by the perf probe.
@@ -47,14 +49,6 @@ function Entity:addVisibleLodMesh (mesh, material)
   self:register(Event.Render, Entity.renderVisibleLodMesh)
 end
 
-function Frustum.setCurrent (planes)
-  currentFrustum = planes
-end
-
-function Frustum.getCurrent ()
-  return currentFrustum
-end
-
 -- Is this entity's visible geometry at least partly inside the view cone?
 -- Returns true when it cannot be decided (no frustum, no radius, not cullable).
 --
@@ -70,7 +64,7 @@ local CULL_MARGIN = 1.15
 -- world position is fetched by the caller and passed in, so it is read from
 -- the rigid body exactly once per entity per frame.
 local function visible (entity, x, y, z, radius)
-  local planes = currentFrustum
+  local planes = Frustum.getCurrent()
   if not planes then return true end
   -- The curtain's fade band: a rock ENTIRELY beyond the far edge has every
   -- fragment discarded by material/asteroid.glsl, so drawing it contributes

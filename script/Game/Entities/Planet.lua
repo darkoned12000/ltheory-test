@@ -65,16 +65,23 @@ end
   the weights are normalised rather than thresholded.
 ----------------------------------------------------------------------------]]
 
--- Biome slots, in the order the shader indexes them.
-local BIOME_DRY      = 1
-local BIOME_MOIST    = 2
-local BIOME_TEMPERATE= 3
-local BIOME_COLD     = 4
-
 -- Build the four biome colours for a planet from its type's palette ranges.
--- `base` is the type's random hue pick (so a type that picks a random hue per
--- planet still varies between planets), and the biome slots spread that hue
--- across the type's range.
+--
+-- The four slots are, in the order the shader indexes them: dry, moist,
+-- temperate, cold. Each is a position ALONG the type's own hue range, so
+-- every biome belongs to the planet's identity:
+--
+--   dry   -> the LOW end of the range   (the warm/brown end for a
+--                                            terrestrial world: sand, scrub)
+--   moist -> the HIGH end of the range  (the green end: vegetation)
+--   temperate -> the middle
+--   cold  -> the middle, desaturated and pale (tundra/snow)
+--
+-- The hue is OFFSET from the anchor, not rotated: a rotation would move the
+-- whole family away from the type's range, and for a range that straddles 0
+-- (lava's {0.00, 0.04}) a rotation is the wrong operation entirely. The
+-- offset is then WRAPPED into 0..1, because Color.FromHSL's hueComponent
+-- only folds a single step and a hue outside ~[-1, 2] produces nonsense.
 local function biomePalette (rng, t)
   -- The planet's own hue anchor, drawn once so all four biomes belong to the
   -- same planet. Without this each biome would draw its own random hue and a
@@ -98,11 +105,17 @@ local function biomePalette (rng, t)
   local sLo, sHi = t.sat[1], t.sat[2]
   local lLo, lHi = t.light[1], t.light[2]
 
+  -- Wrap a hue into 0..1. Color.FromHSL's own hueComponent folds ONE step
+  -- only, so an out-of-range hue lands on the wrong side of the wheel.
+  local function wrapHue (x)
+    x = x % 1.0
+    if x < 0 then x = x + 1.0 end
+    return x
+  end
+
   local function at (frac, sBias, lBias)
-    -- The biome's hue is its anchor ROTATED toward one end of the type's hue
-    -- range, rather than an absolute hue: that keeps every biome inside the
-    -- type's identity while still making them distinguishable.
-    local hh = h + (frac - 0.5) * (hHi - hLo)
+    -- frac 0 = the LOW end of the type's hue range, 1 = the HIGH end.
+    local hh = wrapHue(hLo + frac * (hHi - hLo))
     local s = sLo + (sHi - sLo) * sBias
     local l = lLo + (lHi - lLo) * lBias
     local c = Color.FromHSL(hh, Math.Saturate(s), Math.Saturate(l))
@@ -110,13 +123,13 @@ local function biomePalette (rng, t)
   end
 
   return {
-    -- dry: bright and warm (sand/scrub)
+    -- dry: bright and warm (sand/scrub) -- the LOW end of the hue range
     at(0.0,  1.0,  0.75),
-    -- moist: dark and cool (vegetation)
+    -- moist: dark and cool (vegetation) -- the HIGH end
     at(1.0,  0.85, 0.25),
     -- temperate: the type's own middle
     at(0.5,  0.5,  0.45),
-    -- cold: pale and desaturated (tundra/snow)
+    -- cold: the middle again, but pale and desaturated (tundra/snow)
     at(0.5,  0.12, 0.95),
   }
 end
@@ -215,7 +228,15 @@ local Planet = subclass(Entity, function (self, seed, opts)
   -- read by nothing, so every planet cube was paying for a field no one used.
   -- It is a smooth per-planet 0..1 field, which is exactly what the moisture
   -- axis of the biome blend needs.
-  self.biomePalette = biomePalette(rng, t)
+  --
+  -- The palette is built from a SEPARATE RNG stream. Drawing from the
+  -- planet's own `rng` here would shift every subsequent draw in that stream
+  -- -- the ring roll, the spin axis, the spin rate, the orbit phase and
+  -- inclination -- so a pinned seed would produce a DIFFERENT universe after
+  -- this feature landed. The repo cares about that explicitly: the boot log
+  -- prints the seed so any reported world can be reproduced, and
+  -- Config.Local pins seedGlobal. A named stream keeps the main one intact.
+  self.biomePalette = biomePalette(RNG.Create(seed ^ 0x5EEDB10E):managed(), t)
 
   -- Atmosphere mesh only for bodies that actually have one.
   if self.hasAtmo then
@@ -476,6 +497,15 @@ local function uploadPlanetFrame (self, rot, forRing)
     Shader.SetFloat3('spinAxis', sax.x, sax.y, sax.z)
   else
     Shader.SetFloat3('planetSpinAxis', sax.x, sax.y, sax.z)
+    -- The same axis in WORLD space, for the biome blend's latitude term.
+    -- `planetSpinAxis` is the LOCAL axis, and the two agree only for a body
+    -- that rotates ABOUT that axis -- planets do, because a rotation about an
+    -- axis leaves the axis invariant. A MOON's rotation is an unrelated frame
+    -- (FromLookUp), so its local axis is not its world axis, and the polar
+    -- biome bands would sit off-axis and drift as the moon orbits.
+    -- Transforming the axis by the body's CURRENT rotation is exact for both.
+    local wsax = rot and rot:mulV(sax) or sax
+    Shader.SetFloat3('planetSpinAxisWorld', wsax.x, wsax.y, wsax.z)
   end
 end
 

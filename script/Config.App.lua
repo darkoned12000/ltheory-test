@@ -555,7 +555,8 @@ Config.gpu = {
                           -- generator's biome field (moisture). The weights are
                           -- NORMALISED, so biomes cross-fade and never switch --
                           -- there is no threshold to pop as the camera moves.
-  planetCloudsEnabled = true, -- master switch for every planet's cloud deck. Use                          -- THIS to turn clouds off, not Coverage=0: per-planet
+  planetCloudsEnabled = true, -- master switch for every planet's cloud deck. Use
+                           -- THIS to turn clouds off, not Coverage=0: per-planet
                           -- cloudLevel is a bias that can be negative, so 0 gain
                           -- still leaves clouds on ~1/3 of desert worlds.
   planetClouds   = 1.25,    -- cloud-deck gain (0..3.0). NOT a 0..1 fraction: it

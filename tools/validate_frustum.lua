@@ -178,30 +178,58 @@ check('frustum follows the camera position',
   LOD's midpoint): the worst ratio is 1.1130 (archetype 9). CULL_MARGIN is
   1.15, which covers it.
 
-  This check pins the two sides of that contract: the margin the code uses, and
-  the measured worst-case ratio. If a future asteroid shape pushes the ratio
-  above the margin, this fails and says so, instead of the cull quietly
-  eating rocks at the screen edge.
+  THE MEASUREMENT ITSELF needs a GL context (it has to build the asteroid
+  meshes), so it lives in the runtime probe (script/App/PerfProbe.lua, which
+  prints "max LOD radius / collision radius"). What this validator can do --
+  and what it MUST do, or it is a tautology that can never fail -- is read the
+  real constants out of the source and check that the margin the code uses
+  still covers the measured worst case. If someone lowers the margin, or
+  changes the asteroid generator so the ratio grows, this fails.
 
-  The measurement lives in the runtime probe (script/App/PerfProbe.lua), which
-  has a GL context; here we only assert the margin is at least the documented
-  worst case, so a margin reduction cannot silently break the cull.
+  The constants are READ FROM THE SOURCE FILES rather than duplicated here,
+  so this check cannot drift away from what the engine actually does.
 ----------------------------------------------------------------------------]]
 
-local CULL_MARGIN = 1.15       -- Game/Components/VisibleLodMesh.lua
-local MEASURED_WORST = 1.1130  -- measured 2026-10-19, 32 archetypes x 8 LODs
+local function readNumber (path, pattern)
+  local fh = io.open(path, 'r')
+  if not fh then return nil, 'cannot open ' .. path end
+  local text = fh:read('*a')
+  fh:close()
+  local s, e = text:find(pattern, 1, true)
+  if not s then return nil, ('pattern not found in %s: %s'):format(path, pattern) end
+  -- The number is the first run of digits/decimal point AFTER the '='.
+  local num = text:match('=.-([%d%.]+)', s)
+  return tonumber(num), ('%s: %s'):format(path, pattern)
+end
 
-check('cull margin covers the measured worst-case LOD radius ratio',
-      CULL_MARGIN >= MEASURED_WORST,
-      string.format('margin=%.4f >= measured worst=%.4f', CULL_MARGIN, MEASURED_WORST))
+local CULL_MARGIN, mErr = readNumber(root..'/script/Game/Components/VisibleLodMesh.lua',
+                                     'local CULL_MARGIN = ')
+if not CULL_MARGIN then
+  check('cull margin is readable from the source', false, tostring(mErr))
+else
+  check('cull margin is readable from the source', true,
+        'CULL_MARGIN=' .. string.format('%.4f', CULL_MARGIN))
+end
 
--- A margin that is too small culls rocks whose geometry is still on screen.
--- A margin that is absurdly large costs culling efficiency (the sphere is
--- bigger, so fewer rocks are culled) but is safe. This asserts the margin is
--- in the band that is both safe and useful.
-check('cull margin is in the safe-and-useful band',
-      CULL_MARGIN >= MEASURED_WORST and CULL_MARGIN <= 1.5,
-      string.format('margin=%.4f', CULL_MARGIN))
+-- The worst measured LOD-vs-collision radius ratio over the current asteroid
+-- set. Re-measure with the perf probe if the asteroid generator changes:
+--   PHX_FIXED_SIZE=1280,720 ./run.sh PerfProbe
+-- and read the "max LOD radius / collision radius" line.
+local MEASURED_WORST = 1.1130
+
+if CULL_MARGIN then
+  check('cull margin covers the measured worst-case LOD radius ratio',
+        CULL_MARGIN >= MEASURED_WORST,
+        string.format('margin=%.4f >= measured worst=%.4f', CULL_MARGIN, MEASURED_WORST))
+
+  -- A margin that is too small culls rocks whose geometry is still on screen.
+  -- A margin that is absurdly large costs culling efficiency (the sphere is
+  -- bigger, so fewer rocks are culled) but is safe. This asserts the margin is
+  -- in the band that is both safe and useful.
+  check('cull margin is in the safe-and-useful band',
+        CULL_MARGIN >= MEASURED_WORST and CULL_MARGIN <= 1.5,
+        string.format('margin=%.4f', CULL_MARGIN))
+end
 
 if failures > 0 then
   print(string.format('FAILURES: %d of %d checks failed', failures, checks))

@@ -55,6 +55,29 @@ float genRidged (vec3 p) {
   return clamp(acc, 0.0, 1.0);
 }
 
+// Moisture / biome field (the GREEN channel).
+//
+// It must be INDEPENDENT of the height field, or the biome blend degenerates:
+// the moisture axis would just be a copy of the elevation axis, and the two
+// climate axes would collapse into one. genRidged is built from the SAME
+// cellNoise the height uses, so `base` (which is what used to be written here)
+// is strongly correlated with the terrain -- the ridged fractal's sharp creases
+// would also show up as hard-edged biome boundaries, exactly the thing the
+// blend is built to avoid.
+//
+// So this is a separate, lower-frequency, smooth field: cell noise at a
+// different scale and offset from the height's, with the craters removed. It
+// is deliberately gentle -- it should read as broad wet and dry regions, not
+// as terrain detail.
+float genMoisture (vec3 p) {
+  float f = max(0.5, freq) * 0.35;
+  float m = cellNoise(p * f + vec3(seed * 0.37, 11.3, seed * 0.19), seed + 41.0);
+  // Two octaves, the second much weaker, so the field has broad regions with
+  // soft variation inside them.
+  float m2 = cellNoise(p * f * 2.7 + vec3(3.1, seed * 0.23, 7.7), seed + 97.0);
+  return clamp(m * 0.78 + m2 * 0.22, 0.0, 1.0);
+}
+
 void main () {
   vec3 p = cubeMapDir(uv);
   float base = genRidged(p);
@@ -66,7 +89,10 @@ void main () {
   float h = clamp(base + crAmt * cr, 0.0, 1.0);
   h = gain(pow(h, max(0.05, power)), 4.0);
 
-  vec4 c = vec4(h, base, 0.0, 0.0);
+  // GREEN is the biome/moisture field, matching gen/planet.glsl's layout
+  // (height, moisture, clouds, 0). It was `base` before, which nothing read --
+  // see the note on genMoisture for why it had to change.
+  vec4 c = vec4(h, genMoisture(p), 0.0, 0.0);
   if (isnan(c.r) || isnan(c.g) || isnan(c.b) || isnan(c.a)) {
     c = vec4(0.0);
   }

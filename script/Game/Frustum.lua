@@ -39,6 +39,23 @@
 
 local Frustum = {}
 
+-- The current frame's view cone, rebuilt once per frame by GameView and read
+-- by everything that needs to know what is on screen (the mesh cull, the HUD
+-- target brackets, the shadow cull).
+--
+-- It lives HERE, not in the component that happens to use it first: GameView
+-- calls Frustum.setCurrent, and a core file should not depend on a
+-- game-component file being loaded before it.
+local currentFrustum = nil
+
+function Frustum.setCurrent (planes)
+  currentFrustum = planes
+end
+
+function Frustum.getCurrent ()
+  return currentFrustum
+end
+
 local sqrt = math.sqrt
 local tan  = math.tan
 local pi   = math.pi
