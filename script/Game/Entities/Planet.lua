@@ -30,6 +30,97 @@ local function typeColor (rng, t, f)
   return Vec3f(c.r, c.g, c.b)
 end
 
+--[[---------------------------------------------------------------------------
+  BIOME PALETTE (W7c).
+
+  Before this, a planet had ONE look: a 4-stop ramp from lowland to peak,
+  interpolated by elevation. Every "biome" on it was the same colour ramp, so a
+  world had a single character -- there was no savanna next to a forest, no
+  arid band between two wet ones.
+
+  W7c adds a second axis. Two CONTINUOUS fields decide the climate of a point
+  on the surface:
+
+    * TEMPERATURE, from latitude (cold at the poles, warm at the equator) and
+      elevation (cold high up). Both are smooth functions of position.
+    * MOISTURE, from the surface cube's GREEN channel -- the `genColor` fractal
+      the generator has always been writing and nothing has ever read. It is a
+      smooth, per-planet, 0..1 field, which is exactly what a moisture map
+      wants to be.
+
+  The biome palette below is built from the type's EXISTING hue/sat/light
+  ranges, not from a new per-type colour table. That is deliberate: it means
+  every planet keeps the identity its type gave it (an ice world still reads as
+  an ice world), while gaining internal variation. The four biome colours are
+  positions ALONG the type's own ramp:
+
+    1 dry     -- the warm, bright, saturated end (sand / scrub)
+    2 moist   -- the cool, dark, saturated end (vegetation)
+    3 temperate-- the middle of the type's range
+    4 cold    -- the pale, desaturated end (tundra / snow)
+
+  The shader blends between them with NORMALISED weights, so the result is a
+  convex combination of continuous functions -- continuous everywhere. Biomes
+  cross-fade; they never switch. That is the whole requirement, and it is why
+  the weights are normalised rather than thresholded.
+----------------------------------------------------------------------------]]
+
+-- Biome slots, in the order the shader indexes them.
+local BIOME_DRY      = 1
+local BIOME_MOIST    = 2
+local BIOME_TEMPERATE= 3
+local BIOME_COLD     = 4
+
+-- Build the four biome colours for a planet from its type's palette ranges.
+-- `base` is the type's random hue pick (so a type that picks a random hue per
+-- planet still varies between planets), and the biome slots spread that hue
+-- across the type's range.
+local function biomePalette (rng, t)
+  -- The planet's own hue anchor, drawn once so all four biomes belong to the
+  -- same planet. Without this each biome would draw its own random hue and a
+  -- planet would look like four unrelated worlds spliced together.
+  --
+  -- Two palette shapes exist. A type with a `hue` RANGE (planets) spreads its
+  -- four biomes across that range. A type with a `huePick` LIST (moons) picks
+  -- one family outright and has no range to spread across, so the four biomes
+  -- are built around the picked hue instead -- an airless rock world still
+  -- gets its variation, in the family it already belonged to.
+  local h, hLo, hHi
+  if t.huePick then
+    h = t.huePick[rng:getInt(1, #t.huePick)]
+    -- A narrow synthetic range: the four biomes still separate, but they stay
+    -- inside the family's identity.
+    hLo, hHi = h - 0.05, h + 0.05
+  else
+    hLo, hHi = t.hue[1], t.hue[2]
+    h = rng:getUniformRange(hLo, hHi)
+  end
+  local sLo, sHi = t.sat[1], t.sat[2]
+  local lLo, lHi = t.light[1], t.light[2]
+
+  local function at (frac, sBias, lBias)
+    -- The biome's hue is its anchor ROTATED toward one end of the type's hue
+    -- range, rather than an absolute hue: that keeps every biome inside the
+    -- type's identity while still making them distinguishable.
+    local hh = h + (frac - 0.5) * (hHi - hLo)
+    local s = sLo + (sHi - sLo) * sBias
+    local l = lLo + (lHi - lLo) * lBias
+    local c = Color.FromHSL(hh, Math.Saturate(s), Math.Saturate(l))
+    return Vec3f(c.r, c.g, c.b)
+  end
+
+  return {
+    -- dry: bright and warm (sand/scrub)
+    at(0.0,  1.0,  0.75),
+    -- moist: dark and cool (vegetation)
+    at(1.0,  0.85, 0.25),
+    -- temperate: the type's own middle
+    at(0.5,  0.5,  0.45),
+    -- cold: pale and desaturated (tundra/snow)
+    at(0.5,  0.12, 0.95),
+  }
+end
+
 local Planet = subclass(Entity, function (self, seed, opts)
   opts = opts or {}
   local detail  = opts.detail  or 5
@@ -117,6 +208,14 @@ local Planet = subclass(Entity, function (self, seed, opts)
   self.color2 = typeColor(rng, t, 0.5)
   self.color3 = typeColor(rng, t, 0.8)
   self.color4 = typeColor(rng, t, 1.0)
+
+  -- W7c: the biome palette. This is what finally gives the `genColor` channel
+  -- (the surface cube's green channel) a reader -- it has been generated per
+  -- texel by a 12-iteration fractal since the generator was first written and
+  -- read by nothing, so every planet cube was paying for a field no one used.
+  -- It is a smooth per-planet 0..1 field, which is exactly what the moisture
+  -- axis of the biome blend needs.
+  self.biomePalette = biomePalette(rng, t)
 
   -- Atmosphere mesh only for bodies that actually have one.
   if self.hasAtmo then
@@ -490,6 +589,17 @@ function Planet:render (state)
     Shader.SetFloat3('color2', self.color2.x, self.color2.y, self.color2.z)
     Shader.SetFloat3('color3', self.color3.x, self.color3.y, self.color3.z)
     Shader.SetFloat3('color4', self.color4.x, self.color4.y, self.color4.z)
+    -- W7c biomes. The four palette slots, in the order the shader indexes them:
+    -- dry, moist, temperate, cold. `biomeAmount` is the strength: 0 reproduces
+    -- the pre-W7c look exactly (the elevation ramp alone), 1 is the full blend.
+    local bp = self.biomePalette
+    if bp then
+      Shader.SetFloat3('biomeColor1', bp[1].x, bp[1].y, bp[1].z)
+      Shader.SetFloat3('biomeColor2', bp[2].x, bp[2].y, bp[2].z)
+      Shader.SetFloat3('biomeColor3', bp[3].x, bp[3].y, bp[3].z)
+      Shader.SetFloat3('biomeColor4', bp[4].x, bp[4].y, bp[4].z)
+    end
+    Shader.SetFloat('biomeAmount', Settings.get('render.planet.biomes') or 1.0)
     local pos = self:getPos()
     Shader.SetFloat3('origin', pos.x, pos.y, pos.z)
     Shader.SetFloat3('starColor', starR, starG, starB)

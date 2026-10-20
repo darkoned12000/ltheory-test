@@ -44,6 +44,15 @@ uniform vec3  planetSpinAxis;// the body's own spin axis; the drift tangent basi
                            // that autovar, and an unset one is silently identity (see 12).
 uniform float terminator;   // 0 = cosine (physical), 1 = flat wrap (legacy)
 
+// ---- Biomes (W7c) ---------------------------------------------------------
+// The four palette slots, in the order the biome weights below use them:
+// 1 dry, 2 moist, 3 temperate, 4 cold.
+uniform vec3 biomeColor1;
+uniform vec3 biomeColor2;
+uniform vec3 biomeColor3;
+uniform vec3 biomeColor4;
+uniform float biomeAmount;   // 0 = pre-W7c look (elevation ramp only), 1 = full blend
+
 // Rodrigues rotation of a DIRECTION about the body's spin axis. This is the
 // cloud drift. Three properties the old `normalize(dir + D*drift)` construction
 // did not have, and all three were bugs:
@@ -163,6 +172,63 @@ void main() {
   vec3 color = mix(color1, color2, smoothstep(0.0, 0.45, h1));
   color = mix(color, color3, smoothstep(0.45, 0.75, h1));
   color = mix(color, color4, smoothstep(0.75, 1.0, h1));
+
+  // ---- Biomes (W7c) -------------------------------------------------------
+  // Two CONTINUOUS fields decide the climate of this point:
+  //
+  //   temperature = f(latitude, elevation). Warm at the equator and in the
+  //                 lowlands, cold at the poles and high up.
+  //   moisture   = the surface cube's GREEN channel. That channel is the
+  //                 generator's `genColor` fractal -- a smooth, per-planet,
+  //                 0..1 field, generated per texel since the generator was
+  //                 first written and read by NOTHING until now.
+  //
+  // Each biome is a point in that (temperature, moisture) plane, and its
+  // weight is a smooth falloff around that point. The weights are then
+  // NORMALISED, so the biome colour is a CONVEX combination of continuous
+  // functions -- continuous everywhere, with no threshold anywhere. That is the
+  // whole requirement: biomes cross-fade and never switch, so there is no
+  // boundary that can pop as the camera moves.
+  //
+  // Latitude uses the body's SPIN AXIS, not world +Y: the planet's own tilt is
+  // what decides which way its poles point, and using a world axis would put
+  // the polar bands on a different axis for every planet (and tear at the
+  // latitude circle, the bug the relief code already hit -- see the tangent
+  // basis above).
+  if (biomeAmount > 0.001) {
+    float lat = abs(dot(N, normalize(planetSpinAxis)));   // 0 equator .. 1 pole
+    // Temperature: 1 = hot. Equator warm, poles cold, altitude cold.
+    float temp = clamp(1.0 - lat * 1.10 - h1 * 0.55, 0.0, 1.0);
+    // Moisture: the generator's biome field. Bias it by latitude -- the
+    // equatorial band is wetter on every world -- so the wet/dry split reads as
+    // bands rather than as random blotches.
+    float moist = clamp(map.g * 0.75 + (1.0 - lat) * 0.25, 0.0, 1.0);
+
+    // Gaussian falloff around each biome's (temperature, moisture) point.
+    // The widths are wide enough that adjacent biomes overlap, which is what
+    // turns a classification into a blend.
+    float wDry  = exp(-((temp - 0.85) * (temp - 0.85) * 5.0
+                      + (moist - 0.15) * (moist - 0.15) * 14.0));
+    float wMois = exp(-((temp - 0.60) * (temp - 0.60) * 5.0
+                      + (moist - 0.85) * (moist - 0.85) * 14.0));
+    float wTemp = exp(-((temp - 0.55) * (temp - 0.55) * 3.0
+                      + (moist - 0.50) * (moist - 0.50) * 5.0));
+    float wCold = exp(-((temp - 0.12) * (temp - 0.12) * 9.0
+                      + (moist - 0.50) * (moist - 0.50) * 3.0));
+    float wSum = wDry + wMois + wTemp + wCold;
+    wSum = max(wSum, 1e-5);
+    vec3 biome = (biomeColor1 * wDry + biomeColor2 * wMois
+                + biomeColor3 * wTemp + biomeColor4 * wCold) / wSum;
+
+    // The elevation ramp still owns the HIGH ground: rock and snow take over
+    // above the treeline, exactly as they did before W7c. `biomeMix` hands
+    // control from the biome blend to the ramp with altitude, so the two never
+    // fight for the same pixels and the peaks keep the planet's type identity
+    // (an ice world's caps stay ice, not green).
+    float biomeMix = smoothstep(0.45, 0.85, h1) * 0.85 + 0.15;
+    color = mix(color, biome, biomeAmount * (1.0 - biomeMix));
+  }
+
   color = 1.0 - exp(-pow2(3.0 * color));
   color *= visibility(surface, vertPos, 6, 0.70, h1, 0.002, 2.0, dist);
   // Waterline from the planet TYPE: oceanLevel 0 = no water, 1 = all water.

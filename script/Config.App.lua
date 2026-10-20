@@ -548,8 +548,14 @@ Config.gpu = {
   planetTerminator = 0.35, -- day/night falloff: 0 = cosine law (physical, dims
                           -- toward the limb), 1 = the old flat wrap, which kept 37%
                           -- brightness AT the limb and read as a glow on the edge.
-  planetCloudsEnabled = true, -- master switch for every planet's cloud deck. Use
-                          -- THIS to turn clouds off, not Coverage=0: per-planet
+  planetBiomes      = 1.0,     -- biome blend strength (W7c). 0 = the pre-W7c look
+                          -- exactly (one elevation ramp, one character per planet);
+                          -- 1 = the full blend, where a planet's climate is decided
+                          -- by latitude + altitude (temperature) and by the
+                          -- generator's biome field (moisture). The weights are
+                          -- NORMALISED, so biomes cross-fade and never switch --
+                          -- there is no threshold to pop as the camera moves.
+  planetCloudsEnabled = true, -- master switch for every planet's cloud deck. Use                          -- THIS to turn clouds off, not Coverage=0: per-planet
                           -- cloudLevel is a bias that can be negative, so 0 gain
                           -- still leaves clouds on ~1/3 of desert worlds.
   planetClouds   = 1.25,    -- cloud-deck gain (0..3.0). NOT a 0..1 fraction: it

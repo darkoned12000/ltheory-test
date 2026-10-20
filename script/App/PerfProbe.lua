@@ -100,6 +100,9 @@ function Probe.applySceneSettings ()
     setSetting('postfx.sharpen.enable', false)
     setSetting('postfx.bloom.enable', false)
     setSetting('render.sun.shadows', false)
+  elseif VARIANT == 'biomes-off' then
+    -- W7c A/B: 0 reproduces the pre-W7c look exactly.
+    setSetting('render.planet.biomes', 0)
   elseif VARIANT == 'nocull' then
     -- Disable the CPU cull (both the frustum and the fade band, since the
     -- fade-band cull lives behind the same 'cullable' flag) so a captured
@@ -308,6 +311,47 @@ function Probe:onUpdate (dt)
     for k, v in pairs(kinds) do parts[#parts+1] = k..'='..v end
     table.sort(parts)
     printf('[probe] economy registry: %d entities [%s]', #econ, table.concat(parts, ' '))
+    -- Verify the registry's add / remove / RE-ADD cycle. The re-add is the
+      -- interesting one: an entity that gains its component BEFORE it is
+      -- parented is registered by the AddedToParent hook, so if that hook is
+      -- lost the entity is unregistered on removal and never comes back.
+      do
+        local Registry = require('Game.EconomyRegistry')
+        local before = #Registry.entitiesFor(self.system)
+        local st = Entities.Station(self.system.rng:get64())
+        self.system:addChild(st)
+        local afterAdd = #Registry.entitiesFor(self.system)
+        self.system:removeChild(st)
+        local afterRemove = #Registry.entitiesFor(self.system)
+        self.system:addChild(st)
+        local afterReAdd = #Registry.entitiesFor(self.system)
+        printf('[probe] registry cycle: before=%d add=%d remove=%d readd=%d %s',
+               before, afterAdd, afterRemove, afterReAdd,
+               (afterAdd == before + 1 and afterRemove == before
+                and afterReAdd == before + 1) and 'OK' or 'BROKEN')
+        self.system:removeChild(st)
+        -- The OTHER order: parent FIRST, component added later. The old
+        -- registry only installed its AddedToParent hook on the deferred
+        -- path, so an entity registered this way was unregistered on removal
+        -- and never came back.
+        -- A BARE entity, so the component is genuinely added AFTER
+        -- parenting (a Station gains its market in its constructor, which is
+        -- the other order and always worked).
+        local Entity = require('Game.Entity')
+        local st2 = Entity()
+        self.system:addChild(st2)
+        local b2 = #Registry.entitiesFor(self.system)
+        st2:addMarket()
+        local a2 = #Registry.entitiesFor(self.system)
+        self.system:removeChild(st2)
+        local r2 = #Registry.entitiesFor(self.system)
+        self.system:addChild(st2)
+        local rd2 = #Registry.entitiesFor(self.system)
+        printf('[probe] registry parent-first: base=%d add=%d remove=%d readd=%d %s',
+               b2, a2, r2, rd2,
+               (a2 == b2 + 1 and r2 == b2 and rd2 == b2 + 1) and 'OK' or 'BROKEN')
+        self.system:removeChild(st2)
+      end
       Frustum.resetCullStats()
       self.phased = true
       local n = math.max(1, self.accFrames or 1)

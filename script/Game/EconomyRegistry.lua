@@ -40,20 +40,28 @@ local function registryFor (parent)
 end
 
 -- Register an entity as economy-relevant. Called by the component adders.
--- An entity usually gains its economic components BEFORE it is added to the
--- System (a station is built, then parented), in which case there is no parent
--- yet and registration is deferred to AddedToParent. Both orders are handled.
+--
+-- The two orders both have to work:
+--   * components first, then parented (a station is built, then added) --
+--     registration is DEFERRED to AddedToParent, because there is no parent
+--     to register against yet;
+--   * parented first, then components added -- registration happens at once.
+--
+-- The AddedToParent handler is installed in BOTH cases, not just the deferred
+-- one. Without that, an entity that was parented first and gained a
+-- component later would be registered once, then unregistered when it was
+-- removed, and NEVER re-registered when it was added again -- the handler
+-- that would have re-added it was only installed on the deferred path.
 function Registry.register (entity)
-  local parent = entity.parent
-  if not parent then
-    -- Not parented yet: remember to register on the way in.
-    if not entity.economyRegisterPending then
-      entity.economyRegisterPending = true
-      entity:register(Event.AddedToParent, Registry.onAddedToParent)
-    end
-    return
+  -- Install the re-parenting hook once, on the first registration attempt.
+  if not entity.economyRegisterPending then
+    entity.economyRegisterPending = true
+    entity:register(Event.AddedToParent, Registry.onAddedToParent)
   end
-  entity.economyRegisterPending = nil
+
+  local parent = entity.parent
+  if not parent then return end   -- deferred to AddedToParent
+
   local reg = registryFor(parent)
   if reg.index[entity] then return end
   reg.entities[#reg.entities + 1] = entity
@@ -62,9 +70,15 @@ end
 
 -- Called when an entity is added to a parent: register it if it carries an
 -- economic component.
+--
+-- NOTE the CALL: `self:hasFactory()` and not `self.hasFactory`. These are
+-- mixin METHODS on the Entity class, so the bare function reference is
+-- non-nil for EVERY entity in the game -- testing it would say "this entity
+-- has a factory" for a rock. The method is what asks whether the COMPONENT
+-- is actually present.
 function Registry.onAddedToParent (self, event)
-  if not (self.hasFactory or self.hasFlows or self.hasMarket
-          or self.hasTrader or self.hasYield) then return end
+  if not (self:hasFactory() or self:hasFlows() or self:hasMarket()
+          or self:hasTrader() or self:hasYield()) then return end
   Registry.register(self)
 end
 

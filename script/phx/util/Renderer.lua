@@ -305,6 +305,13 @@ local SETTINGS = {
   -- Must match Config.gpu.planetStormFlash, which is what actually seeds this.
   { kind = 'float', key = 'render.planet.stormFlash', label = ' - Flashes',   default = 0.0, min = 0, max = 3.0, gpu = 'planetStormFlash' },
   { kind = 'float', key = 'render.planet.terminator', label = 'Planet Terminator',  default = 0.35, min = 0, max = 1,   gpu = 'planetTerminator' },
+  -- Biomes (W7c). 0 = the pre-W7c look exactly (one elevation ramp, so a planet
+  -- had a single character); 1 = the full blend, where climate comes from
+  -- latitude + altitude (temperature) and the generator's biome field
+  -- (moisture). The weights are normalised, so biomes cross-fade and never
+  -- switch -- there is no threshold anywhere that could pop as the camera
+  -- moves. Must match Config.gpu.planetBiomes, which seeds this.
+  { kind = 'float', key = 'render.planet.biomes', label = ' - Biomes', default = 1.0, min = 0, max = 1, gpu = 'planetBiomes' },
 
   -- SSAO / GTAO -------------------------------------------------------------
   { kind = 'bool',  key = 'ssao.enable',      label = 'Ambient Occlusion', default = false, gpu = 'aoEnabled' },
