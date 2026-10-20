@@ -1,4 +1,5 @@
 local Entity = require('Game.Entity')
+local Registry = require('Game.EconomyRegistry')
 
 --------------------------------------------------------------------------------
 
@@ -139,6 +140,7 @@ function Entity:addFactory ()
   self.factory = Factory(self)
   self:register(Event.Update, Entity.updateFactory)
   self:register(Event.Debug, Entity.debugFactory)
+  Registry.register(self)
 end
 
 function Entity:addProduction (type)

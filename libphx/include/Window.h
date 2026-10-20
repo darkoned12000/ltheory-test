@@ -10,6 +10,7 @@ PHX_API void     Window_BeginDraw         (Window*);
 PHX_API void     Window_EndDraw           (Window*);
 
 PHX_API void     Window_GetPosition       (Window*, Vec2i* out);
+PHX_API void     Window_SetPosition       (Window*, int x, int y);
 PHX_API void     Window_GetSize           (Window*, Vec2i* out);
 PHX_API cstr     Window_GetTitle          (Window*);
 

@@ -1,6 +1,7 @@
 -- TODO : Rename to 'Container' / 'Contained'
 
 local Entity = require('Game.Entity')
+local EconomyRegistry = require('Game.EconomyRegistry')
 
 local function broadcast (self, event)
   for i = #self.children, 1, -1 do
@@ -58,6 +59,10 @@ end
 function Entity:removeChild (child)
   assert(self.children)
   assert(child.parent == self)
+  -- Drop the child from the economy registry BEFORE the parent link is gone --
+  -- the registry is keyed by the old parent. Without this a removed station
+  -- would stay in the economy's point-of-interest list forever.
+  EconomyRegistry.unregister(child)
   child.parent = nil
   self:send(Event.ChildRemoved(child))
   child:send(Event.RemovedFromParent(self))

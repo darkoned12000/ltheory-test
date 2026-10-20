@@ -25,7 +25,7 @@ uniform sampler2D texShadow;
 //                  ortho frustum centered on the light and aligned with the
 //                  light->camera direction so most geometry lands near +Z.
 //   sShadowBias  : constant PCF bias (acne/tearing prevention).
-//   sShadowScale : distance-dependent bias scale (softness vs acne tradeoff).
+//   sShadowScale : grazing-angle bias scale (normalized depth units).
 //   sShadowRadius: PCF radius in texels.
 uniform mat4  sShadowProj;
 uniform float sShadowBias;
@@ -48,9 +48,10 @@ const vec2 kPoissonDisk8[8] = vec2[8](
   vec2( 0.1250,  0.2165)
 );
 
-float PCFSamplePoisson (sampler2D tex, vec2 uv, float dist, float bias, float radius) {
+float PCFSamplePoisson (sampler2D tex, vec2 uv, float receiverDepth, float bias, float radius) {
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-  if (radius < 0.5) return step(dist - bias, texture(tex, uv).x);
+  if (receiverDepth < 0.0 || receiverDepth > 1.0) return 1.0;
+  if (radius < 0.5) return step(receiverDepth - bias, texture(tex, uv).x);
 
   vec2 ts = (radius / vec2(textureSize(tex, 0)));
   float lit = 0.0;
@@ -63,9 +64,9 @@ float PCFSamplePoisson (sampler2D tex, vec2 uv, float dist, float bias, float ra
 
   for (int i = 0; i < 8; ++i) {
     vec2 offset = (rot * kPoissonDisk8[i]) * ts;
-    lit += step(dist - bias, texture(tex, uv + offset).x);
+    lit += step(receiverDepth - bias, texture(tex, uv + offset).x);
   }
-  return saturate(1.0 - (lit * 0.125));
+  return saturate(lit * 0.125);
 }
 
 void main () {
@@ -98,9 +99,11 @@ void main () {
   float shadowAmt = 1.0;
   if (shadowEnable > 0.5) {
     vec4 sp = sShadowProj * vec4(p, 1.0);
-    vec2 suv = (sp.xy * 0.5) + 0.5;
-    float bias = sShadowBias + sShadowScale * dist;
-    shadowAmt = PCFSamplePoisson(texShadow, suv, dist, bias, sShadowRadius);
+    vec3 projCoords = sp.xyz / max(sp.w, 1e-6);
+    vec2 suv = (projCoords.xy * 0.5) + 0.5;
+    float receiverDepth = projCoords.z * 0.5 + 0.5;
+    float bias = sShadowBias + sShadowScale * (1.0 - max(NdL, 0.0));
+    shadowAmt = PCFSamplePoisson(texShadow, suv, receiverDepth, bias, sShadowRadius);
   }
 
   vec3 light = vec3(0.0);

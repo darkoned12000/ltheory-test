@@ -32,9 +32,15 @@ function Material.applyFilterMode ()
   end
 end
 
-function Material.Create (name, diffuse, normal, spec)
+function Material.Create (name, diffuse, normal, spec, vertex)
   local self = Material()
   self.name = name
+  self.vertex = vertex
+  -- Frustum-cull opt-in. A mesh may only be culled by its collision sphere if
+  -- the visible geometry is bounded by that sphere -- see VisibleMesh.lua. The
+  -- asteroid archetypes qualify (their collision sphere is built from the same
+  -- mesh that is drawn); a ship or station with fins and greebles does not.
+  self.cullable = false
   self.texDiffuse = diffuse
   self.texNormal = normal
   self.texSpec = spec
@@ -70,7 +76,7 @@ end
 
 function Material:reload ()
   if self.state then self.state:free() end
-  local shader = Cache.Shader('wvp', self.name)
+  local shader = Cache.Shader(self.vertex or 'wvp', self.name)
   if not shader then return end   -- item 4: skip this material (broken wvp pass) instead of crashing ShaderState.Create(nil)
   self.state = ShaderState.Create(shader)
 
@@ -107,6 +113,17 @@ function Material:stop ()
 end
 
 local cache = {}
+
+-- Depth-only material for the directional/point shadow passes. Unlike the
+-- regular wvp vertex path, this uses conventional projected depth (not the
+-- camera's logarithmic depth or TAA jitter) and avoids running the expensive
+-- G-buffer material fragment shaders while filling a depth texture.
+function Material.Shadow ()
+  if not cache.shadow then
+    cache.shadow = Material.Create('depth', nil, nil, nil, 'shadow')
+  end
+  return cache.shadow
+end
 
 function Material.Debug ()
   if not cache.debug then
@@ -145,6 +162,11 @@ function Material.Rock ()
     cache.rock = Material.Create(
       'material/asteroid',
       Cache.Texture('rock'))
+    -- The asteroid archetype's collision sphere is created from the SAME mesh
+    -- that is drawn (CollisionShape_CreateSphereFromMesh), so the sphere bounds
+    -- the visible geometry and the entity scale is applied to both. That makes
+    -- the sphere a valid frustum-cull radius for this material.
+    cache.rock.cullable = true
   end
   return cache.rock
 end

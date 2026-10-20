@@ -12,7 +12,7 @@ uniform float volDensity;    /* medium master gain                       */
 uniform float volBackground; /* background-bank presence (anchors unaffected) */
 uniform float volSigmaT;     /* extinction per unit optical depth        */
 uniform float volSigmaS;     /* scattering per unit optical depth        */
-uniform float volSteps;      /* raymarch step budget (float, 8/16/24)   */
+uniform float volSteps;      /* raymarch step budget (float, 10/20/48)  */
 uniform float volDist;       /* max march distance, world units          */
 uniform float volMip;        /* log2(fullres / halfres)                  */
 uniform float volEvals;      /* noise-eval budget: 2 (Q1/Q2) or 3 (Q3)  */
@@ -27,6 +27,7 @@ uniform sampler2D texAnchors;/* RGBA32F rows per anchor                  */
  * presence only (anchors keep their Lua density); without it, a density gain
  * high enough for thick banks also turns the whole sky into drifting wash. */
 float mediumDensity (vec3 p) {
+  if (volDensity <= 1e-6 || volBackground <= 1e-6) return 0.0;
   // Bounded drift. A true unbounded translation (volFlow * volTime) grows the
   // sample coordinate without limit; noise() hashes with sin(), which loses
   // precision past ~1e4 and degenerates into a stipple (the "green speckle").
@@ -59,10 +60,10 @@ vec3 anchorExtent (vec4 c, vec4 d, vec4 e) {
   return max(vec3(c.w, d.w, e.w), vec3(1e-4));
 }
 
-/* Anchor parameters are INVARIANT along a ray: position, density, scale, warp and
- * the three extents do not depend on the sample point p. They were re-fetched
- * with 3 texelFetch calls per anchor PER MARCH STEP -- 48 fetches per step, and
- * at Low quality (volSteps 10) ~480 per pixel, all returning byte-identical
+/* Anchor parameters are INVARIANT along a ray: position, density, scale, warp,
+ * colors and extents do not depend on the sample point p. They were re-fetched
+ * with 4 texelFetch calls per anchor PER MARCH STEP -- 64 fetches per step, and
+ * at Low quality (volSteps 10) ~640 per pixel, all returning byte-identical
  * values for the whole pixel. They are fetched once per fragment here instead.
  *
  * The cache is SELF-ARMING (a bool that GLSL resets to false per fragment) and
@@ -74,6 +75,7 @@ vec3 anchorExtent (vec4 c, vec4 d, vec4 e) {
 vec4 gAnchorC[16];
 vec4 gAnchorD[16];
 vec4 gAnchorE[16];
+vec4 gAnchorR[16];
 bool gAnchorsCached = false;
 
 void mediumCacheAnchors () {
@@ -84,6 +86,7 @@ void mediumCacheAnchors () {
     gAnchorC[i] = texelFetch(texAnchors, ivec2(0, i), 0);
     gAnchorD[i] = texelFetch(texAnchors, ivec2(1, i), 0);
     gAnchorE[i] = texelFetch(texAnchors, ivec2(2, i), 0);
+    gAnchorR[i] = texelFetch(texAnchors, ivec2(3, i), 0);
   }
 }
 
@@ -160,15 +163,16 @@ vec2 cloudSection (vec3 ro, vec3 rd, float tCap) {
 
 /* Total per-sample density + palette-weighted albedo */
 vec4 mediumCloud (vec3 p) {
+  mediumCacheAnchors();
   float rho = mediumDensity(p);
   vec3 alb = volTint * rho;
 
   for (int i = 0; i < 16; ++i) {
     if (float(i) + 0.5 >= volCount) break;
-    vec4 c = texelFetch(texAnchors, ivec2(0, i), 0);
-    vec4 d = texelFetch(texAnchors, ivec2(1, i), 0);
-    vec4 e = texelFetch(texAnchors, ivec2(2, i), 0);
-    vec4 rim = texelFetch(texAnchors, ivec2(3, i), 0);
+    vec4 c = gAnchorC[i];
+    vec4 d = gAnchorD[i];
+    vec4 e = gAnchorE[i];
+    vec4 rim = gAnchorR[i];
 
     // Ellipsoid distance with smooth edge attenuation
     float dist = length((p - c.xyz) / anchorExtent(c, d, e));

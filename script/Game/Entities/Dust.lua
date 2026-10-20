@@ -1,7 +1,6 @@
 local Seed = require('Game.Seed')
 
 local kFleckDistance = 1024
-local kCloudDistance = 1024
 
 local Dust = class(function (self) end)
 
@@ -41,26 +40,11 @@ function Dust:forceLoad ()
 end
 
 local mIdentity = Matrix.Identity()
-local texDust
 
 function Dust:render (state)
   self:forceLoad()
   if state.mode == BlendMode.Alpha then
     Profiler.Begin('DustClouds.RenderAlpha')
-    if not texDust then
-      texDust = Tex2D.Create(128, 128, TexFormat.R8)
-      local shader = Cache.Shader('identity', 'effect/dustcloudtex')
-      texDust:push()
-      shader:start()
-      Draw.Rect(-1, -1, 2, 2)
-      shader:stop()
-      texDust:pop()
-      texDust:genMipmap()
-      texDust:setMagFilter(TexFilter.Linear)
-      texDust:setMinFilter(TexFilter.LinearMipLinear)
-      texDust:setWrapMode(TexWrapMode.Clamp)
-    end
-
     local cam = Camera.get()
     local shader = Cache.Shader('billboard/wrapped', 'effect/dustcloud')
     local up = cam.rot:getUp()
@@ -68,21 +52,23 @@ function Dust:render (state)
     Shader.SetFloat3('axis', up.x, up.y, up.z)
     Shader.SetFloat2('size', 64, 64)
     Shader.SetMatrix('mWorld', mIdentity)
-    Shader.SetTex2D('texDust', texDust)
     self.clouds:draw()
     shader:stop()
     Profiler.End()
   elseif state.mode == BlendMode.Additive then
     Profiler.Begin('DustFlecks.RenderAdditive')
-    -- TODO : Camera velocity
-    local vl = 0 -- state.velocity:length()
-    if vl > 1e-6 then
-      local vn = state.velocity:normalize()
+    local velocity = state.velocity
+    local vl = velocity and velocity:length() or 0
+    -- Below this, the streak is sub-world-unit and contributes no visible
+    -- pixels; avoid submitting the 1024-quad mesh for tiny camera drift.
+    if vl > 10.0 then
+      local vn = velocity:normalize()
       local shader = Cache.Shader('billboard/wrapped', 'effect/dustfleck')
       shader:start()
       Shader.SetMatrix('mWorld', mIdentity)
       Shader.SetFloat2('size', 2.0, 0.1 * min(1000.0, vl))
       Shader.SetFloat3('axis', vn.x, vn.y, vn.z)
+      Shader.SetFloat('speed', vl)
       self.flecks:draw()
       shader:stop()
     end

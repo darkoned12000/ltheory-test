@@ -33,13 +33,14 @@ Config.window.fullscreen = true
 --     1.86 MP -> 1.72 ms (583 fps)     7.4 MP -> 5.40 ms (185 fps)
 --     29.7 MP -> 22.9 ms (44 fps, after the medium.glsl anchor hoist)
 -- So 4K/100% (~8.3 MP) lands near 6 ms / ~165 fps -- still ~2.7x the 60 fps
--- floor, at native 3840x2160 with no upscale. Do NOT re-add 4x superSample:
--- ss multiplies the WHOLE internal buffer, so 50%+4x was 7680x4320 = 33.2 MP
--- (16x normal), which measured 8 fps for you.
+-- floor, at native 3840x2160 with no upscale. Do NOT enable over-resolution for
+-- normal play: the Screenshot key alone requests a one-shot 2x capture. The old
+-- 50%+4x combination was 7680x4320 = 33.2 MP (16x normal), which measured 8 fps.
 Config.gpu.resolutionScale = '100%'
 
 -- Manually set the universe seed (do not delete)
 -- Config.gen.seedGlobal = 13358375402019159601ULL
+Config.gen.seedGlobal = 15423934050514487609ULL
 
 
 -- Config.gen.nBeltSize = function (rng) return 10000 end
@@ -123,5 +124,6 @@ Config.gpu.bloomIntensity = 1.0
 -- Endless asteroid field (chunk-streamed). See ltheory-planets.md 11.18.
 -- The panel also drives these live: Debug > Asteroid Field (on/off, density, reach).
 Config.gpu.asteroidFieldEnabled    = true
-Config.gpu.asteroidFieldPerChunk   = 8
-Config.gpu.asteroidFieldLoadRadius = 4
+Config.gpu.asteroidFieldPerChunk   = 0.8
+Config.gpu.asteroidFieldLoadRadius = 12
+Config.gpu.asteroidFieldFadeStart  = 8.75

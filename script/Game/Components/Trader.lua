@@ -1,4 +1,5 @@
 local Entity = require('Game.Entity')
+local Registry = require('Game.EconomyRegistry')
 local Credit = require('Game.Item').Credit
 
 --------------------------------------------------------------------------------
@@ -158,6 +159,7 @@ function Entity:addTrader ()
   self.trader = Trader(self)
   self:register(Event.Debug, Entity.debugTrader)
   self:register(Event.Update, Entity.updateTrader)
+  Registry.register(self)
 end
 
 function Entity:debugTrader (state)

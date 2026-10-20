@@ -1546,6 +1546,51 @@ there are landmarks to navigate by. The old 30-rock debug ring is **suppressed**
 while the field runs — it sits in the same 8000–20000 band and looks identical, so
 having both makes it impossible to tell what you are looking at.
 
+### 11.19 TAA — temporal anti-aliasing (shipped default-OFF)
+
+TAA is the interactive AA path. The old live supersampling setting was removed;
+the Screenshot key retains a hidden, one-shot 2x raster capture and disables TAA
+for that frame. 2x scales geometry and the full-resolution lighting buffers to
+4x pixels; the volumetric march deliberately remains at base resolution. TAA
+accumulates subpixel geometry coverage over two full-screen passes at the normal
+render scale.
+
+**Panel:** `render.taa.enable`, `render.taa.blend` (history weight; lower = less
+ghosting on movers). **Config:** `Config.gpu.taaEnabled` / `taaBlend`.
+**Default OFF** until play-tested.
+
+**Where the jitter lives, and why not in `mProj`.** The textbook implementation
+jitters the projection matrix. Unavailable here: the `Matrix` struct is not exposed
+to Lua, so `mProj` cannot be modified without a C++ change. More to the point, the
+engine reconstructs world rays for the nebula/god-ray march from `mProjInv`, so
+jittering the shared projection puts signed-off work at risk. So the jitter is
+applied **per-vertex**, in `vertex/wvp.glsl`, as a clip-space offset multiplied by
+`w` (a true constant NDC offset, not depth-dependent). `mView`/`mProj`/`mProjInv`
+stay unjittered, ray reconstruction is bit-for-bit unchanged, and only geometry
+rasterisation moves. Halton(2,3) over 8 samples, owned by `Camera` because it has
+to be published before anything is drawn.
+
+**Resampling the resolve without jittering the geometry does not work** — this was
+measured, and it is the single most counter-intuitive result here: it moved the
+image only **0.1%** closer to a 4x SSAA reference. Shifting a sample *inside* an
+already-rasterised pixel cannot invent coverage on a hard edge; it only blurs.
+Moving the **edge** before rasterisation is what produces the per-frame coverage
+diversity that accumulates into smooth edges.
+
+**Reprojection is depth-based, with no velocity buffer.** That is viable here
+specifically because the world is near-static: streamed rocks never move, planets
+rotate at ~0.015 rad/s (sub-pixel per frame), and only NPCs translate. A 3x3
+neighbourhood clamp against the current frame removes ghosting on
+disocclusions and movers. NPCs are the one known artifact source.
+
+`taaValid` is owned by the **Renderer**, not the Camera — see the corresponding
+entry in §12 for why that distinction is load-bearing rather than cosmetic.
+
+**Judging it:** TAA converges, so a screenshot taken on frame 2 looks *worse* than
+one taken on frame 20. Rest the camera ~20 frames before capturing, then zoom on a
+rock silhouette against a bright limb. "Subtle change on a still" is the correct
+outcome, not a bug.
+
 ## 12. Traps (engine-level — cost us time; know them)
 
 - **A visual effect that scales an ENTITY touches physics.** `setScale` on an
@@ -1699,11 +1744,47 @@ having both makes it impossible to tell what you are looking at.
   actually in the shot.** A zero delta is only evidence of absence if something
   was there to be absent.
 
+- **`ShaderVar.Push`/`Pop` must balance per NAME, and an imbalance is silent.**
+  Each name is its own growable stack and `ShaderVar_Get` reads the *top*, so
+  forgetting a `Pop` does **not** corrupt the value — the value pushed most
+  recently is still the one read. It just never rewinds: the stack grows one entry
+  per frame, forever. TAA shipped three unmatched pushes in `Camera:beginDraw`
+  (`taaJitter`, `taaJitterPrev`, `taaValid`) at ~8 bytes x 3 per frame ≈ 5 MB/hour,
+  with a completely normal-looking frame. Same family as the silent unset-uniform
+  trap above: **the symptom is absence, not an error.**
+- **A newly allocated render target holds garbage, and `clamp()` does not scrub
+  NaN.** "Is there valid data in it yet?" is a separate question from "does it
+  exist?", and only the owner of the buffers can answer it. TAA's `taaValid` was
+  owned by `Camera` (meaning "we have drawn a frame"), which is true on frame 2
+  even when TAA was switched on that instant or the window was just resized — so
+  the resolve blended one frame against a brand-new, **uninitialised** history
+  texture. In GLSL `clamp(NaN, a, b)` is `min(max(NaN,a),b)` and `max` with a NaN
+  is undefined, so the neighbourhood clamp does not save you. Put the flag
+  wherever the buffer lives, and read it *after* the allocation that clears it.
+- **Check that `bin/libphx64r.so` is newer than the C++ you are verifying.**
+  Shaders and Lua load from `res/`/`script/` at runtime, so shader and config
+  edits are live immediately — but a **C++** change is not, and the build is not
+  automatic. Verifying the deterministic `irMap` (W1) against a stale `.so` would
+  have exercised the *old* `RNG_FromTime()` path and "confirmed" nothing: the
+  library predated the fix by an hour. Compare `stat -c %Y bin/libphx64r.so`
+  against `git show -s --format=%ct <commit>` before trusting any runtime
+  measurement of a C++ change.
+- **A low-discrepancy dither is not low-discrepancy per-pixel.** Interleaved
+  gradient noise is built to be well-distributed *across the frame*. Used as a
+  per-pixel fade threshold at one sample per pixel, that cross-frame structure is
+  visible on its own: a regular grid over mid-distance asteroid surfaces, and
+  vertical banding across smooth nebula gradients. The tell is that both appear
+  **only inside the fade band**. An unstructured integer hash reads as even grain
+  instead; blue noise is better still but has to be plumbed through `Material`.
+
 ## 13. Verification workflow
 
 1. Edit.
-2. `python3 configure.py test` → 137/0 shaders + suite + node checks.
+2. `python3 configure.py test` → **134/0** shaders + suite + node checks.
    (`./configure.py` is not executable in this checkout — prefix with `python3`.)
+   The count was 137 before the post-chain slimming (Distant Haze and
+   Auto-Exposure removed) and the addition of `filter/taa.glsl`; it drifts, so read
+   the number off the run rather than assuming — but **a FAIL is always a FAIL**.
 3. Headless boot with a dump; grep for `FATAL` / `attempt to` / `Shader_Get`.
 4. For behaviour, env-gated probes (always reverted before commit).
 5. For look/perf, the debug panel + `Config.gen.seedGlobal` to pin the world.
@@ -2264,6 +2345,11 @@ one arbitrary axis for another.
 
 ### 11.13 Storms and aurorae (2026-10-15)
 
+**Current status (2026-10-19):** planet aurora rendering and its Aurora/Aurora
+Alt controls were removed at the player's request. The aurora implementation and
+measurements below are historical notes only. Cloud decks, wind, storms, and
+intra-cloud lightning remain active.
+
 Two planet features added after W7a closed, both chosen because they are in the
 "actually visible from orbit" class (§11.12) rather than the sub-pixel one.
 
@@ -2480,4 +2566,3 @@ than be smuggled between items.
 **Do not** re-run the W5 density sweep. §11.7 established that the marching
 integral is step-count independent, so the calibration still holds; the sweep
 would only re-measure the harness, not the look.
-

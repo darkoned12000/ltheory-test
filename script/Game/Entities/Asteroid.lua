@@ -45,6 +45,20 @@ local function fragment (self, source)
       child:setPos(center + offset)
       child:setRot(rng:getQuat())
       child:setVelocity(baseVel + rng:getSphere():scale(10.0 * scale))
+
+      -- Debris does not live forever. A fragment that is never destroyed (the
+      -- common case: ramming is inert and Pulse rarely hits) used to stay in
+      -- the world forever as a permanent rigid body, so a single destroyed rock
+      -- left 2-4 bodies behind forever and shooting up a field accumulated
+      -- thousands of them. Sweep it out after a short lifetime instead. The
+      -- child is still a damageable Asteroid, so an early hit just kills it
+      -- sooner and fires its own (smaller) fragmentation.
+      child.lifetime = 8.0
+      child:register(Event.Update, function (c, ev)
+        c.lifetime = c.lifetime - ev.dt
+        if c.lifetime <= 0 then c:delete() end
+      end)
+
       root:addChild(child)
     end
   end

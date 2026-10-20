@@ -105,7 +105,11 @@ void main() {
     // view-projection directly: take the view-space point on the near plane for
     // this pixel and scale that ray out to the measured distance.
     float zL = texture(texDepth, suv).r;
-    vec4 vh = mProjInv * vec4(suv * 2.0 - 1.0, -1.0, 1.0);
+    // The depth sample is taken at the rasterized (jittered) UV, but mProjInv
+    // is intentionally UNJITTERED. Undo the clip-space jitter before building
+    // the view ray. `uv` is that unjittered pixel; using `suv` here applied the
+    // jitter twice to world reconstruction and weakened temporal reprojection.
+    vec4 vh = mProjInv * vec4(uv * 2.0 - 1.0, -1.0, 1.0);
     vh /= vh.w;
     // Eye distance is positive in front of the camera, where view z is negative.
     vec3 viewPos = vh.xyz * (zL / max(1e-6, -vh.z));

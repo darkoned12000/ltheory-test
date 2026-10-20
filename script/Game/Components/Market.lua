@@ -1,4 +1,5 @@
 local Entity = require('Game.Entity')
+local Registry = require('Game.EconomyRegistry')
 
 local OrderType = {
   Buy = {
@@ -91,6 +92,7 @@ function Entity:addMarket ()
   self.market = Market()
   self:register(Event.Debug, Entity.debugMarket)
   self:register(Event.Update, Entity.updateMarket)
+  Registry.register(self)
 end
 
 function Entity:debugMarket (state)

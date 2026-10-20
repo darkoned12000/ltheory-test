@@ -2,6 +2,7 @@ local ffi = require('ffi')
 local Entity = require('Game.Entity')
 local Dust = require('Game.Entities.Dust')
 local Nebula = require('Game.Entities.Nebula')
+local Frustum = require('Game.Frustum')
 require('Game.Content')
 
 local System = subclass(Entity, function (self, seed)
@@ -25,7 +26,39 @@ local System = subclass(Entity, function (self, seed)
 
   self.players = {}
   self.zones = {}
+
+  -- Keep local-light discovery proportional to the number of lights, not the
+  -- total number of System children (which includes thousands of asteroids).
+  self.lightEntities = {}
+  self.lightEntityIndex = {}
+  self:register(Event.ChildAdded, function (system, event)
+    if event.child.hasLight and event.child:hasLight() then
+      system:registerLightEntity(event.child)
+    end
+  end)
+  self:register(Event.ChildRemoved, function (system, event)
+    system:unregisterLightEntity(event.child)
+  end)
 end)
+
+function System:registerLightEntity (entity)
+  if entity.parent ~= self or not entity.hasLight or not entity:hasLight()
+     or self.lightEntityIndex[entity] then return end
+  local i = #self.lightEntities + 1
+  self.lightEntities[i] = entity
+  self.lightEntityIndex[entity] = i
+end
+
+function System:unregisterLightEntity (entity)
+  local i = self.lightEntityIndex[entity]
+  if not i then return end
+  local last = #self.lightEntities
+  local moved = self.lightEntities[last]
+  self.lightEntities[i] = moved
+  self.lightEntities[last] = nil
+  self.lightEntityIndex[entity] = nil
+  if moved ~= entity then self.lightEntityIndex[moved] = i end
+end
 
 function System:addZone (zone)
   insert(self.zones, zone)
@@ -49,11 +82,25 @@ function System:beginRender ()
   -- simply never looked at.
   local af = self.asteroidField
   if af then
-    ShaderVar.PushFloat('rockFadeNear', af.fadeStart)
-    ShaderVar.PushFloat('rockFadeFar',  af.unloadDist)
+    -- getFadeBand, not the raw fields. `far` MUST be the distance beyond which
+    -- no rock can be BORN, or rocks stream in already part-visible and the
+    -- curtain cannot hide them -- measured at 70% of the field born over 50%
+    -- visible before this was routed through the field. See
+    -- AsteroidField:getFadeBand.
+    local fadeNear, fadeFar = af:getFadeBand()
+    ShaderVar.PushFloat('rockFadeNear', fadeNear)
+    ShaderVar.PushFloat('rockFadeFar',  fadeFar)
+    -- Mirror the band on the CPU so the draw path can skip rocks whose every
+    -- fragment the shader would discard anyway. The eye is the camera position
+    -- that the shader's length(pos - eye) is measured from.
+    local cam = Camera.get()
+    if cam then
+      Frustum.setFadeBand(fadeNear, fadeFar, cam.pos)
+    end
   else
     ShaderVar.PushFloat('rockFadeNear', 1e9)
     ShaderVar.PushFloat('rockFadeFar',  2e9)
+    Frustum.setFadeBand(1e9, 2e9)
   end
 end
 
@@ -173,8 +220,17 @@ function System:handleRamming ()
       local e0ram = (b0:getMass() > 0) or (e0.ramDamage == true)
       local e1ram = (b1:getMass() > 0) or (e1.ramDamage == true)
       if e0ram and e1ram then
-        local v0 = e0:getVelocity()
-        local v1 = e1:getVelocity()
+        -- PRE-STEP velocities, deliberately. This used to read getVelocity(),
+        -- which is correct for motion and wrong for impacts: physics:update has
+        -- already run stepSimulation by the time we get here, and the solver's
+        -- contact impulse has removed the approach velocity. Measured on a ship
+        -- flying straight into a static field rock at 100 u/s, this reported a
+        -- relative speed of 15.9 against a 25 u/s threshold -- every collision in
+        -- the game failed the gate and ramming damage was silently dead. The
+        -- contact POSITIONS are still valid post-step (the manifold survives),
+        -- it is only the velocity that the solver has spent.
+        local v0 = e0:getPreStepVelocity()
+        local v1 = e1:getPreStepVelocity()
         local relSpeed = v0:distance(v1)
         -- Read from Config each time rather than caching in a local, so a
         -- Config.Local override (or a future panel knob) takes effect without
@@ -210,7 +266,7 @@ function System:streamAsteroidField (ship)
   local cfg = Config.gen and Config.gen.asteroidField
   if not cfg then return end
 
-  -- Read the three shape knobs from the PANEL when they exist, so the field can
+  -- Read the field knobs from the PANEL when they exist, so the field can
   -- be switched on, re-densified and re-reached while flying -- watching a field
   -- stream in is the point of the feature, and tuning how it reads needs a
   -- slider you can move with the engine running. Falls back to Config.
@@ -221,6 +277,7 @@ function System:streamAsteroidField (ship)
   local enabled  = knob('gen.asteroidField.enable',     cfg.enable)      or false
   local perChunk = knob('gen.asteroidField.perChunk',   cfg.perChunk)    or 0
   local loadR    = knob('gen.asteroidField.loadRadius', cfg.loadRadius)   or 4
+  local fadeR    = knob('gen.asteroidField.fadeStart',  cfg.fadeStart)    or 0
 
   if not enabled then
     -- Turning it off UNLOADS rather than pauses: a frozen field would still cost
@@ -236,7 +293,7 @@ function System:streamAsteroidField (ship)
   if not self.asteroidField then
     local AsteroidField = require('Game.Entities.AsteroidField')
     self.asteroidField = AsteroidField.new(self, cfg)
-    print(format('[system] asteroid field: chunk=%d perChunk=%d load=%d unload=%d radius=%d static=%s',
+    print(format('[system] asteroid field: chunk=%d perChunk=%.2f load=%d unload=%d radius=%d static=%s',
                  cfg.chunkSize or 2500, perChunk, loadR,
                  cfg.unloadRadius or 5, cfg.radius or 400000,
                  tostring(cfg.static ~= false)))
@@ -246,6 +303,7 @@ function System:streamAsteroidField (ship)
   -- and loadDist likewise only changes which chunks are added from here on.
   self.asteroidField.perChunk = perChunk
   self.asteroidField.loadDist  = self.asteroidField.chunkSize * loadR
+  self.asteroidField.fadeStart = self.asteroidField.chunkSize * fadeR
 
   -- The ship is PASSED IN, not looked up. There is no System:addPlayer: the
   -- `self.players` list is populated only by spawnAI, so with NPCs disabled it
@@ -264,11 +322,18 @@ function System:streamAsteroidField (ship)
   -- on a stationary ship (where it would return 0 every frame).
   if loaded > 0 then
     local chunks, rocks = self.asteroidField:getStats()
-    local clear = self.asteroidField:minPlanetClearance()
-    print(format('[system] field: +%d/-%d chunks -> %d chunks, %d rocks digest=%d planetClear=%.2f (ship %.0f,%.0f,%.0f)',
+    -- Keep the normal streaming log cheap. digest() sorts and walks every
+    -- loaded rock; minPlanetClearance() checks every rock against every solid.
+    -- Those are useful diagnostics, but doing both on each stream step turns
+    -- observability into a frame-time spike as the field grows.
+    print(format('[system] field: +%d/-%d chunks -> %d chunks, %d rocks (ship %.0f,%.0f,%.0f)',
                  loaded, unloaded, chunks, rocks,
-                 self.asteroidField:digest(), clear or -1,
                  ship:getPos().x, ship:getPos().y, ship:getPos().z))
+    if os.getenv('PHX_FIELD_DIAGNOSTICS') then
+      printf('[system] field diagnostics: digest=%d planetClear=%.2f',
+             self.asteroidField:digest(),
+             self.asteroidField:minPlanetClearance() or -1)
+    end
   end
 end
 
@@ -524,10 +589,8 @@ function System:spawnPlanet ()
                         planet.ringRoll or 1.0, planet.ringType or 0.0)
     end
   end
-  -- spinAxis and starDir are logged so a REPORTED VIEW can be reproduced:
-  -- aurorae only appear in the auroral oval (high latitude, near spinAxis) AND
-  -- on the night side (180 deg from starDir), so to aim a camera at one you
-  -- need both vectors.
+  -- spinAxis and starDir are logged so a reported cloud/ring orientation and
+  -- direct-light direction can be reproduced from the boot line.
   local spinAxis = planet.spinAxis or Vec3f(0, 1, 0)
   local starDir  = self.starDir   or Vec3f(1, 0, 0)
 

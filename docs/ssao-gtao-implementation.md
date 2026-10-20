@@ -545,7 +545,7 @@ branch is open — every one is data-driven + debug-panel-presented:
    loop read `entity`/`lp`/`color` via `ipairs` unchanged.
 6. **Sun shadow map is the current second-most-expensive pass — DONE (§9)** —
    `render.sun.shadowSize` (256/512/1024/2048) enum wired: GameView recreates
-   `sunShadowTex` (Depth32F + mip chain) when the enum or window resolution
+   `sunShadowTex` (Depth32F, linearly filtered without mipmaps) when the enum or window resolution
    changes (cached `sunShadowSizeKey`), and `sunShadowSize(sx,sy,target)` clamps
    the max dimension. 1024 is ~indistinguishable at gameplay distances for a
    third of the fill+filter cost. **Contract gotcha:** enum settings store an

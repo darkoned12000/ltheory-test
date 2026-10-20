@@ -58,34 +58,29 @@ uniform float rockFadeFar;
 #autovar vec2 ditherOffset
 uniform vec2 ditherOffset;
 
+// Share GameView's 64x64 frequency-ranked blue-noise tile with GTAO/volumetrics.
+// Blue noise keeps the fade's stipple energy in high spatial frequencies instead
+// of the coarse, visibly clumpy grain a pixel hash produced on large surfaces.
+#autovar sampler2D rockFadeNoise
+uniform sampler2D rockFadeNoise;
+
 uniform sampler2D texDiffuse;
 uniform float scale;
 
-// Dither threshold for the curtain fade.
-//
-// This was interleaved gradient noise, which was WRONG: IGN is designed to be
-// low-discrepancy ACROSS the frame, and at one sample per pixel that structure
-// is visible on its own. Play-testing caught it as a regular grid woven across
-// mid-distance asteroid surfaces and vertical banding across the smooth nebula
-// -- the artifacts appeared in exactly the fade band, which is the tell.
-//
-// A plain integer hash is unstructured, so it reads as even grain rather than as
-// a pattern. On its own it is stable per pixel, which is what you want with TAA
-// OFF (no integrator, so a moving threshold would just shimmer). With TAA ON the
-// caller's ditherOffset decorrelates it per frame instead.
-//
-// Blue noise (the 64x64 texture already built for GTAO's slice rotation) is
-// visibly better than either on its own, but binding it needs plumbing through
-// Material; this stays self-contained.
 float rockFadeDither (vec2 p) {
-  // Integer hash (Wang / sin-free). sin-based hashes band badly on some drivers.
-  uint x = uint(int(p.x) + 32768);
-  uint y = uint(int(p.y) + 32768);
-  uint h = x * 0x27d4eb2du + y * 0x165667b1u;
+  // 64 is the shared blue-noise LUT size. Give every screen-space tile its own
+  // toroidal phase so the 64x64 LUT does not visibly repeat as a checker across
+  // a large fading surface. Integer wrap keeps it stable with TAA off;
+  // Camera's per-frame offset decorrelates samples when TAA is on.
+  ivec2 pixel = ivec2(p);
+  ivec2 tile = pixel >> 6;
+  uint h = uint(tile.x) * 0x27d4eb2du + uint(tile.y) * 0x165667b1u;
   h ^= h >> 15; h *= 0x2c1b3c6du;
   h ^= h >> 12; h *= 0x297a2d39u;
   h ^= h >> 15;
-  return float(h) / 4294967295.0;
+  ivec2 phase = ivec2(int(h & 63u), int((h >> 6) & 63u));
+  ivec2 q = (pixel + phase) & ivec2(63);
+  return texelFetch(rockFadeNoise, q, 0).r;
 }
 
 void main() {
@@ -99,7 +94,10 @@ void main() {
   // history blend integrates them into true partial coverage. With a static
   // threshold the same dots are produced every frame, TAA converges straight back
   // onto them, and they crawl visibly across a moving rock.
-  if (vis < rockFadeDither(gl_FragCoord.xy + ditherOffset)) discard;
+  // Do not even sample the dither LUT when the fade is disabled or the fragment
+  // is inside the fully-visible region.
+  if (camDist > rockFadeNear
+      && vis < rockFadeDither(gl_FragCoord.xy + ditherOffset)) discard;
 
   vec3 N = normalize(normal);
   vec3 V = normalize(pos - eye);

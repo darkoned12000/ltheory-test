@@ -18,7 +18,7 @@ uniform mat4       sShadowProj;
 uniform float      sShadowBias;
 uniform float      sShadowScale;
 uniform float      sShadowRadius;
-uniform vec3       sunShadowCenter;
+uniform float      shadowEnable;
 
 const vec2 kPoissonDisk8[8] = vec2[8](
   vec2(-0.7071,  0.7071),
@@ -31,9 +31,10 @@ const vec2 kPoissonDisk8[8] = vec2[8](
   vec2( 0.1250,  0.2165)
 );
 
-float PCFSamplePoisson (sampler2D tex, vec2 uv, float dist, float bias, float radius) {
+float PCFSamplePoisson (sampler2D tex, vec2 uv, float receiverDepth, float bias, float radius) {
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-  if (radius < 0.5) return step(dist - bias, texture(tex, uv).x);
+  if (receiverDepth < 0.0 || receiverDepth > 1.0) return 1.0;
+  if (radius < 0.5) return step(receiverDepth - bias, texture(tex, uv).x);
 
   vec2 ts = (radius / vec2(textureSize(tex, 0)));
   float lit = 0.0;
@@ -45,7 +46,7 @@ float PCFSamplePoisson (sampler2D tex, vec2 uv, float dist, float bias, float ra
 
   for (int i = 0; i < 8; ++i) {
     vec2 offset = (rot * kPoissonDisk8[i]) * ts;
-    lit += step(dist - bias, texture(tex, uv + offset).x);
+    lit += step(receiverDepth - bias, texture(tex, uv + offset).x);
   }
 
   return saturate(lit * 0.125);
@@ -80,12 +81,14 @@ void main () {
     light += lightColor * Lt;
   }
 
-  vec4 sp = sShadowProj * vec4(pos, 1.0);
-  vec3 projCoords = sp.xyz / max(sp.w, 1e-6);
-  vec2 suv = (projCoords.xy * 0.5) + 0.5;
-  float dist = length(pos - sunShadowCenter);
-  float bias = sShadowBias + sShadowScale * dist;
-  light *= PCFSamplePoisson(texShadow, suv, dist, bias, sShadowRadius);
+  if (shadowEnable > 0.5) {
+    vec4 sp = sShadowProj * vec4(pos, 1.0);
+    vec3 projCoords = sp.xyz / max(sp.w, 1e-6);
+    vec2 suv = (projCoords.xy * 0.5) + 0.5;
+    float receiverDepth = projCoords.z * 0.5 + 0.5;
+    float bias = sShadowBias + sShadowScale * (1.0 - max(NdL, 0.0));
+    light *= PCFSamplePoisson(texShadow, suv, receiverDepth, bias, sShadowRadius);
+  }
 
   if (isnan(light.r) || isnan(light.g) || isnan(light.b)) {
     light = vec3(0.0);

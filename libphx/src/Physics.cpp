@@ -171,11 +171,44 @@ bool Physics_GetNextCollision (Physics* self, Collision* it) {
   return false;
 }
 
+/* Snapshot every body's linear velocity BEFORE the solver runs.
+
+   The whole point is that the solver destroys the evidence of an impact.
+   stepSimulation resolves contacts, and the impulse it applies removes the
+   approach velocity along the contact normal -- so a body that hit a wall at
+   100 u/s reports ~16 u/s afterwards, which is the residual sliding, not the
+   impact. Anything that wants to measure an IMPACT (see
+   RigidBody_GetPreStepVelocity) must therefore read this, not the live value.
+
+   Cheap: it is one pass over the collision object array that stepSimulation is
+   about to walk anyway, and it touches only bodies, not shapes. */
+static void Physics_SnapshotPreStepVelocities (Physics* self) {
+  btCollisionObjectArray& collisionObjects = self->dynamicsWorld->getCollisionObjectArray();
+  for (int i = 0; i < collisionObjects.size(); i++) {
+    btCollisionObject* collisionObject = collisionObjects[i];
+    void* userPointer = collisionObject->getUserPointer();
+    if (!userPointer) continue;
+    if (*((PhysicsType*) userPointer) != PhysicsType_RigidBody) continue;
+    RigidBody* rigidBody = (RigidBody*) userPointer;
+    // The user pointer type check above guarantees the underlying object is a
+    // btRigidBody; btCollisionObject itself has no velocity accessor.
+    btVector3 velocity = ((btRigidBody*) collisionObject)->getLinearVelocity();
+    // Only the compound PARENT is in the world array; children are reached
+    // through it. They inherit the parent's motion, so the parent is the value
+    // that matters -- but write it to children too so a compound part can be
+    // queried directly without the caller having to walk up first.
+    for (RigidBody* body = rigidBody; body; body = body->next) {
+      body->preStepVel = velocity;
+    }
+  }
+}
+
 void Physics_Update (Physics* self, float dt) {
   for (int i = 0; i < ArrayList_GetSize(self->triggers); i++) {
     Trigger* trigger = ArrayList_Get(self->triggers, i);
     Trigger_Update(trigger);
   }
+  Physics_SnapshotPreStepVelocities(self);
   self->dynamicsWorld->stepSimulation(dt, 0);
 }
 

@@ -5,6 +5,7 @@
 local NebulaVolumes = {}
 
 local CELL = 12000      -- world lattice pitch (plume spacing)
+local ANCHOR_UPDATE = CELL * 0.5 -- re-rank the bounded GPU list within a cell
 local MAXV = 16         -- bounded uniform list (texAnchors height)
 
 -- 32-bit integer hash: deterministic and free from float precision loss.
@@ -45,13 +46,17 @@ local function hsl2rgb (h, s, l)
   return r + m, g + m, b + m
 end
 
-function NebulaVolumes.cellKey (pos)
-  -- Coverage is part of the key so dragging the panel slider rebuilds the
-  -- field on the next frame instead of waiting for a cell crossing.
+function NebulaVolumes.cellKey (pos, radius)
+  -- Refresh the nearest-16 list every half lattice cell, not only when the
+  -- 12k-generation cell changes. This keeps the bounded GPU list centered on the
+  -- moving camera as it traverses a cell. Coverage/radius changes also rebuild it.
   local cover = 1
   if Settings and Settings.get then cover = Settings.get('nebula.coverage') or 1 end
-  return math.floor(pos.x / CELL) .. '_' .. math.floor(pos.y / CELL) .. '_' .. math.floor(pos.z / CELL) ..
-    '_' .. string.format('%.2f', cover)
+  if radius == nil then
+    radius = (Settings and Settings.get and Settings.get('nebula.radius')) or 12000
+  end
+  return math.floor(pos.x / ANCHOR_UPDATE) .. '_' .. math.floor(pos.y / ANCHOR_UPDATE) .. '_' .. math.floor(pos.z / ANCHOR_UPDATE) ..
+    '_' .. string.format('%.2f_%.0f', cover, radius)
 end
 
 -- Accepts an optional sectorHue [0..1] derived from the sector's skybox generator.
@@ -61,16 +66,28 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue)
   local cx = math.floor(pos.x / CELL)
   local cy = math.floor(pos.y / CELL)
   local cz = math.floor(pos.z / CELL)
-  local r2 = radius * radius
+  local cover = 1
+  if Settings and Settings.get then cover = Settings.get('nebula.coverage') or 1 end
+  cover = math.max(0.25, math.min(2.5, cover))
+  -- A plume can contribute even when its centre is outside the ray cap. Search
+  -- and cull using its conservative maximum extent, not just centre distance;
+  -- otherwise the visible edge of a large ellipsoid gets clipped as Radius moves.
+  local maxExtent = 8400 * cover -- max base extent 6000 * max axis factor 1.4
+  local anchorRange = radius + maxExtent
+  local anchorRange2 = anchorRange * anchorRange
   local recs = {}
 
-  for ox = -1, 1 do
+  -- Search enough neighboring lattice cells to cover the requested march
+  -- radius. A fixed 3x3x3 search silently omitted anchors when Radius was raised
+  -- above one cell (12k), so the visible clouds stopped growing with the slider.
+  local cellReach = math.ceil(anchorRange / CELL) + 1
+  for ox = -cellReach, cellReach do
     local icx = cx + ox
     local ccx = icx * CELL
-    for oy = -1, 1 do
+    for oy = -cellReach, cellReach do
       local icy = cy + oy
       local ccy = icy * CELL
-      for oz = -1, 1 do
+      for oz = -cellReach, cellReach do
         local icz = cz + oz
         local ccz = icz * CELL
 
@@ -84,19 +101,17 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue)
           local pz = ccz + (hash32(icx, icy, icz, s, off + 3) * 2 - 1) * CELL * 0.34
 
           local dx, dy, dz = px - pos.x, py - pos.y, pz - pos.z
-          local d2 = dx * dx + dy * dy + dz * dz
-
-          if d2 <= r2 then
-            -- Coverage (storm-cloud knob): scales bank extents AND core
-            -- density together, so 1.6 reads as thick storm banks and 0.5 as
-            -- thin wisps. Defaults to 1.0 = the signed-off Phase 2 field.
-            local cover = 1
-            if Settings and Settings.get then cover = Settings.get('nebula.coverage') or 1 end
-            cover = math.max(0.25, math.min(2.5, cover))
+          local centerD2 = dx * dx + dy * dy + dz * dz
+          if centerD2 <= anchorRange2 then
+            -- Coverage scales bank extents AND core density together, so 1.6
+            -- reads as thick storm banks and 0.5 as thin wisps.
             local baseExtent = (1200 + hash32(icx, icy, icz, s, off + 4) * 4800) * cover
             local extX = baseExtent * (0.6 + hash32(icx, icy, icz, s, off + 10) * 0.8)
             local extY = baseExtent * (0.4 + hash32(icx, icy, icz, s, off + 11) * 0.6)
             local extZ = baseExtent * (0.6 + hash32(icx, icy, icz, s, off + 12) * 0.8)
+
+            local edgeDist = math.max(0, math.sqrt(centerD2) - math.max(extX, extY, extZ))
+            if edgeDist <= radius then
 
             local density = (0.8 + hash32(icx, icy, icz, s, off + 5) * 2.2) * cover
             -- Noise frequency: kept coarse enough that the ~290-unit march
@@ -121,8 +136,12 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue)
             recs[#recs + 1] = {
               px, py, pz, extX, extY, extZ, density, scale, warp,
               cr, cg, cb, rr, rg, rb,
-              d2 = d2
+              -- Prioritize plumes whose bounds approach the ray volume; this
+              -- makes the bounded 16-anchor GPU list represent visible volume
+              -- rather than just nearest centers.
+              d2 = edgeDist * edgeDist
             }
+            end
           end
         end
       end

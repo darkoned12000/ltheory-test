@@ -22,7 +22,19 @@ function Entity:addHealth (max, rate)
   self.health = max
   self.healthMax = max
   self.healthRate = rate
-  self:register(Event.Update, Entity.updateHealth)
+  -- Only subscribe to the per-frame Update event if regen is actually
+  -- happening. An entity with rate == 0 (every asteroid in the field) gains
+  -- nothing from the callback, but it still costs a handler-table lookup, a
+  -- closure call and a min() for EVERY asteroid, EVERY frame -- with ~10,600
+  -- asteroids in a streamed field that was measured at 1.59 ms/frame of pure
+  -- no-op dispatch (see Game/Entities/AsteroidField.lua).
+  --
+  -- setHealth() re-subscribes if the rate is later raised, so a zero-rate
+  -- entity can still be given regen at runtime.
+  if rate > 0 then
+    self:register(Event.Update, Entity.updateHealth)
+    self.healthRegenSubscribed = true
+  end
 end
 
 function Entity:damage (amount, source)
@@ -82,6 +94,12 @@ function Entity:setHealth (value, max, rate)
   self.health = value
   self.healthMax = max
   self.healthRate = rate
+  -- If regen was turned on after construction, start listening for Update.
+  -- (addHealth only subscribes when the initial rate is non-zero.)
+  if rate > 0 and not self.healthRegenSubscribed then
+    self:register(Event.Update, Entity.updateHealth)
+    self.healthRegenSubscribed = true
+  end
 end
 
 function Entity:updateHealth (state)

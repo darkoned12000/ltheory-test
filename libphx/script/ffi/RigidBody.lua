@@ -26,6 +26,7 @@ do -- C Definitions
     Matrix*    RigidBody_GetToLocalMatrix            (RigidBody*);
     Matrix*    RigidBody_GetToWorldMatrix            (RigidBody*);
     void       RigidBody_GetVelocity                 (RigidBody*, Vec3f*);
+    void       RigidBody_GetPreStepVelocity          (RigidBody*, Vec3f*);
     void       RigidBody_GetVelocityA                (RigidBody*, Vec3f*);
     void       RigidBody_SetLinearVelocity           (RigidBody*, Vec3f);
     void       RigidBody_SetCollidable               (RigidBody*, bool);
@@ -74,6 +75,7 @@ do -- Global Symbol Table
     GetToLocalMatrix            = libphx.RigidBody_GetToLocalMatrix,
     GetToWorldMatrix            = libphx.RigidBody_GetToWorldMatrix,
     GetVelocity                 = libphx.RigidBody_GetVelocity,
+    GetPreStepVelocity          = libphx.RigidBody_GetPreStepVelocity,
     GetVelocityA                = libphx.RigidBody_GetVelocityA,
     SetLinearVelocity           = libphx.RigidBody_SetLinearVelocity,
     SetCollidable               = libphx.RigidBody_SetCollidable,
@@ -123,6 +125,7 @@ do -- Metatype for class instances
       getToLocalMatrix            = libphx.RigidBody_GetToLocalMatrix,
       getToWorldMatrix            = libphx.RigidBody_GetToWorldMatrix,
       getVelocity                 = libphx.RigidBody_GetVelocity,
+      getPreStepVelocity          = libphx.RigidBody_GetPreStepVelocity,
       getVelocityA                = libphx.RigidBody_GetVelocityA,
       setLinearVelocity           = libphx.RigidBody_SetLinearVelocity,
       setCollidable               = libphx.RigidBody_SetCollidable,

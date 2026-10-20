@@ -56,8 +56,7 @@ Config.gen = {
   -- that actually matters is DENSITY inside the view radius, so tune perChunk
   -- against loadRadius by eye rather than trusting the product.
   --
-  -- The radii are multiples of chunkSize resolved to world units, and MUST be
-  -- ordered  fadeStart < loadRadius < unloadRadius.
+  -- Radii are multiples of chunkSize resolved to world units.
   --
   -- They have to reach past visual range, because the camera has no distance
   -- cutoff at all (zFar = 1e6, Util/Camera.lua:13). Measured: at a 7500-unit
@@ -67,17 +66,15 @@ Config.gen = {
   --
   --   chunkSize    world units per chunk edge
   --   perChunk     rocks generated per chunk
-  --   fadeStart    distance at which a rock is FULL size. Between here and
-  --               unloadDist it shrinks linearly to nothing, so the boundary is
-  --               never a hard edge: a newly streamed rock is scaled to zero
-  --               and grows as you approach. That is the whole illusion --
-  --               rocks ahead of you resolving out of the dark rather than
-  --               materialising -- and it is why loadRadius no longer has to be
-  --               tuned to hide a seam.
-  --   loadRadius   distance within which chunks exist
-  --   unloadRadius distance at which they are dropped. The gap between load and
-  --               unload is the hysteresis that stops a ship loitering on the
-  --               boundary from thrashing load/unload every frame.
+  --   fadeStart    distance where fragments are fully visible. From there to
+  --               the conservative fade end, a screen-space dither discard
+  --               dissolves the rock; this does not scale or animate geometry.
+  --   loadRadius   chunk-centre distance at which chunks enter the world. The
+  --               shader fade ends BEFORE this by half a cell diagonal plus
+  --               the largest rock radius, so a newly loaded rock cannot pop
+  --               in partway through the curtain.
+  --   unloadRadius distance at which chunks are dropped. It must be larger than
+  --               loadRadius to provide hysteresis and prevent boundary churn.
   --   radius       the field is bounded to this distance from the system origin;
   --               0 = truly unbounded. Measured: at 60000 you exit the field
   --               after ~40k units of travel and the rocks simply stop (0 rocks,
@@ -97,17 +94,27 @@ Config.gen = {
   asteroidField = {
     enable      = false,   -- opt-in until play-tested
     chunkSize   = 2500,
-    perChunk    = 8,
-    fadeStart   = 2.5,     -- full size inside 6250
-    loadRadius  = 4,       -- chunks exist out to 10000
-    unloadRadius = 5,      -- dropped beyond 12500
+    -- Distance fade is in world units (multiples of chunkSize). Chunk centres
+    -- load at loadRadius; because rocks stay inside their cell, the conservative
+    -- fade end is loadRadius - half a cell diagonal - maximum rock radius. With
+    -- the values below the band is about 21875..27263 units: farther away than
+    -- before, and ~32% narrower so the dissolve completes more quickly.
+    --
+    -- This is deliberately a lower-density, longer-reach field: loading radius
+    -- grows cubically, so fractional perChunk density keeps the number of Bullet
+    -- bodies near the current order of magnitude while extending the horizon.
+    -- Space should read vast, not like a dense fog wall. Tune Reach, Density,
+    -- and Fade Start in Debug > Asteroid Field.
+    perChunk    = 0.8,
+    fadeStart   = 8.75,    -- fully solid inside 21875
+    loadRadius  = 12,      -- fade finishes around 27263; chunks load to 30000
+    unloadRadius = 14,     -- dropped beyond 35000 (hysteresis)
     radius      = 400000,
-    -- Rock size is in world units on the entity scale; the mesh radius works
-    -- out at roughly 0.54 x scale, so 40..180 means radius ~21..97. These have
-    -- to be LARGE: a rock covers ~4 px only when radius >= ~0.0044 x distance,
-    -- which at the far edge of the loaded field (~10000 units) is ~44. The
-    -- original 2..9 produced a field that was measurably invisible (600 px
-    -- difference against a 309 px noise floor).
+    -- Rock size is in world units on the entity scale; the mesh radius is about
+    -- 0.54 x scale. Base sizes are 12..300, with rare landmarks up to 900. At
+    -- distance d, a rock's projected size scales as radius/d; the far fade band
+    -- therefore favors the largest tier, while small rocks naturally read as
+    -- distant specks and dissolve earlier.
     minScale    = 12,
     maxScale    = 300,
     -- Rare large tier: this fraction of rocks gets a 2..4x multiplier on top of
@@ -115,8 +122,22 @@ Config.gen = {
     -- rocks 2-4x the biggest ones otherwise present, but scarce enough that you
     -- see a FEW as you fly rather than a crowd. Raising maxScale instead would
     -- make every rock bigger, which is not the same thing at all.
-    -- At ~2000 rocks, 0.05 => ~100 large rocks over a 10000-unit sphere.
+    -- At ~6500 loaded rocks, 0.05 => ~325 landmarks in the entire loaded field;
+    -- only a small fraction are in the camera view at once.
     largeChance = 0.05,
+    -- Ceiling for the large tier ONLY, and deliberately above maxScale. The tier
+    -- used to clamp back to maxScale, which made it dead code: the base draw
+    -- already clamped (see sizeSoftCap), so 38.5% of bases sat at exactly 300
+    -- and every landmark draw was multiplied straight back down to 300. A
+    -- landmark has to be able to exceed the biggest ordinary rock.
+    largeMaxScale = 900,
+    -- Soft bound on the exponential size draw, u = E / (E + sizeSoftCap).
+    -- The draw is unbounded, so clamping it piles a huge spike on one value --
+    -- measured 38.5% of the whole field at exactly maxScale, which made both
+    -- size knobs inert. This maps [0,inf) into [0,1) with no saturation.
+    -- Raising it pushes the mass lower in the range (smaller, rarer big rocks);
+    -- 0.7 keeps the median rock at ~7px across at the far edge of the field.
+    sizeSoftCap = 0.7,
     clumpChance = 0.65,
     clumpRadius = 0.18,
     planetMargin = 1500,
@@ -298,14 +319,9 @@ Config.render = {
     -- (override in Config.Local.lua); nil = weighted per-seed pick.
     forceType = nil, -- default is nil
     types = {
-      -- `aurora` = has a global magnetic dynamo AND enough air to emit. That is
-      -- two requirements, and it is why this is a per-type flag rather than
-      -- "any world with an atmosphere": Venus has a thick atmosphere and NO
-      -- intrinsic field (no aurora), Titan has air and no dynamo (no aurora).
-      -- Only the Earth-like types get one. Absent elsewhere == 0.
-      { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 }, aurora = 1.0, ring = 0.30, ringIce = 0.85,
+      { name = 'terrestrial', weight = 32, gen = 'gen/planet', ocean = { 0.05, 0.30 }, atmo = 1.10, weather = 0.60, mountain = 0.85, atmoTint = { 1.00, 1.00, 1.00 }, ring = 0.30, ringIce = 0.85,
         hue = { 0.18, 0.46 }, sat = { 0.12, 0.34 }, light = { 0.11, 0.40 }, crater = 0.45, relief = 10.0, valley = 0.35, crack = 0.25 },
-      { name = 'ocean',       weight = 14, gen = 'gen/planet', ocean = { 0.62, 0.92 }, atmo = 1.15, weather = 0.70, mountain = 0.45, atmoTint = { 0.90, 1.00, 1.10 }, aurora = 1.0, ring = 0.22, ringIce = 0.80,
+      { name = 'ocean',       weight = 14, gen = 'gen/planet', ocean = { 0.62, 0.92 }, atmo = 1.15, weather = 0.70, mountain = 0.45, atmoTint = { 0.90, 1.00, 1.10 }, ring = 0.22, ringIce = 0.80,
         hue = { 0.50, 0.62 }, sat = { 0.18, 0.40 }, light = { 0.14, 0.30 }, crater = 0.08, relief = 4.0, valley = 0.25, crack = 0.15 },
       { name = 'desert',      weight = 14, gen = 'gen/planet', ocean = { 0.00, 0.03 }, atmo = 1.03, weather = 0.08, mountain = 0.70, atmoTint = { 1.40, 0.95, 0.55 },
         hue = { 0.04, 0.12 }, sat = { 0.20, 0.45 }, light = { 0.10, 0.44 }, crater = 0.90, relief = 14.0, valley = 0.50, crack = 0.45 },
@@ -428,7 +444,7 @@ Config.gpu = {
   nebulaDensity  = 1.5,        --   medium master gain (0..4)
   nebulaAmbient  = 1.0,        --   irMap ambient scale in the inscatter (0 = sun-term only)
   nebulaPalette  = 1.0,        --   medium albedo mix (1 = palette, 0 = flat tint)
-  nebulaJitter   = 0.05,       --   ray-start dither in steps (0 = none; speckle knob)
+  nebulaJitter   = 0.5,        --   blue-noise ray-start jitter in step units (no extra march work)
   nebulaBackground = 0.2,      --   everywhere-field presence (0..1.5, anchors unaffected)
   nebulaCoverage = 2,          --   bank size/density multiplier (0.25..2.5)
   nebulaRadius   = 14000,      --   max march distance, world units
@@ -453,21 +469,20 @@ Config.gpu = {
   -- God-rays (postfx.godrays.*, fog-nebula Phase 3). Independent low-res shaft
   -- pass from starDir: its own on/off + strength, forward-scatter lobe + A/B
   -- debug view. Off = renderer never invoked.
-  -- Temporal anti-aliasing. Supersampling scales the ENTIRE internal buffer, so
-  -- 4x cost 16x the pixels of every pass; TAA gets comparable edge quality for
-  -- two full-screen passes at ~1x. They are alternatives, not a stack -- with
-  -- both on you pay for both.
+  -- Temporal anti-aliasing is the interactive AA path. The only remaining SSAA
+  -- use is the Screenshot key's one-shot 2x raster capture; it is hidden from
+  -- the settings panel and disables TAA for that frame.
   taaEnabled  = false,   -- off until play-tested
   taaBlend    = 0.9,     -- history weight; lower = less ghosting on movers
 
-  -- Panel-seeded form of the three asteroid-field knobs. These seed the debug
-  -- panel (Renderer.lua's SETTINGS), and the PANEL is what actually drives the
-  -- field, so setting them here is what makes the panel show a value. The rest
-  -- of the field's shape (chunkSize, fadeStart, unloadRadius, sizes, clumping,
-  -- planetMargin) stays in Config.gen.asteroidField and is spawn-time only.
+  -- Panel-seeded form of the asteroid-field knobs. These seed the debug panel
+  -- (Renderer.lua's SETTINGS), and the panel is what actually drives the live
+  -- field settings. Remaining shape (chunkSize, unloadRadius, sizes, clumping,
+  -- planetMargin) stays in Config.gen.asteroidField.
   asteroidFieldEnabled    = false,
-  asteroidFieldPerChunk   = 8,
-  asteroidFieldLoadRadius = 4,
+  asteroidFieldPerChunk   = 0.8,
+  asteroidFieldLoadRadius = 12,
+  asteroidFieldFadeStart  = 8.75,
 
   godraysEnabled  = false,
   godraysStrength = 1,          -- shaft gain. 1.0 = the pass IS the single-scatter
@@ -590,16 +605,6 @@ Config.gpu = {
                           --     Planet:render in agreement -- Config.gpu is what
                           --     actually seeds the panel at launch, so changing
                           --     only one of the three leaves the world flashing.
-  planetAurora      = 1.0,     -- auroral emission. TYPE-GATED: only worlds whose
-                          --     type sets `aurora` (needs a magnetic dynamo AND
-                          --     an atmosphere) emit at all -- terrestrial and
-                          --     ocean. Raising this will NOT light a desert,
-                          --     an ice world, a lava world, a barren rock or a
-                          --     moon.
-  planetAuroraHeight = 0.03,   -- lower (green) shell altitude as a fraction of
-                          --     radius; Earth's green band is 100-300 km on a
-                          --     6371 km radius. The red band above is derived
-                          --     in the shader at 2.2x this altitude.
   planetCloudWind   = 0.04, -- cloud advection as a FRACTION OF THE PLANET'S SPIN,
                           --     not an absolute rate. Real drift is ~6% of Earth's
                           --     rotation; relative keeps the feel identical on a
@@ -623,13 +628,12 @@ Config.gpu = {
   -- Texture / edge quality.
   fovY          = 75,       -- camera vertical FOV (deg)
   filtering     = 'Bilinear', -- Bilinear | Trilinear | Aniso (texture filter quality)
-  superSample   = 'Off',    -- Off | 2x | 4x (SSAA: renders the frame over-res)
   resolutionScale = '100%', -- render 3D below window size, upscale on present
                             -- (100%|85%|75%|67%|50%; big perf lever at 4K)
 
-  -- Anti-aliasing: superSample (SSAA) above, or TAA via Config.gpu.taaEnabled /
-  -- taaBlend (also on the debug panel as render.taa.enable / render.taa.blend).
-  -- They are alternatives -- both on means paying for both.
+  -- Interactive anti-aliasing is TAA. Screenshot-key SSAA is capture-only and
+  -- is not a Config.gpu setting; Application briefly requests 2x then restores
+  -- the render scale. TAA is disabled only for that capture frame.
 }
 
 Config.ui = {

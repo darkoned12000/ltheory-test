@@ -72,6 +72,7 @@ function AsteroidField.new (system, opts)
   }, AsteroidField)
 
   self.chunkSize  = opts.chunkSize  or 2500
+  self.streamTag  = opts.streamTag or StreamTag
 
   -- Streaming radii are resolved to WORLD UNITS here and measured to a chunk's
   -- CENTRE with a EUCLIDEAN test.
@@ -116,6 +117,28 @@ function AsteroidField.new (system, opts)
   -- 10000-unit sphere, so a handful are in view at a time -- landmarks rather
   -- than clutter. 0 disables the tier.
   self.largeChance  = opts.largeChance  or 0.05
+  -- Soft bound on the exponential size draw: u = E / (E + sizeSoftCap) maps the
+  -- unbounded exponential into [0,1) without ever saturating, so the size
+  -- distribution has no spike at maxScale. See generateChunk. Larger = the mass
+  -- sits lower in the range and big rocks are rarer.
+  --
+  -- 0.7 was chosen against the earlier 10000-unit visibility target. Measured
+  -- over 200k draws: median scale 155 (radius ~84). At the new ~27k fade edge
+  -- that is about 3px across; large-tier landmarks remain legible farther out.
+  -- Raising this value pushes more of the field to small sizes, so distant
+  -- asteroids become specks and the field reads sparser.
+  self.sizeSoftCap  = opts.sizeSoftCap  or 0.7
+  -- Ceiling for the rare large tier ONLY. Deliberately above maxScale: a
+  -- landmark rock has to be able to exceed the biggest ordinary one, which is
+  -- the entire point of the tier.
+  self.largeMaxScale = opts.largeMaxScale or self.maxScale * 3
+  -- Fade is evaluated per fragment in the asteroid shader, not at the entity
+  -- centre. Include the biggest possible rendered rock radius as well as the
+  -- cell half-diagonal, so the nearest surface point of any newly loaded rock
+  -- is still beyond the fade's far edge. The extra 32 units cover float and
+  -- interpolation error at the boundary.
+  self.spawnMargin = 0.5 * math.sqrt(3) * self.chunkSize
+                   + 0.6 * self.largeMaxScale + 32
   self.oreChance  = opts.oreChance  or 0.0
   -- Rocks are immovable by default (see the module header). `static = false`
   -- gives back dynamic bodies with mass and drag, which is how every asteroid
@@ -132,6 +155,35 @@ end
 function AsteroidField:chunkOf (x, y, z)
   local cs = self.chunkSize
   return math.floor(x / cs), math.floor(y / cs), math.floor(z / cs)
+end
+
+--[[ getFadeBand -- the (near, far) the renderer should use for the curtain.
+
+  THE POP. A rock that is born part-way through the fade band appears at that
+  partial visibility and the curtain cannot hide it -- it only hides the
+  boundary, not a spawn inside itself. Measured before this was fixed, with the
+  old centre-distance load test: of 2400 spawned rocks, 70% were born more than
+  50% visible and the worst case was 100% visible.
+
+  Chunks are loaded by CENTRE distance. Since generated rocks stay inside their
+  cell, every rock in a loaded chunk is at least `centerDistance - spawnMargin`
+  from the ship. Therefore the nearest possible birth distance is
+  `loadDist - spawnMargin`; `far` must be no greater than that:
+
+      far = loadDist - spawnMargin
+
+  Derived here rather than stored, so it cannot drift out of step with the load
+  test if that test is ever changed.
+
+  Keep the far edge outside the band if the load radius is adjusted live. ]]
+function AsteroidField:getFadeBand ()
+  local far = math.max(1, self.loadDist - self.spawnMargin)
+  -- Keep a non-zero transition even if the live slider is moved too close to
+  -- Reach. 1000 units is the shortest band offered by the control, avoiding an
+  -- accidental near-instant pop while still allowing a much quicker dissolve.
+  local minWidth = math.min(1000, far)
+  local near = math.max(0, math.min(self.fadeStart, far - minWidth))
+  return near, far
 end
 
 -- Every solid body that must not have rocks inside it. Planets are direct
@@ -163,7 +215,8 @@ end
 function AsteroidField:isClear (solids, x, y, z)
   for i = 1, #solids do
     local b  = solids[i]
-    local bx, by, bz = b:getPos().x, b:getPos().y, b:getPos().z
+    local bp = b:getPos()
+    local bx, by, bz = bp.x, bp.y, bp.z
     local r  = b:getScale() + self.planetMargin
     local dx, dy, dz = x - bx, y - by, z - bz
     if dx * dx + dy * dy + dz * dz < r * r then return false end
@@ -178,27 +231,47 @@ end
   placed rock in THIS chunk (clumpChance) or is scattered uniformly. The old
   code chose from `zone.children`, i.e. from the entire field built so far --
   which is precisely what cannot be reproduced per chunk. ]]
-function AsteroidField:generateChunk (cx, cy, cz)
-  local rng  = Seed.rng(StreamTag, chunkSalt(cx, cy, cz))
+function AsteroidField:generateChunk (cx, cy, cz, solids)
+  local rng  = Seed.rng(self.streamTag, chunkSalt(cx, cy, cz))
   local cs   = self.chunkSize
   local ox, oy, oz = cx * cs, cy * cs, cz * cs
-  local solids = self:solids()
+  -- update() passes a snapshot shared by all chunks generated in that scan.
+  -- Rewalking the whole System child list per chunk made a boundary crossing
+  -- O(newChunks * alreadyLoadedEntities), even though planets do not change
+  -- during the scan.
+  solids = solids or self:solids()
 
   local rocks = {}
-  for i = 1, self.perChunk do
+  -- `perChunk` is a density control and the settings panel stores it as a
+  -- float. Honour fractional values deterministically per chunk rather than
+  -- silently truncating them in Lua's numeric for loop.
+  local rockCount = math.floor(self.perChunk)
+  if rng:getUniform() < self.perChunk - rockCount then
+    rockCount = rockCount + 1
+  end
+  for i = 1, rockCount do
     local x, y, z
     local clustered = #rocks > 0 and rng:getUniform() < self.clumpChance
     if clustered then
       local anchor = rocks[rng:getInt(1, #rocks)]
       local spread = self.clumpRadius * cs
-      x = anchor.pos.x + rng:getSphere().x * spread
-      y = anchor.pos.y + rng:getSphere().y * spread
-      z = anchor.pos.z + rng:getSphere().z * spread
+      local offset = rng:getSphere():scale(spread)
+      x = anchor.pos.x + offset.x
+      y = anchor.pos.y + offset.y
+      z = anchor.pos.z + offset.z
     else
       x = ox + (rng:getUniform() - 0.5) * cs
       y = oy + (rng:getUniform() - 0.5) * cs
       z = oz + (rng:getUniform() - 0.5) * cs
     end
+
+    -- A clump is a random walk if each rock anchors the next. Without this
+    -- clamp, a chain of individually small offsets can wander arbitrarily far
+    -- outside its nominal chunk and invalidate the loader/fade distance bound.
+    -- Clamping preserves local clustering while making the cell boundary real.
+    x = math.max(ox, math.min(ox + cs, x))
+    y = math.max(oy, math.min(oy + cs, y))
+    z = math.max(oz, math.min(oz + cs, z))
 
     -- Bounds: a rock whose CENTRE is outside the field radius would still show
     -- a mesh poking into it, and at radius 60000 that is not visible in
@@ -212,26 +285,40 @@ function AsteroidField:generateChunk (cx, cy, cz)
     -- absent from this world.
     if not self:isClear(solids, x, y, z) then goto continue end
 
-    -- Exponential distribution, CLAMPED. rng:getExp() is unbounded (it is
-    -- exponential, mean 1, not uniform), so without a clamp maxScale is a
-    -- suggestion rather than a maximum -- measured a rock at scale 12 with
-    -- maxScale = 9, and a heavy tail would eventually produce absurd rocks.
-    -- Clamping changes the shape of the tail, not the mean, which is what
-    -- minScale/maxScale are actually expressing here.
-    local scale = self.minScale + (self.maxScale - self.minScale) * rng:getExp()
-    if scale < self.minScale then scale = self.minScale end
-    if scale > self.maxScale then scale = self.maxScale end
+    -- Size: an exponential draw mapped through a SOFT bound.
+    --
+    -- rng:getExp() is unbounded (exponential, mean 1), so the obvious
+    -- `min(max, min + (max-min)*E)` piles a huge mass onto exactly one value.
+    -- Measured on the real Config values (minScale 12, maxScale 300): E >= 1
+    -- already reaches maxScale, and P(E >= 1) = 1/e = 36.8%, so 38.5% of the
+    -- entire field was rendering at *exactly* scale 300. Nearly two rocks in
+    -- five were the same object, and the size knob did nothing until the range
+    -- was wide enough for the tail to fit.
+    --
+    -- u = E / (E + k) maps [0, inf) into [0, 1) smoothly: still monotonically
+    -- decreasing (so most rocks stay small and a few are large, which is what
+    -- makes a field read as a field), but it never saturates, so no two draws
+    -- collapse onto one size. See sizeSoftCap for how k was chosen.
+    local E = rng:getExp()
+    local u = E / (E + self.sizeSoftCap)
+    local scale = self.minScale + (self.maxScale - self.minScale) * u
     -- Rare large tier. Play-tested feedback: the field had small and medium
     -- rocks but nothing that felt like a landmark -- "can we produce large
     -- asteroids 2-4x the size of some of the larger ones I see, somewhat rare
     -- but you should see a few when you are flying". A flat size range cannot
     -- do that (raising maxScale just makes EVERY rock bigger), so the large
     -- rocks are a separate, low-probability draw that MULTIPLIES an already
-    -- exponential base size. The multiplier is 2..4x, and it is applied before
-    -- the clamp so maxScale remains a true ceiling.
+    -- exponential base size.
+    --
+    -- This used to clamp the multiplied result back to maxScale, which made the
+    -- tier DEAD: since the base draw was already clamped, ~38% of bases sat at
+    -- exactly maxScale and 100% of large-tier draws were multiplied back down
+    -- to it, so a "2-4x" landmark rock was indistinguishable from an ordinary
+    -- one. The ceiling for a landmark is therefore its own value,
+    -- largeMaxScale, not maxScale.
     if self.largeChance > 0 and rng:getUniform() < self.largeChance then
       scale = scale * (2.0 + 2.0 * rng:getUniform())
-      if scale > self.maxScale then scale = self.maxScale end
+      if scale > self.largeMaxScale then scale = self.largeMaxScale end
     end
     local asteroid = Asteroid(rng:get31(), scale, { static = self.static })
     asteroid:setPos(Vec3f(x, y, z))
@@ -295,13 +382,40 @@ end
 function AsteroidField:update (shipPos)
   local cs = self.chunkSize
   local px, py, pz = shipPos.x, shipPos.y, shipPos.z
+
+  -- Chunk membership does not need a full neighborhood scan every frame. Scan
+  -- after 250 world units of travel (or immediately when a live stream setting
+  -- changes). The candidate radius is expanded by that same interval, so a
+  -- chunk that crossed the normal load radius between scans is still loaded
+  -- early, never late relative to the fade.
+  local scanStep = math.min(250, cs * 0.1)
+  local lastX, lastY, lastZ = self.lastScanX, self.lastScanY, self.lastScanZ
+  if lastX ~= nil
+     and self.lastScanLoadDist == self.loadDist
+     and self.lastScanUnloadDist == self.unloadDist
+     and self.lastScanPerChunk == self.perChunk then
+    local dx, dy, dz = px - lastX, py - lastY, pz - lastZ
+    if dx * dx + dy * dy + dz * dz < scanStep * scanStep then
+      return 0, 0
+    end
+  end
+  self.lastScanX, self.lastScanY, self.lastScanZ = px, py, pz
+  self.lastScanLoadDist = self.loadDist
+  self.lastScanUnloadDist = self.unloadDist
+  self.lastScanPerChunk = self.perChunk
+
   local ccx, ccy, ccz = self:chunkOf(px, py, pz)
   local ld, ud = self.loadDist, self.unloadDist
-  local ld2, ud2 = ld * ld, ud * ud
+  local ud2 = ud * ud
   local touched = 0
 
-  -- Load: chunk centres within loadDist of the SHIP.
-  local r = math.ceil(ld / cs)
+  -- Load chunks by CENTRE distance. With rocks clamped to their cell, the
+  -- half-diagonal bound is exact and getFadeBand places the end of the fade
+  -- before the nearest possible newly loaded rock.
+  local loadLimit = ld + scanStep
+  local loadLimit2 = loadLimit * loadLimit
+  local r = math.ceil(loadLimit / cs) + 1
+  local solids
   for dx = -r, r do
     for dy = -r, r do
       for dz = -r, r do
@@ -309,14 +423,14 @@ function AsteroidField:update (shipPos)
         local ox = (cx + 0.5) * cs - px
         local oy = (cy + 0.5) * cs - py
         local oz = (cz + 0.5) * cs - pz
-        if ox * ox + oy * oy + oz * oz <= ld2 then
-          if not self.chunks[chunkSalt(cx, cy, cz)] then
-            local chunk = self:generateChunk(cx, cy, cz)
-            for i = 1, #chunk.rocks do
-              self.system:addChild(chunk.rocks[i].entity)
-            end
-            touched = touched + 1
+        if ox * ox + oy * oy + oz * oz <= loadLimit2
+           and not self.chunks[chunkSalt(cx, cy, cz)] then
+          if not solids then solids = self:solids() end
+          local chunk = self:generateChunk(cx, cy, cz, solids)
+          for i = 1, #chunk.rocks do
+            self.system:addChild(chunk.rocks[i].entity)
           end
+          touched = touched + 1
         end
       end
     end

@@ -116,7 +116,7 @@ local SETTINGS = {
   { kind = 'enum',  key = 'nebula.debug',   label = ' - Debug View', default = 1,
     options = { 'Off', 'Density', 'Transmittance', 'Lighting', 'Steps', 'Anchors' }, gpu = 'nebulaDebug' },
   { kind = 'float', key = 'nebula.density', label = ' - Density',    default = 1.5, min = 0, max = 4, gpu = 'nebulaDensity' },
-  { kind = 'float', key = 'nebula.jitter',  label = ' - Ray Jitter', default = 0.05, min = 0, max = 1, gpu = 'nebulaJitter' },
+  { kind = 'float', key = 'nebula.jitter',  label = ' - Ray Jitter', default = 0.5, min = 0, max = 1, gpu = 'nebulaJitter' },
   { kind = 'float', key = 'nebula.ambient', label = ' - Ambient',    default = 1.0, min = 0, max = 3, gpu = 'nebulaAmbient' },
   { kind = 'float', key = 'nebula.palette', label = ' - Palette',     default = 1.0, min = 0, max = 1, gpu = 'nebulaPalette' },
   { kind = 'float', key = 'nebula.background', label = ' - Background', default = 0.2, min = 0, max = 1.5, gpu = 'nebulaBackground' },
@@ -152,8 +152,6 @@ local SETTINGS = {
 
   -- Core render -----------------------------------------------------------
   { kind = 'float', key = 'render.fovY',        label = 'FOV',           default = 75, min = 50, max = 100, gpu = 'fovY' },
-  { kind = 'enum',  key = 'render.superSample', label = 'SuperSampling', default = 1,
-    options = { 'Off', '2x', '4x' }, gpu = 'superSample' },
   -- Asteroid field streaming (Game/Entities/AsteroidField.lua).
   --
   -- These are LIVE and deliberately on the panel rather than buried in Config:
@@ -182,24 +180,21 @@ local SETTINGS = {
   --              chunks keep the density they were built with.
   --
   --   Reach      How far from the ship chunks exist, in units of chunkSize
-  --              (2500), so 4 = rocks out to 10000 units. Raising it reaches
-  --              further but SPREADS the same rocks thinner: total rocks go as
-  --              reach^3 while the count per chunk stays fixed, so reach 4 gives
-  --              a dense near field and reach 8 gives a sparse, vast one (and
-  --              costs 6x the entities -- 2000 rocks at reach 4 became 11555 and
-  --              23ms at reach 8). This is the density-vs-vastness trade, and it
-  --              is why Reach and Rocks/Chunk are the only two you need.
+  --              (2500). Raising it moves chunk loading and the fade horizon
+  --              farther away, but loaded chunk count grows roughly as reach^3.
+  --              Lower Rocks/Chunk to trade density for a larger horizon.
   --
-  -- Pop-in is handled by a distance fade, not by hiding the boundary (see
-  -- AsteroidField:applyFade), so Reach can be set for how the field reads
-  -- rather than to hide a seam. Constraint: Config fadeStart < Reach < unload.
+  -- Pop-in is handled by a distance fade (AsteroidField:getFadeBand); Fade Start
+  -- and Reach are measured in chunk-size multiples. Fade Start must be lower
+  -- than the conservative fade end (Reach - half-cell diagonal - rock radius).
   { kind = 'bool',  key = 'gen.asteroidField.enable',     label = 'Asteroid Field', default = false, gpu = 'asteroidFieldEnabled' },
-  { kind = 'float', key = 'gen.asteroidField.perChunk',   label = ' - Rocks/Chunk', default = 8, min = 0, max = 24, gpu = 'asteroidFieldPerChunk' },
-  { kind = 'float', key = 'gen.asteroidField.loadRadius', label = ' - Reach',       default = 4, min = 1, max = 12, gpu = 'asteroidFieldLoadRadius' },
+  { kind = 'float', key = 'gen.asteroidField.perChunk',   label = ' - Rocks/Chunk', default = 0.8, min = 0, max = 24, gpu = 'asteroidFieldPerChunk' },
+  { kind = 'float', key = 'gen.asteroidField.loadRadius', label = ' - Reach',       default = 12, min = 1, max = 12, gpu = 'asteroidFieldLoadRadius' },
+  { kind = 'float', key = 'gen.asteroidField.fadeStart',  label = ' - Fade Start',  default = 8.75, min = 1, max = 10.5, gpu = 'asteroidFieldFadeStart' },
 
-  -- Temporal anti-aliasing. This is the modern replacement for SuperSampling, and
-  -- the two are NOT additive: SuperSampling scales the WHOLE internal buffer, so
-  -- running both means paying 16x pixels AND the resolve. Turn SS off when TAA is on.
+  -- Temporal anti-aliasing is the interactive AA option. The old live 2x/4x
+  -- supersampling control is gone; only the Screenshot key keeps a hidden one-shot
+  -- 2x render, and it temporarily disables TAA so the two techniques never stack.
   --
   --   enable  master switch
   --   blend   how much of the previous frame to keep. 0 = no temporal effect at
@@ -207,7 +202,8 @@ local SETTINGS = {
   --           maximum ghosting on anything that moves. 0.9 is the usual
   --           compromise; lower it if moving objects smear, raise it if edges crawl.
   --
-  -- Costs two full-screen passes at ~1x pixels, against 16x for 4x SSAA.
+  -- Costs two full-screen passes at the selected render scale. Screenshot-only
+  -- 2x SSAA is 4x the raster pixels; the volumetric march remains base-resolution.
   -- Depth-based reprojection, no velocity buffer -- viable because the world is
   -- static (streamed rocks never move, planets turn at ~0.02 rad/s) so for a
   -- moving camera it is essentially exact. NPCs are the known artifact.
@@ -227,7 +223,7 @@ local SETTINGS = {
     end },
   { kind = 'float', key = 'render.shadow.radius', label = 'Shadow Radius (PCF)', default = 2, min = 0, max = 8 },
   { kind = 'float', key = 'render.shadow.bias',   label = 'Shadow Bias',         default = 0.001, min = -0.01, max = 0.1 },
-  { kind = 'float', key = 'render.shadow.scale',  label = 'Shadow Dist Scale',   default = 0.0005, min = 0, max = 0.01 },
+  { kind = 'float', key = 'render.shadow.scale',  label = 'Shadow Slope Bias',   default = 0.0005, min = 0, max = 0.01 },
 
   { kind = 'bool',  key = 'render.sun.enable',    label = 'Sun Light',       default = true, gpu = 'sunLight' },
   { kind = 'float', key = 'render.sun.intensity', label = ' - Intensity',    default = 1, min = 0, max = 6, gpu = 'sunIntensity' },
@@ -308,14 +304,6 @@ local SETTINGS = {
   -- fires unprompted on load, which reads as a glitch rather than weather.
   -- Must match Config.gpu.planetStormFlash, which is what actually seeds this.
   { kind = 'float', key = 'render.planet.stormFlash', label = ' - Flashes',   default = 0.0, min = 0, max = 3.0, gpu = 'planetStormFlash' },
-  -- Aurorae. TYPE-GATED in Config.App (needs a magnetic dynamo AND an
-  -- atmosphere -- terrestrial and ocean only); this knob only scales worlds that
-  -- already qualify, so turning it up will not light up a desert or a moon.
-  { kind = 'float', key = 'render.planet.aurora',    label = ' - Aurora',    default = 1.0, min = 0, max = 3.0, gpu = 'planetAurora' },
-  -- Lower (green) shell altitude as a fraction of radius. Earth's green band is
-  -- 100-300 km on a 6371 km radius, so ~2-4%; the red band above it is derived
-  -- in the shader at 2.2x this.
-  { kind = 'float', key = 'render.planet.auroraHeight', label = ' - Aurora Alt', default = 0.03, min = 0.0, max = 0.10, gpu = 'planetAuroraHeight' },
   { kind = 'float', key = 'render.planet.terminator', label = 'Planet Terminator',  default = 0.35, min = 0, max = 1,   gpu = 'planetTerminator' },
 
   -- SSAO / GTAO -------------------------------------------------------------
@@ -386,6 +374,12 @@ for _, s in ipairs(SETTINGS) do
     for i, name in ipairs(s.options) do s.optionIndex[name] = i end
   end
 end
+
+-- Capture-only supersampling. Not listed in SETTINGS, so it is intentionally
+-- absent from the normal debug panel. Application temporarily requests 2x for
+-- the Screenshot key; interactive AA is TAA and the live 2x/4x controls invited
+-- accidental quadratic pixel costs.
+Settings.addEnum('render.superSample', 'Screenshot SSAA', 1, { 'Off', '2x' })
 
 local function seedFromGpu (gpu)
   for _, s in ipairs(SETTINGS) do
@@ -544,6 +538,13 @@ function Renderer:freeTAA ()
   self.taaRead = nil
   self.taaValid = false
   self.taaFrame = 0
+end
+
+-- The resolve history is only valid across consecutive TAA-enabled frames.
+-- Toggle-off frames do not update it, so discard it on the next enable rather
+-- than reprojecting stale pixels from before the toggle.
+function Renderer:invalidateTAA ()
+  self.taaValid = false
 end
 
 function Renderer:taa (blend)
@@ -788,6 +789,7 @@ function Renderer:free ()
     self.texAnchors:free()
     self.texAnchors = nil
   end
+  self.uploadedAnchors = nil
   if self.anchorBytes then
     self.anchorBytes:free()
     self.anchorBytes = nil
@@ -1077,30 +1079,26 @@ function Renderer:volume (med)
       self.anchorBytes = Bytes.Create(64 * 16)
     end
 
-    local bytes = self.anchorBytes
-    local p = ffi.cast('float*', bytes:getData())
-    -- Packing contract with include/medium.glsl:
-    --   col0 = (pos.xyz, extX)            -> c.xyz / c.w
-    --   col1 = (density, scale, warp, extY)
-    --   col2 = (coreColor.rgb, extZ)      -> the per-anchor core albedo + z extent
-    --   col3 = (rimColor.rgb, -)          -> the per-anchor rim albedo
-    -- The record in NebulaVolumes.build is {px,py,pz, extX,extY,extZ, density,
-    -- scale, warp, core.rgb, rim.rgb} (1..15, plus a named d2). This offset was
-    -- stale by the three extent fields at one point: `scale` landed in the
-    -- density slot and the colour was read from (scale, warp, core.r), so the
-    -- noise was sampled at p*extZ (~1e9, where the sin hash is pure garbage) ->
-    -- the per-pixel "green speckle". The extents and the rim colour were dropped
-    -- entirely: every plume was a sphere of extX with one flat colour, though
-    -- NebulaVolumes authors all three extents and a second tone per plume.
-    for i = 1, volCount do
-      local a = anchors[i]
-      local o = (i - 1) * 16
-      p[o + 0], p[o + 1], p[o + 2], p[o + 3]  = a[1], a[2], a[3], a[4]
-      p[o + 4], p[o + 5], p[o + 6], p[o + 7]  = a[7], a[8], a[9], a[5]
-      p[o + 8], p[o + 9], p[o + 10], p[o + 11] = a[10], a[11], a[12], a[6]
-      p[o + 12], p[o + 13], p[o + 14], p[o + 15] = a[13], a[14], a[15], 0
+    -- Anchor records only change when GameView rebuilds the cell/radius/coverage
+    -- selection. Avoid re-packing and re-uploading the same 1KB RGBA32F table on
+    -- every frame; lightning already uses the same upload-on-change pattern.
+    if anchors ~= self.uploadedAnchors then
+      local bytes = self.anchorBytes
+      local p = ffi.cast('float*', bytes:getData())
+      -- Packing contract with include/medium.glsl:
+      -- col0=(pos.xyz,extX), col1=(density,scale,warp,extY),
+      -- col2=(core.rgb,extZ), col3=(rim.rgb,-).
+      for i = 1, volCount do
+        local a = anchors[i]
+        local o = (i - 1) * 16
+        p[o + 0], p[o + 1], p[o + 2], p[o + 3]  = a[1], a[2], a[3], a[4]
+        p[o + 4], p[o + 5], p[o + 6], p[o + 7]  = a[7], a[8], a[9], a[5]
+        p[o + 8], p[o + 9], p[o + 10], p[o + 11] = a[10], a[11], a[12], a[6]
+        p[o + 12], p[o + 13], p[o + 14], p[o + 15] = a[13], a[14], a[15], 0
+      end
+      self.texAnchors:setDataBytes(bytes, PixelFormat.RGBA, DataFormat.Float)
+      self.uploadedAnchors = anchors
     end
-    self.texAnchors:setDataBytes(bytes, PixelFormat.RGBA, DataFormat.Float)
   end
 
   -- Lightning storm flash sources (bounded ≤6 rows, re-upload only on change).
@@ -1168,7 +1166,7 @@ function Renderer:volume (med)
       Shader.SetFloat('volSteps',   stepF)
       Shader.SetFloat('volDist',    volDist)
       Shader.SetFloat('volEvals',   evalF)
-      Shader.SetFloat('volJitter',  Settings.get('nebula.jitter') or 0.05)
+      Shader.SetFloat('volJitter',  Settings.get('nebula.jitter') or 0.5)
       Shader.SetFloat('volAmbient', Settings.get('nebula.ambient') or 1.0)
       Shader.SetFloat('volPalette', Settings.get('nebula.palette') or 1.0)
       Shader.SetFloat3('volFlow', 40 * fx / fl, 40 * fy / fl, 40 * fz / fl)

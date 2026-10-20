@@ -216,6 +216,20 @@ function Entity:setVelocity (velocity)
   self.body:setLinearVelocity(velocity)
 end
 
+--[[ getPreStepVelocity -- velocity as it was BEFORE the solver ran this step.
+
+  Use this, not getVelocity, whenever you are measuring an IMPACT rather than
+  current motion. stepSimulation applies the contact impulse before anything
+  downstream sees the result, so getVelocity on a body that just hit something
+  head-on returns the small residual slide, not the speed it arrived at. That
+  difference is the difference between 100 u/s and 16 u/s on the same frame. ]]
+function Entity:getPreStepVelocity ()
+  assert(self.body)
+  local vel = Vec3f()
+  self.body:getPreStepVelocity(vel)
+  return vel
+end
+
 function Entity:getVelocityLocal ()
   assert(self.body)
   local velocity = Vec3f()

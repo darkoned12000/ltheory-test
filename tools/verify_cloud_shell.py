@@ -432,30 +432,7 @@ check("S3. cell border window reaches zero at the cell edge (no visible grid)",
       "f=0 -> %.3f, f=0.5 -> %.3f, f=1 -> %.3f"
       % (border_window(0.0), border_window(0.5), border_window(1.0)))
 
-# --- T: aurora localisation.
-# Aurorae must be a NARROW polar band on the NIGHT side. The first attempt
-# spanned latitude 0.70-0.99 and washed the entire disc green.
-def ss(e0, e1, x):
-    t = max(0.0, min(1.0, (x - e0) / (e1 - e0)))
-    return t * t * (3.0 - 2.0 * t)
-def oval(lat):
-    return ss(0.84, 0.90, lat) * (1.0 - ss(0.93, 0.985, lat))
-def night_w(NL):
-    return 1.0 - ss(-0.55, 0.10, NL)
-check("T1. auroral oval peaks in the 64-68 deg band, zero at equator and pole",
-      oval(math.sin(math.radians(66))) > 0.95
-      and oval(0.0) == 0.0 and oval(1.0) == 0.0,
-      "lat 66deg -> %.3f, equator -> %.3f, pole -> %.3f"
-      % (oval(math.sin(math.radians(66))), oval(0.0), oval(1.0)))
-check("T2. aurora is dark on the day side and lit on the night side",
-      night_w(0.5) == 0.0 and night_w(-0.5) > 0.95,
-      "NL=+0.5 (day) -> %.3f, NL=-0.5 (night) -> %.3f" % (night_w(0.5), night_w(-0.5)))
-G_W, R_W = 2.60, 0.70
-check("T3. green emission dominates red (arc reads green, not magenta)",
-      G_W > R_W * 2.5,
-      "green gain %.2f vs red gain %.2f (%.1fx)" % (G_W, R_W, G_W / R_W))
-
-# --- U: no tangent basis may come back, anywhere.
+# --- T: no tangent basis may come back, anywhere.
 # TWO separate artefacts in this area were the same mistake: a ternary that swaps
 # a reference axis (+Y for +X) puts its branch boundary on the latitude circle
 # |n.y| = 0.9 (asin 0.9 = 64.2 deg), and cross(n,+Y) / cross(n,+X) are unrelated

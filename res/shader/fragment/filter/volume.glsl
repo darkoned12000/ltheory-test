@@ -74,32 +74,32 @@ void main () {
 
   // Multiplicative tint filter (1.0, 1.0, 1.0 = neutral pass-through)
   vec3 tintFilter = mix(vec3(1.0), volTint, volTintAmt);
+  // These terms are constant along this pixel's ray. Evaluate the cube sample,
+  // star normalization, and HG phase once per pixel instead of once per march
+  // step (up to 48 repeated cube samples per half-resolution pixel).
+  vec3 sunDir = normalize(starDir);
+  float sunPhase = hgPhase(dot(rd, sunDir));
+  vec3 ambient = textureLod(irMap, rd, 6.0).xyz * volAmbient;
 
   for (int i = 0; i < 48; ++i) {
     if (float(i) + 0.5 >= volSteps) break;
+    if (tr < 0.001) break; // negligible remaining contribution in the HDR buffer
 
     vec3 p = ro + rd * min((float(i) + 0.5 + (bn - 0.5) * volJitter) * step, tCap);
     vec4 mc = mediumCloud(p);
     float rho = mc.x;
 
     if (rho > 1e-6) {
-      float ndl = dot(rd, normalize(starDir));
-
-      // Illumination = (Sun Radiance + Ambient Skybox Starlight) * Plume Palette * Tint Filter
-      //
-      // Ambient starlight comes from the IR cube at a HIGH mip. LOD 0 still
-      // carries bright point features (stars), and sampling it per pixel mapped
-      // each one to a dot on screen -> dots landed on planets ("light shining
-      // through the planet"). A blurred LOD gives a smooth ambient instead.
-      // (GenIRMap mipmaps, so this is well-defined.)
-      vec3 ambient = textureLod(irMap, rd, 6.0).xyz * volAmbient;
+      // Illumination = (Sun Radiance + Ambient Skybox Starlight) * Plume Palette * Tint Filter.
+      // Ambient uses a high IR mip: LOD 0 carries point stars that would map
+      // onto planets as dots instead of smooth sky fill.
       // The medium's own albedo/tint, applied to EVERY radiance term so the
       // local cloud keeps a single colour. The lightning used to be added after
       // this multiply, so a strike lit its plume with the bare blue-white lamp
       // colour -> a small cloud in a shade that didn't match the surrounding
       // nebula. A bolt is blue-white; the gas it lights is mauve.
       vec3 albedo = mix(volTint, mc.yzw, volPalette) * tintFilter;
-      vec3 light = (sunColor * hgPhase(ndl) + ambient) * albedo;
+      vec3 light = (sunColor * sunPhase + ambient) * albedo;
       // Also bound the per-sample radiance so no direction can spike.
       light = min(light, vec3(3.0));
 

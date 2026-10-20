@@ -209,6 +209,13 @@ function Application:run ()
           self.prevSS = Settings.get('render.superSample')
           Settings.set('render.superSample', 2)
         end
+        -- SSAA and TAA are alternatives. The capture gets one clean 2x spatial
+        -- sample instead of paying for both high-resolution rasterization and
+        -- temporal history on the same frame.
+        if Settings.exists('render.taa.enable') then
+          self.prevTAA = Settings.get('render.taa.enable')
+          Settings.set('render.taa.enable', false)
+        end
       end
 
       if Input.GetPressed(Bindings.ToggleFullscreen) then
@@ -280,12 +287,11 @@ function Application:run ()
         'render.planet.atmoGlow', 'render.planet.clouds',
         'nebula.enable', 'postfx.godrays.enable', 'postfx.bloom.enable',
         'postfx.exposure.meter', 'postfx.tonemap.enable',
-        'render.resolutionScale', 'render.superSample',
+        'render.resolutionScale',
         'render.planet.cloudsEnabled', 'render.planet.clouds', 'render.planet.cloudHeight',
         'render.planet.cloudShadow', 'render.planet.cloudWind',
     'render.planet.spinRate', 'render.planet.ringsEnabled', 'render.planet.ringVariation', 'render.planet.ringChance',
     'render.planet.ringOpacity', 'render.planet.ringBright', 'render.planet.ringEnv', 'render.planet.storms', 'render.planet.stormFlash',
-    'render.planet.aurora', 'render.planet.auroraHeight',
         -- The medium knobs, because a nebula A/B is worthless without them.
         -- Measured missing: a Low-vs-High comparison at identical density looked
         -- like a real inversion (Low brighter) and the only reason it could not
@@ -330,6 +336,10 @@ function Application:run ()
       if self.prevSS then
         Settings.set('render.superSample', self.prevSS)
         self.prevSS = nil
+      end
+      if self.prevTAA ~= nil then
+        Settings.set('render.taa.enable', self.prevTAA)
+        self.prevTAA = nil
       end
     end
 

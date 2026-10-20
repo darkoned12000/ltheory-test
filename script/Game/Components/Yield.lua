@@ -1,4 +1,5 @@
 local Entity = require('Game.Entity')
+local Registry = require('Game.EconomyRegistry')
 
 -- NOTE : The 'size' of an entity's yield serves as a rate limiter. No more
 --        than 'size' (energy-normalized) units of item may be extracted per
@@ -14,6 +15,7 @@ function Entity:addYield (item, size)
   assert(not self.yield)
   self.yield = Yield(item, size)
   self:register(Event.Debug, Entity.debugYield)
+  Registry.register(self)
 end
 
 function Entity:debugYield (state)

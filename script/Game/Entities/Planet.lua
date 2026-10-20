@@ -1,4 +1,6 @@
 local Entity = require('Game.Entity')
+local Material = require('Game.Material')
+local Shadow = require('Game.Shadow')
 
 -- Weighted pick from a type table (a planet picks a surface TYPE from its seed).
 local function pickType (rng, types)
@@ -71,11 +73,6 @@ local Planet = subclass(Entity, function (self, seed, opts)
     t = t or pickType(rng, Config.render.planet.types)
   end
   self.typeName = t.name
-  -- Can this body emit aurorae? Needs a global magnetic dynamo AND an
-  -- atmosphere to excite, which is a per-type property, not a per-planet one.
-  -- Default 0 so a type that has not thought about it (including the implicit
-  -- 'moon' type built above) simply never emits.
-  self.auroraCapable = (t.aurora or 0.0)
 
   -- Kept on the entity for the boot log. This is the seed the surface cube was
   -- generated from, and that cube carries BOTH the terrain and the baked cloud
@@ -388,6 +385,20 @@ function Planet:render (state)
   -- thruster's point-light shadow map, so skip it there. It still goes into the
   -- sun map so it can occlude the ship/asteroids.
   if state.pass == 'pointshadow' then return end
+  if state.pass == 'sunshadow' then
+    if Shadow.isInMap(self, state) then
+      -- The sun pass needs only the opaque terrain silhouette. Using the planet
+      -- material here used to run its full procedural terrain/atmosphere shader
+      -- into a depth-only target (and its logarithmic depth was not valid for an
+      -- orthographic shadow map).
+      local shadow = Material.Shadow()
+      shadow:start()
+      shadow:setState(self)
+      self.mesh:draw()
+      shadow:stop()
+    end
+    return
+  end
   -- Engine sun, mirrored so the atmosphere tracks render.sun.* like every other
   -- surface term. starColor carries the hue (the same warmth mix GameView uses
   -- to build the scene's sunColor) and atmoSun the intensity x the scattering
@@ -461,17 +472,6 @@ function Planet:render (state)
     -- (0 is truthy in Lua, so a slider dragged to 0 arrives here as 0, not nil.)
     Shader.SetFloat('stormFlash', Settings.get('render.planet.stormFlash') or 0.0)
 
-    -- ---- Aurorae ----------------------------------------------------------
-    -- Gated on the per-type `aurora` flag (see Config.App types): a dynamo AND
-    -- an atmosphere. Multiplied by hasAtmo as a belt-and-braces check, so a type
-    -- that gains the flag but loses its air still cannot emit.
-    local auroraKnob = Settings.get('render.planet.aurora')
-    if auroraKnob == nil then auroraKnob = 1.0 end
-    local canAurora = self.hasAtmo and (self.auroraCapable and 1.0) or 0.0
-    Shader.SetFloat('auroraAmt', canAurora * auroraKnob)
-    -- Green emission sits at 100-300 km on a 6371 km Earth, so ~2-4% of radius;
-    -- the red band above it is derived in the shader at 2.2x this altitude.
-    Shader.SetFloat('auroraHeight', Settings.get('render.planet.auroraHeight') or 0.03)
     -- Local axes in world space + spin axis. Shared with the ring draw by
     -- uploadPlanetFrame. The surface cube is authored in local space so the
     -- terrain spins with the body, and the cloud shell must convert a

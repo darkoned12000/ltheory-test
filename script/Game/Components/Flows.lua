@@ -7,11 +7,13 @@
 ----------------------------------------------------------------------------]]--
 
 local Entity = require('Game.Entity')
+local Registry = require('Game.EconomyRegistry')
 
 function Entity:addFlows ()
   assert(not self.flows)
   self.flows = {}
   self:register(Event.Debug, Entity.debugFlows)
+  Registry.register(self)
 end
 
 function Entity:debugFlows (state)

@@ -3,12 +3,13 @@ GameView.__index = GameView
 setmetatable(GameView, UI.Container)
 
 GameView.name = 'Game View'
-local ssTable = { 1, 2, 4 }
+local ssTable = { 1, 2 }
 local rsTable = { 1.0, 0.85, 0.75, 0.67, 0.50 }
 local Batcher = require('Game.Batcher')
 local NebulaVolumes = require('Game.NebulaVolumes')
 local LightningStorm = require('Game.LightningStorm')
 local CaptureHarness = require('phx.util.CaptureHarness')
+local Frustum = require('Game.Frustum')
 
 -- PHX_DEBUG_DUMP=<frame> : save pipeline checkpoints to PNGs once, at that frame.
 -- Set PHX_DEBUG_DUMP=120 to snapshot ~2s after boot.
@@ -145,18 +146,30 @@ local function shadowSize (sx, sy)
 end
 
 function GameView:buildShadowFrustum (lightPos, eye, halfSize)
-  local d = (eye - lightPos):length()
-  local z = Vec3f(0, math.max(d, 1e-4), 0):normalize()
+  -- Camera at lightPos looking toward eye; +Z is its back axis. The old code
+  -- accidentally used a constant +Y axis for every shadow map.
+  local z = (lightPos - eye):normalize()
+  if z:length() < 1e-4 then z = Vec3f(0, 0, 1) end
   local ref = (math.abs(z.y) < 0.999) and Vec3f(0, 1, 0) or Vec3f(1, 0, 0)
   local x = (ref:cross(z)):normalize()
   local y = (z:cross(x)):normalize()
-  local view = Matrix.FromBasis(x, y, z):product(Matrix.Translation(-lightPos.x, -lightPos.y, -lightPos.z))
+  local basis = Matrix.FromBasis(x, y, z)
+  local inverseBasis = basis:inverse()
+  local translation = Matrix.Translation(-lightPos.x, -lightPos.y, -lightPos.z)
+  local view = inverseBasis:product(translation)
   local proj = Matrix.Ortho(-halfSize, halfSize, -halfSize, halfSize, 0.1, 2 * halfSize)
-  return view:product(proj)
+  local viewProj = proj:product(view)
+  basis:free()
+  inverseBasis:free()
+  translation:free()
+  view:free()
+  proj:free()
+  return viewProj
 end
 
 -- Render per-light shadow maps into Depth32F textures (called before the light passes).
 function GameView:renderShadows (world, lights)
+  Profiler.Begin('Render.PointShadows')
   local eye = self.camera.pos
   self.shadowTexts = self.shadowTexts or {}
   self.shadowProjs = self.shadowProjs or {}
@@ -188,19 +201,26 @@ function GameView:renderShadows (world, lights)
       local sw, sh = shadowSize(self.sx, self.sy)
       tex = Tex2D.Create(sw, sh, TexFormat.Depth32F)
       tex:setMinFilter(TexFilter.Linear)
-      tex:genMipmap()
+      tex:setMagFilter(TexFilter.Linear)
       self.shadowTexts[light.entity] = tex
     end
 
     local halfSize = math.max((eye - light.lp):length() * 0.5, 100000)
     local proj = self:buildShadowFrustum(light.lp, eye, halfSize)
+    if self.shadowProjs[light.entity] then self.shadowProjs[light.entity]:free() end
     self.shadowProjs[light.entity] = proj
 
-    RenderTarget.Push(self.sx, self.sy)
+    -- The viewport must match the shadow map's own resolution -- see the note
+    -- in renderSunShadow. Pushing the full window size here rasterized the
+    -- 1024x1024 map through a 4K viewport.
+    local shadowSize = tex:getSize()
+    RenderTarget.Push(shadowSize.x, shadowSize.y)
     RenderTarget.BindTex2D(tex)
 
     ShaderVar.PushMatrix('mView', proj)
-    ShaderVar.PushMatrix('mProj', Matrix.Identity())
+    local identity = Matrix.Identity()
+    ShaderVar.PushMatrix('mProj', identity)
+    identity:free()
     ShaderVar.PushFloat3('eye', light.lp.x, light.lp.y, light.lp.z)
     BlendMode.PushDisabled()
     CullFace.Push(CullFace.Back)
@@ -209,7 +229,8 @@ function GameView:renderShadows (world, lights)
 
     Draw.ClearDepth(1)
 
-    world:render(Event.Render(BlendMode.Disabled, eye, 'pointshadow'))
+    world:render(Event.Render(BlendMode.Disabled, eye, 'pointshadow',
+                              light.lp, 2.5 * halfSize))
 
     RenderState.PopDepthWritable()
     RenderState.PopDepthTest()
@@ -220,6 +241,7 @@ function GameView:renderShadows (world, lights)
     ShaderVar.Pop('eye')
     RenderTarget.Pop()
   end
+  Profiler.End()
 end
 
 -- Whole-scene sun shadow map, sampled in light/dir.glsl.
@@ -237,21 +259,36 @@ function GameView:renderSunShadow (world)
     local sw, sh = sunShadowSize(self.sx, self.sy, target)
     self.sunShadowTex = Tex2D.Create(sw, sh, TexFormat.Depth32F)
     self.sunShadowTex:setMinFilter(TexFilter.Linear)
-    self.sunShadowTex:genMipmap()
+    self.sunShadowTex:setMagFilter(TexFilter.Linear)
     self.sunShadowSizeKey = key
   end
 
   local range = Settings.get('render.sun.shadowRange') or 8000
   local sd = Vec3f(world.starDir.x, world.starDir.y, world.starDir.z):normalize()
   self.sunShadowCenter = self.camera.pos
-  local proj = self:buildShadowFrustum(self.sunShadowCenter, self.sunShadowCenter - sd, range)
+  -- Put the orthographic camera one range UPSTREAM, on the sun side, and look
+  -- through the camera centre along the incoming-light direction. A camera at
+  -- the receiver centre clips all potential occluders on the sunward half-space,
+  -- which made the map look unresponsive as range/resolution were adjusted.
+  local shadowEye = self.sunShadowCenter + sd:muls(range)
+  local proj = self:buildShadowFrustum(shadowEye, self.sunShadowCenter, range)
+  if self.sunShadowProj then self.sunShadowProj:free() end
   self.sunShadowProj = proj
 
-  RenderTarget.Push(self.sx, self.sy)
+  -- The viewport MUST match the shadow map's own resolution. It used to be pushed
+  -- at the full window size (self.sx x self.sy), so a 512x512 map was being
+  -- rasterized through a 3840x2160 viewport: every shadow fragment was shaded
+  -- 8.3 MILLION pixels wide and then thrown away by the 512x512 attachment.
+  -- That is the entire cost of the sun-shadow pass (measured 1.74 ms/frame, the
+  -- second-largest item in the frame) and it is pure waste.
+  local shadowSize = self.sunShadowTex:getSize()
+  RenderTarget.Push(shadowSize.x, shadowSize.y)
   RenderTarget.BindTex2D(self.sunShadowTex)
 
   ShaderVar.PushMatrix('mView', proj)
-  ShaderVar.PushMatrix('mProj', Matrix.Identity())
+  local identity = Matrix.Identity()
+  ShaderVar.PushMatrix('mProj', identity)
+  identity:free()
   ShaderVar.PushFloat3('eye', self.sunShadowCenter.x, self.sunShadowCenter.y, self.sunShadowCenter.z)
   BlendMode.PushDisabled()
   CullFace.Push(CullFace.Back)
@@ -260,7 +297,8 @@ function GameView:renderSunShadow (world)
 
   Draw.ClearDepth(1)
 
-  world:render(Event.Render(BlendMode.Disabled, self.sunShadowCenter, 'sunshadow'))
+  world:render(Event.Render(BlendMode.Disabled, self.sunShadowCenter, 'sunshadow',
+                            self.sunShadowCenter, math.sqrt(3) * range))
 
   RenderState.PopDepthWritable()
   RenderState.PopDepthTest()
@@ -418,7 +456,7 @@ function GameView:draw (focus, active)
   end
   self.camera:push()
 
-  local ss = ssTable[Settings.get('render.superSample')]
+  local ss = ssTable[Settings.get('render.superSample')] or 1
   local rs = rsTable[Settings.get('render.resolutionScale') or 1] or 1.0
   local x, y, sx, sy = self:getRectGlobal()
   ClipRect.PushDisabled()
@@ -434,6 +472,12 @@ function GameView:draw (focus, active)
   CaptureHarness.freezeCamera(self.camera, self.__harnessFrame)
   self.__harnessFrame = (self.__harnessFrame or 0) + 1
   self.camera:beginDraw()
+
+  -- Build this frame's view frustum for CPU-side culling. Without it the
+  -- engine submitted every visible mesh every frame, including the thousands of
+  -- asteroid-field rocks that are behind the camera -- the single largest cost
+  -- in the frame. See Game/Frustum.lua.
+  Frustum.setCurrent(Frustum.build(self.camera, Settings.get('render.fovY')))
 
   -- A destroyed controlling ship detaches from the tree, so player:getRoot()
   -- returns the detached ship (or nil). Fall back to the sector so a death
@@ -451,6 +495,12 @@ function GameView:draw (focus, active)
   end
   local eye = self.camera.pos
   world:beginRender()
+
+  -- The asteroid curtain samples the same 64x64 blue-noise tile used by GTAO
+  -- and volumetrics. Lazily built and cached by getAoNoise(); bind it on the
+  -- shader-var stack because asteroid material autovars are uploaded at
+  -- Shader_Start, not at the point of each draw.
+  ShaderVar.PushTex2D('rockFadeNoise', self:getAoNoise())
 
   local sUn = Settings.get('render.sun.enable')
   local sunCol, sunFill
@@ -471,8 +521,18 @@ function GameView:draw (focus, active)
   -- Shadow cadence: every shadow map is a full scene render, so update them only
   -- every Nth frame (render.shadow.period). Maps + projs persist between updates
   -- and the passes reuse them.
+  --
+  -- ROUND, not floor. The period is a float slider, and floor() silently
+  -- mapped every value in [1, 2) to 1 -- so a slider reading 1.953 (or 1.2, or
+  -- 1.5) re-rendered the shadow maps EVERY frame, exactly as if the slider were
+  -- still at its minimum. That is the difference between amortizing the sun
+  -- shadow over 2 frames and paying for it twice as often as the displayed value
+  -- implies -- and it is why the shadow sliders looked like they did nothing.
   do
-    local period = math.max(1, math.floor(Settings.get('render.shadow.period') or 1))
+    -- NOTE the parentheses around the default: `or` binds looser than `+`, so
+    -- `x or 1 + 0.5` parses as `x or (1 + 0.5)` and the rounding never
+    -- happens when the setting exists.
+    local period = math.max(1, math.floor((Settings.get('render.shadow.period') or 1) + 0.5))
     if (self.shadowTick or 0) <= 0 then
       self.updateShadows = true
       self.shadowTick = period - 1
@@ -513,23 +573,31 @@ function GameView:draw (focus, active)
       lights = {}
       self.lights = lights
     end
-    local n = 0
-    for i, v in world:iterChildren() do
-      if v:hasLight() then
-        n = n + 1
-        local e = lights[n]
-        if not e then
-          e = { entity = nil, pos = nil, lp = Vec3f(0, 0, 0), color = nil }
-          lights[n] = e
+    local lightEntities = world.lightEntities
+    if not lightEntities then
+      -- Compatibility for non-System roots used by small test apps.
+      lightEntities = {}
+      for _, entity in world:iterChildren() do
+        if entity.hasLight and entity:hasLight() then
+          lightEntities[#lightEntities + 1] = entity
         end
-        local p = v:getPos()
-        e.entity = v
-        e.pos = p
-        e.lp.x = p.x
-        e.lp.y = p.y + 5
-        e.lp.z = p.z
-        e.color = v:getLight()
       end
+    end
+    local n = #lightEntities
+    for i = 1, n do
+      local v = lightEntities[i]
+      local e = lights[i]
+      if not e then
+        e = { entity = nil, pos = nil, lp = Vec3f(0, 0, 0), color = nil }
+        lights[i] = e
+      end
+      local p = v:getPos()
+      e.entity = v
+      e.pos = p
+      e.lp.x = p.x
+      e.lp.y = p.y + 5
+      e.lp.z = p.z
+      e.color = v:getLight()
     end
     for j = n + 1, #lights do lights[j] = nil end
 
@@ -568,11 +636,16 @@ function GameView:draw (focus, active)
 
     do -- Direct sunlight
       if sUn then
+        Profiler.Begin('Render.SunLight')
         local shader = Cache.Shader('worldray', 'light/dir')
         if shader then
-          if Settings.get('render.sun.shadows') and self.updateShadows then
+          local sunShadows = Settings.get('render.sun.shadows')
+          if sunShadows and self.updateShadows then
+            Profiler.Begin('Render.SunShadow')
             self:renderSunShadow(world)
+            Profiler.End()
           end
+          local shadowEnabled = sunShadows and self.sunShadowTex ~= nil
           self.renderer.buffer2:push()
           BlendMode.PushAdditive()
           shader:start()
@@ -580,26 +653,31 @@ function GameView:draw (focus, active)
           Shader.SetFloat ('materialSpec', Settings.get('lighting.specular') or 0.35)
           Shader.SetTex2D('texDepth', self.renderer.zBufferL)
           Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
-          if self.sunShadowTex then
+          Shader.SetFloat('shadowEnable', shadowEnabled and 1 or 0)
+          if shadowEnabled then
             Shader.SetTex2D('texShadow', self.sunShadowTex)
             Shader.SetMatrix ('sShadowProj', self.sunShadowProj)
             Shader.SetFloat  ('sShadowBias',   Settings.get('render.shadow.bias') or 0.001)
             Shader.SetFloat  ('sShadowScale',  Settings.get('render.shadow.scale') or 0.0005)
             Shader.SetFloat  ('sShadowRadius', Settings.get('render.shadow.radius') or 2.0)
-            Shader.SetFloat3 ('sunShadowCenter', self.sunShadowCenter.x, self.sunShadowCenter.y, self.sunShadowCenter.z)
+          else
+            -- Bind a valid texture even though the branch skips sampling.
+            Shader.SetTex2D('texShadow', self.renderer.zBufferL)
           end
           Draw.Rect(-1, -1, 2, 2)
           shader:stop()
           BlendMode.Pop()
           self.renderer.buffer2:pop()
         end
+        Profiler.End()
       end
     end
 
     do -- Local lighting
-      if self.updateShadows then self:renderShadows(world, lights) end
-      local shader = Cache.Shader('worldray', 'light/point')
+      if n > 0 and self.updateShadows then self:renderShadows(world, lights) end
+      local shader = n > 0 and Cache.Shader('worldray', 'light/point') or nil
       if shader then
+        Profiler.Begin('Render.PointLights')
         self.renderer.buffer2:push()
         BlendMode.PushAdditive()
         shader:start()
@@ -630,6 +708,7 @@ function GameView:draw (focus, active)
         shader:stop()
         BlendMode.Pop()
         self.renderer.buffer2:pop()
+        Profiler.End()
       end
     end
 
@@ -654,14 +733,14 @@ function GameView:draw (focus, active)
   -- Alpha (Additive) Pass
   self.renderer:startAlpha(BlendMode.Additive)
   RenderState.PushWireframe(Settings.get('render.wireframe'))
-  world:render(Event.Render(BlendMode.Additive, eye))
+  world:render(Event.Render(BlendMode.Additive, eye, nil, nil, nil, self.cameraVelocity))
   RenderState.PopWireframe()
   self.renderer:stopAlpha()
 
   -- Alpha Pass
   self.renderer:startAlpha(BlendMode.Alpha)
   RenderState.PushWireframe(Settings.get('render.wireframe'))
-  world:render(Event.Render(BlendMode.Alpha, eye))
+  world:render(Event.Render(BlendMode.Alpha, eye, nil, nil, nil, self.cameraVelocity))
   RenderState.PopWireframe()
 
   if Config.debug.physics.drawBoundingBoxesLocal or
@@ -707,11 +786,19 @@ function GameView:draw (focus, active)
   -- The scene is complete at this point (opaque + additive + alpha), and it runs
   -- before the UI pass -- which is correct anyway, because the UI lives in its own
   -- buffer composited after post, so the HUD and debug panel are never smeared.
-  if Settings.get('render.taa.enable') then
+  local taaEnabled = Settings.get('render.taa.enable')
+  if taaEnabled ~= self.taaWasEnabled then
+    self.renderer:invalidateTAA()
+    self.taaWasEnabled = taaEnabled
+  end
+  if taaEnabled then
+    Profiler.Begin('Render.TAA')
     self.renderer:taa(Settings.get('render.taa.blend') or 0.9)
+    Profiler.End()
   end
 
   world:endRender()
+  ShaderVar.Pop('rockFadeNoise')
   ShaderVar.Pop('sunColor')
   ShaderVar.Pop ('sunFill')
   self.camera:endDraw()
@@ -756,10 +843,13 @@ function GameView:draw (focus, active)
       local neb = sys and sys.nebula
       if neb and neb.envMap and neb.irMap then
         local noiseTex = self:getAoNoise()
-        if self.volCellKey ~= NebulaVolumes.cellKey(self.camera.pos) then
-          self.volCellKey = NebulaVolumes.cellKey(self.camera.pos)
+        local volumeRadius = Settings.get('nebula.radius') or 12000
+        local volumeCellKey = tostring(self.ltheory.seed) .. ':'
+                            .. NebulaVolumes.cellKey(self.camera.pos, volumeRadius)
+        if self.volCellKey ~= volumeCellKey then
+          self.volCellKey = volumeCellKey
           self.volumes = NebulaVolumes.build(self.ltheory.seed, self.camera.pos,
-            Settings.get('nebula.radius') or 12000, neb.hue)
+            volumeRadius, neb.hue)
         end
         ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
         ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
@@ -1093,6 +1183,7 @@ function GameView:onUpdate (state)
     local eye = self.camera.pos
     local dt = math.max(1e-10, state.dt)
     local v = (eye - self.eyeLast):scale(1.0 / dt)
+    self.cameraVelocity = v
     local controlling = self.player:getControlling()
     if controlling then
       self.eyeVel:setv(controlling:getVelocity())

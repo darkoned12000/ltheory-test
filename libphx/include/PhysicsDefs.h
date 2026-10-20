@@ -17,6 +17,10 @@ struct RigidBody {
   int          collisionMask;  // Which other groups this object collides with
   float        mass;           // For GetMass and calculating inertia (mass is not stored in btRigidBody)
 
+  /* Linear velocity as it was BEFORE the most recent stepSimulation.
+     See RigidBody_GetPreStepVelocity. Zero before the body has ever stepped. */
+  btVector3    preStepVel;
+
   int          iCompound;      // The index within the compound (-1 when not a compound)
   int          iCompoundShape; // The compound shape (-1 when not a compound)
   RigidBody*   parent;         // The parent object in the compound (null when not a compound)

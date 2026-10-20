@@ -10,6 +10,7 @@ do -- C Definitions
     void    Window_BeginDraw        (Window*);
     void    Window_EndDraw          (Window*);
     void    Window_GetPosition      (Window*, Vec2i* out);
+    void    Window_SetPosition      (Window*, int x, int y);
     void    Window_GetSize          (Window*, Vec2i* out);
     cstr    Window_GetTitle         (Window*);
     void    Window_SetFullscreen    (Window*, bool);
@@ -29,6 +30,7 @@ do -- Global Symbol Table
     BeginDraw        = libphx.Window_BeginDraw,
     EndDraw          = libphx.Window_EndDraw,
     GetPosition      = libphx.Window_GetPosition,
+    SetPosition      = libphx.Window_SetPosition,
     GetSize          = libphx.Window_GetSize,
     GetTitle         = libphx.Window_GetTitle,
     SetFullscreen    = libphx.Window_SetFullscreen,
@@ -53,6 +55,7 @@ do -- Metatype for class instances
       beginDraw        = libphx.Window_BeginDraw,
       endDraw          = libphx.Window_EndDraw,
       getPosition      = libphx.Window_GetPosition,
+      setPosition      = libphx.Window_SetPosition,
       getSize          = libphx.Window_GetSize,
       getTitle         = libphx.Window_GetTitle,
       setFullscreen    = libphx.Window_SetFullscreen,

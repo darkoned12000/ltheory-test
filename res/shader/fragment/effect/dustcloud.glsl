@@ -10,7 +10,6 @@
 
 layout(location = 0) out vec4 fragColor;
 
-uniform sampler2D texDust;
 uniform sampler2D texDepth;
 uniform vec3 sunColor;
 

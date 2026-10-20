@@ -614,6 +614,25 @@ void RigidBody_GetVelocity (RigidBody* self, Vec3f* velocity) {
   *velocity = Vec3f_FromBullet(rigidBody->getLinearVelocity());
 }
 
+/* Linear velocity as it was immediately BEFORE the last stepSimulation.
+
+   Use this, not RigidBody_GetVelocity, to measure an impact. By the time the
+   step is over the solver has already applied the contact impulse, so the live
+   velocity is the POST-impact value: a ship that struck a rock head-on at
+   100 u/s reads back ~16 u/s of residual slide. That made System:handleRamming
+   measure 16 against a 25 u/s damage threshold and silently apply no damage to
+   any collision at all.
+
+   The value is zero for a body that has never stepped, which is the correct
+   answer for "no impact happened". */
+void RigidBody_GetPreStepVelocity (RigidBody* self, Vec3f* velocity) {
+  // A compound part is not in the world's collision object array, so its own
+  // preStepVel is never written by the snapshot; it shares the parent's motion.
+  RigidBody* root = self;
+  while (RigidBody_IsChild(root)) root = root->parent;
+  *velocity = Vec3f_FromBullet(root->preStepVel);
+}
+
 void RigidBody_GetVelocityA (RigidBody* self, Vec3f* velocityA) {
   if (RigidBody_IsChild(self))
     Fatal("RigidBody_GetVelocityA: Not supported on children.");

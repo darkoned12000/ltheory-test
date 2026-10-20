@@ -1,5 +1,8 @@
+--------------------------------------------------------------------------------
+
 local Entity = require('Game.Entity')
 local Jobs = requireAll('Game.Jobs')
+local Registry = require('Game.EconomyRegistry')
 
 --------------------------------------------------------------------------------
 
@@ -26,7 +29,10 @@ function Economy:update (dt)
   table.clear(self.yields)
 
   do -- Cache points-of-interest
-    for _, e in self.parent:iterChildren() do
+    -- From the REGISTRY, not by rescanning every child. See
+    -- Game/EconomyRegistry.lua: rescanning walked ~10,600 asteroid-field
+    -- children five times each, every frame, to find the one station.
+    for _, e in ipairs(Registry.entitiesFor(self.parent)) do
       if e:hasFactory() then insert(self.factories, e) end
       if e:hasFlows() then insert(self.flows, e) end
       if e:hasMarket() then insert(self.markets, e) end

@@ -57,6 +57,13 @@ void Window_GetPosition (Window* self, Vec2i* out) {
   SDL_GetWindowPosition(self->handle, &out->x, &out->y);
 }
 
+/* Place the window on a chosen output. A compositor clamps a windowed surface
+ * to the output it lands on, so on a multi-display desk the window's POSITION
+ * is what actually decides the render resolution. */
+void Window_SetPosition (Window* self, int x, int y) {
+  SDL_SetWindowPosition(self->handle, x, y);
+}
+
 cstr Window_GetTitle (Window* self) {
   return SDL_GetWindowTitle(self->handle);
 }

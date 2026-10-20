@@ -72,6 +72,15 @@ add_custom_target (phx_validate_renderqueue
 add_dependencies (lt phx_validate_renderqueue)
 add_dependencies (phx_validate_renderqueue phx)
 
+add_custom_target (phx_validate_frustum
+  COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_frustum.lua
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating view-frustum culling geometry"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_frustum)
+add_dependencies (phx_validate_frustum phx)
+
 # --- Build-time SDL validation gates ---------------------------------------
 add_custom_target (phx_validate_sdl
   COMMAND "${PHX_VALIDATOR_PY}" tools/validate_sdl.py
