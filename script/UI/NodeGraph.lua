@@ -43,6 +43,9 @@ local cMine      = { r = 0.25, g = 0.45, b = 0.75, a = 0.30 }
 local cTrade     = { r = 0.45, g = 0.75, b = 1.00, a = 0.95 }
 local cLabel     = { r = 1.00, g = 1.00, b = 1.00, a = 0.90 }
 local cReticle   = { r = 1.00, g = 1.00, b = 1.00, a = 0.90 }
+-- A JUMPGATE. Its own hue, so a gate never reads as an ordinary place --
+-- the map's blue is for bodies, amber is for regions, and this is neither.
+local cGate      = { r = 0.45, g = 0.80, b = 1.00, a = 0.95 }
 
 -- LOD classifier: delegates to the default (system) provider. Kept as a
 -- module function because it is the documented LOD contract and unit-tested.
@@ -119,7 +122,9 @@ function NodeGraph:seedFromSystem ()
           x = u.x, y = u.y, tx = u.x, ty = u.y,
           r = u.r or 1,
           major = u.major,
-          color = (e == self.focusEntity) and cPlayer or (u.major and cNode or cMinor),
+          color = (e == self.focusEntity) and cPlayer
+               or (u.cat == 'gate' and cGate)
+               or (u.major and cNode or cMinor),
           label = nil,
         }
         if u.major then n.label = u.label or Util.resolveLabel(e) end
@@ -751,6 +756,7 @@ end
 local function drawSymbolKey (x, y)
   local entries = {
     { 'you', 'you' }, { 'selected', 'selected' }, { 'place', 'place' },
+    { 'gate', 'gate' },
     { 'rock', 'rock' }, { 'trade', 'trade' }, { 'mine', 'mine' },
     { 'drill', 'drillable' },
   }
@@ -763,6 +769,11 @@ local function drawSymbolKey (x, y)
       DrawEx.Ring(gx, y, 5, cSelected)
     elseif kind == 'place' then
       DrawEx.Ring(gx, y, 5, cNode)
+    elseif kind == 'gate' then
+      -- A jumpgate: a ring with a cross through it, in the gate's own
+      -- colour, so a gate never reads as an ordinary place.
+      DrawEx.Ring(gx, y, 5, cGate)
+      DrawEx.Cross(gx, y, 3, cGate)
     elseif kind == 'rock' then
       DrawEx.Point(gx, y, 2.5, cMinor)
     elseif kind == 'trade' then
@@ -945,6 +956,12 @@ function NodeGraph:onDraw (focus, active)
         local ring = selected and cSelected or (n.color or cNode)
         DrawEx.Ring(nx, ny, r, ring)
         DrawEx.Point(nx, ny, r * 0.35, selected and cLabel or cCore)
+        if n.cat == 'gate' then
+          -- A jumpgate gets a cross through it, matching the symbol key.
+          -- A gate is the one thing on the map you can FLY THROUGH, so it
+          -- has to be distinguishable from a place you merely visit.
+          DrawEx.Cross(nx, ny, r * 0.9, ring)
+        end
         if n.isContext then
           -- The body you drilled INTO: an outer ring so it reads as "here".
           DrawEx.Ring(nx, ny, r * 1.7, cCore)

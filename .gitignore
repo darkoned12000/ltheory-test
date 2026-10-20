@@ -29,3 +29,7 @@
 log/settings_dump.txt
 dump_*.png
 screenshot/
+
+# The old Limit Theory warp/wormhole source, dropped in for reference while
+# the jumpgates were ported. Not part of the build.
+/Warping/

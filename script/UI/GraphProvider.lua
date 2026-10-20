@@ -51,6 +51,10 @@ function GraphProvider.system ()
     if entity.hasTrader and entity:hasTrader() then return true, true, 'station' end
     if entity.hasMarket and entity:hasMarket() then return true, true, 'station' end
     if isPlanet then return true, true, 'station' end
+    -- A JUMPGATE is a place, and a place you travel through -- so it gets
+    -- its own category, which gives it its own colour and its own symbol on
+    -- the map. (The old Limit Theory drew its wormholes as wormholes too.)
+    if entity.isWormhole then return true, true, 'gate' end
     -- Ships have SOCKETS -- a hull with hardpoints. A station does not, and
     -- that is what separates the two: both have actions and both have
     -- children, so neither the action nor the child count can tell them

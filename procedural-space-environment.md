@@ -1342,6 +1342,85 @@ The fixes:
   * PHX_PROFILER=1 turns the profiler on at boot, so the imbalance is
     reproducible without pressing F10.
 
+29e. Phase E — the jumpgates, ported from the old game
+-------------------------------------------------------
+
+The old Limit Theory's source was recovered (a `Warping/` folder: Wormhole.cpp,
+WarpNode.cpp, WarpRail.cpp, wormhole.jsl, warprail.jsl, and the whole
+`warpnode/` sound set), and it settles a question the design had left open:
+**the old game had TWO different "warp" systems, and they map exactly onto
+the two tiers the design has.**
+
+    * The WORMHOLE is the jumpgate. A PAIR of linked endpoints, one in each
+      of two sectors, and the travel is a DOCK:
+
+          void Object_Wormholes(ObjectT* o1, ObjectT* o2) {
+            a->GetNavigable()->nodes.push(NavigableNode(b, 0));
+            b->GetNavigable()->nodes.push(NavigableNode(a, 0));
+            a->SetName(o2->GetName() + " Wormhole");
+            b->SetName(o1->GetName() + " Wormhole");
+          }
+
+          void Wormhole::Dock(Object const& docker) override {
+            Object const& dest = Navigable.nodes[0].dest;
+            dest->GetContainer()->AddInterior(docker);
+            docker->SetPos(dest->GetPos() - 1500 * Normalize(dest->GetPos()));
+          }
+
+      That is the "jumpgates are sector-to-sector only" decision, already
+      made and working in the old game.
+
+    * The WARP NODE and WARP RAIL are something else entirely: a physical
+      RAIL TRANSIT network inside a system. A ship flies into a node, is
+      captured by a slot in the node's cross-section (a quadtree over
+      angle x radius, split so each arriving ship gets room), and is then
+      PUSHED along a bezier rail to the next node by forces. That is the
+      old game's INTRA-system warp drive, and it maps onto the "FTL
+      warp-drive planned later for that" decision rather than onto the
+      jumpgates. It is a self-contained system and a good later project.
+
+**THE JUMPGATES, PORTED**
+
+    * script/Game/SectorGraph.lua -- the universe. Eight sectors on a
+      golden-angle spiral through the galaxy, derived from the world seed,
+      so the same galaxy always has the same sectors in the same places with
+      the same names. The graph is a FULLY-CONNECTED MESH: every sector has
+      a gate to every other one, and the gates sit on the sector's rim,
+      spread evenly so they read as a set of places rather than a pile.
+
+    * script/Game/Entities/Wormhole.lua -- the gate. A dockable entity that
+      knows its partner; docking with it moves the ship to the partner's
+      position and tells the app the sector changed. The old engine put the
+      traveller into the destination CONTAINER; this engine's container is
+      the parent tree and the world is one System, so the arrival is a
+      position and a sector index, and the sector's regions and gates are
+      regenerated from the DESTINATION sector's seed.
+
+    * res/shader/fragment/effect/wormhole.glsl -- the old wormhole's
+      fractal glow, ported. The old version started the march at the
+      normalised LOCAL vertex position but marched along a WORLD direction,
+      which is only right for an unrotated object; here the eye is brought
+      into object space properly. The eye is passed in as a uniform rather
+      than derived from the world matrix, because the transform needed is
+      the INVERSE of the world matrix and the shader only has the
+      inverse-TRANSPOSE.
+
+    * res/sound/warpnode/ -- the old warp node's whole sound set (drone1/2/3,
+      droneverb, dronewarp, crackle, lashing, static, frame, group, exit),
+      brought over as MP3: the engine has no master volume and miniaudio's
+      Vorbis decoder has been known to reject some valid streams. The gate
+      hums a drone (a variant per gate) and plays `exit` when you come
+      through.
+
+**WHAT IS STILL MISSING**
+
+The old game's UNIVERSE GENERATOR -- the thing that created the universe by
+linking sectors -- was not in the folder. What is here is a minimal
+replacement: a deterministic spiral of eight sectors, which gives the gates
+something to connect. The real generator is the next thing to port, and it
+is the piece that decides how many sectors exist, how they are placed, and
+which gates exist between them.
+
 30. Visual "Wow Factor" Stack
 
 The desired experience should build in layers.

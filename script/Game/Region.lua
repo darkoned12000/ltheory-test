@@ -592,16 +592,19 @@ end
 -- `galaxySeed` is the world's seed. `index` is which sector of it; there is
 -- only one sector today, and the parameter is where the multi-sector lookup
 -- will go.
-function Sector.state (galaxySeed, x, y, z, index)
+--
+-- `origin` is the sector's own centre -- the regions are placed around it.
+-- It defaults to the world origin, which is sector 0's centre.
+function Sector.state (galaxySeed, x, y, z, index, origin)
   local radius = 60000
-  local origin = { x = 0, y = 0, z = 0 }
+  origin = origin or { x = 0, y = 0, z = 0 }
   -- Config is absent in the OFFLINE validators, which run under a bare
   -- luajit with no engine environment -- hence the guards rather than a
   -- direct read.
   local cfg = Config
   if cfg then
     if cfg.game and cfg.game.sectorRadius then radius = cfg.game.sectorRadius end
-    if cfg.gen and cfg.gen.origin then origin = cfg.gen.origin end
+    if not origin and cfg.gen and cfg.gen.origin then origin = cfg.gen.origin end
   end
 
   local seed = Sector.seedFor(galaxySeed, index or 0)
@@ -637,6 +640,7 @@ function Sector.state (galaxySeed, x, y, z, index)
   return {
     sectorName     = sectorName,
     sectorSeed     = seed,
+    sectorIndex    = index or 0,
     radius         = radius,
     origin         = origin,
     regions        = regions,

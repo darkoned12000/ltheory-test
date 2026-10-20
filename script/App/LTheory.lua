@@ -2,6 +2,7 @@ local Entities = requireAll('Game.Entities')
 local Seed = require('Game.Seed')
 local DebugControl = require('Game.Controls.DebugControl')
 local Sector = require('Game.Region')
+local SectorGraph = require('Game.SectorGraph')
 
 local LTheory = Application()
 
@@ -49,6 +50,16 @@ function LTheory:generate ()
   for i = 1, 1 do
     local station = self.system:spawnStation()
   end
+
+  -- The UNIVERSE: the sectors, and the jumpgates between them.
+  --
+  -- The sectors are laid out deterministically from the world seed, so the
+  -- same galaxy always has the same sectors in the same places with the same
+  -- names -- which is what makes the player's map of it a map of something
+  -- real rather than of a fresh random world every time.
+  self.sectors = SectorGraph.layout(self.seed, Config.game.sectorRadius or 60000)
+  self.sectorIndex = 0
+  self:buildGates()
 
   for i = 1, 0 do
     self.system:spawnAI(100)
@@ -174,6 +185,10 @@ function LTheory:onInit ()
   DebugControl.ltheory = self
   self.gameView = GUI.GameView(self.player)
   self.gameView.ltheory = self
+  -- The audio engine comes up with the GameView, so the gates' hum can only
+  -- start now.
+  self.audioReady = true
+  self:startGateSounds()
   self.canvas = UI.Canvas()
   self.canvas
     :add(self.gameView
@@ -202,6 +217,92 @@ function LTheory:onInput ()
   self.canvas:input()
 end
 
+--[[---------------------------------------------------------------------------
+  buildGates -- (re)create the jumpgates of the current sector.
+
+  A fully-connected mesh, so every other sector has a gate here. The gates
+  sit on the sector's rim, spread evenly, so they read as a set of distinct
+  places rather than a pile on one side.
+
+  The gates are rebuilt on every sector change: the gates of the sector you
+  leave are the gates of the sector you arrive in, and they are different
+  gates.
+-----------------------------------------------------------------------------]]
+function LTheory:buildGates ()
+  if not self.sectors then return end
+
+  -- Clear the old ones.
+  if self.gates then
+    for _, g in ipairs(self.gates) do
+      if g:getParent() then g:getParent():removeChild(g) end
+      g:delete()
+    end
+  end
+  self.gates = {}
+
+  local here = self.sectors[self.sectorIndex + 1]
+  if not here then return end
+
+  for _, gate in ipairs(SectorGraph.gates(self.sectors, self.sectorIndex)) do
+    -- The gate is named after the sector it LEADS TO, not the one it stands
+    -- in -- the old Limit Theory did exactly this:
+    --
+    --   a->SetName(o2->GetName() + " Wormhole");
+    --   b->SetName(o1->GetName() + " Wormhole");
+    --
+    -- so a gate is named for its far end. That is also what makes the name
+    -- useful on the map: "The Tyle Sprawl Wormhole" tells you where you
+    -- will be, which the sector you are standing in obviously does not.
+    local wormhole = Entities.Wormhole({
+      name          = gate.otherName .. ' Wormhole',
+      homeSector    = self.sectorIndex,
+      partnerSector = gate.partner,
+      partnerName   = gate.otherName,
+      partnerPos    = Vec3f(gate.other.x, gate.other.y, gate.other.z),
+      pos           = Vec3f(gate.self.x, gate.self.y, gate.self.z),
+    })
+    -- The arrival handler: the sector has changed, so everything that
+    -- depends on the sector has to be rebuilt.
+    wormhole.onArrive = function (w, e) self:enterSector(w:getPartnerSector(), e) end
+    self.system:addChild(wormhole)
+    self.gates[#self.gates + 1] = wormhole
+    -- The sound waits for the audio engine, which is initialised by the
+    -- GameView's constructor -- and generate() runs BEFORE that. Loading a
+    -- sound before Audio.Init() crashes the engine, so the hum is started
+    -- later (see startGateSounds).
+    if self.audioReady then wormhole:startSound() end
+  end
+end
+
+-- Start the hum on every gate. Called once the audio engine is up.
+function LTheory:startGateSounds ()
+  for _, g in ipairs(self.gates or {}) do g:startSound() end
+end
+
+--[[---------------------------------------------------------------------------
+  enterSector -- the player has arrived in another sector.
+
+  The sector's identity changes: its name, its regions, and its gates. The
+  REGIONS are what the HUD reads and what the map draws, so they are the
+  part that has to be regenerated -- and they are regenerated from the
+  DESTINATION sector's seed, so the sector you arrive in is the sector that
+  was always there, seen for the first time.
+-----------------------------------------------------------------------------]]
+function LTheory:enterSector (index, ship)
+  if index == nil or index == self.sectorIndex then return end
+  self.sectorIndex = index
+  self:buildGates()
+
+  -- The ship is now somewhere else; its sector's state is recomputed from
+  -- its new position.
+  if ship then
+    local p = ship:getPos()
+    local sector = self.sectors[index + 1]
+    self.sectorState = Sector.state(self.seed, p.x, p.y, p.z, index,
+                                    sector and sector.center)
+  end
+end
+
 function LTheory:onUpdate (dt)
   -- getRoot() is nil with no controlling ship, and a DESTROYED ship detaches
   -- from the tree (no `update`). Guard so a bad spawn can't kill the process.
@@ -223,7 +324,10 @@ function LTheory:onUpdate (dt)
   -- panel ends up naming one region while the map highlights another.
   if ship and self.seed then
     local p = ship:getPos()
-    self.sectorState = Sector.state(self.seed, p.x, p.y, p.z)
+    local sector = self.sectors and self.sectors[self.sectorIndex + 1]
+    self.sectorState = Sector.state(self.seed, p.x, p.y, p.z,
+                                    self.sectorIndex or 0,
+                                    sector and sector.center)
   else
     self.sectorState = nil
   end

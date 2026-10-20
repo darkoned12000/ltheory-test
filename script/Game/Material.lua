@@ -110,6 +110,7 @@ end
 
 function Material:stop ()
   self.state:stop()
+  if self.onStop then self.onStop() end
 end
 
 local cache = {}
@@ -169,6 +170,32 @@ function Material.Rock ()
     cache.rock.cullable = true
   end
   return cache.rock
+end
+
+-- The JUMPGATE material: the wormhole's fractal glow.
+--
+-- Ported from the original Limit Theory's Warping/wormhole.jsl, which
+-- raymarched a Mandelbulb-style fractal toward the eye and drew the result
+-- ADDITIVELY on an INVERTED sphere -- you are meant to be looking at the
+-- inside of the portal.
+--
+-- So this material needs culling OFF (the camera is inside the sphere, and
+-- the visible surface is the far wall) and an additive blend.
+function Material.Wormhole ()
+  if not cache.wormhole then
+    cache.wormhole = Material.Create('effect/wormhole')
+    cache.wormhole.onStart = function ()
+      -- Culling off: the gate is a sphere you are INSIDE of, so the surface
+      -- you see is the far side, which is back-facing.
+      RenderState.PushCullFace(CullFace.None)
+      BlendMode.PushAdditive()
+    end
+    cache.wormhole.onStop = function ()
+      BlendMode.Pop()
+      RenderState.PopCullFace()
+    end
+  end
+  return cache.wormhole
 end
 
 return Material
