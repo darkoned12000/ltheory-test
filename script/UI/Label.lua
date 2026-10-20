@@ -35,6 +35,15 @@ function Label:setText (text)
   return self
 end
 
+-- Set this label's colour. Label.fontColor is a CLASS field, so it is shared
+-- by every label -- assigning to it would recolour the whole UI. An instance
+-- field shadows it, and drawText reads self.fontColor, so this only affects
+-- the one label.
+function Label:setFontColor (color)
+  self.fontColor = color
+  return self
+end
+
 function Label:setPollFn (pollFn)
   self.pollFn = pollFn
   return self

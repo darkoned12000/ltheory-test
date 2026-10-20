@@ -389,58 +389,13 @@ local kInventory = 100
 local kStartCredits = 1000000
 local kSystemScale = 10000
 
-local cons = Distribution()
-cons:add('b', 1.5)
-cons:add('c', 2.8)
-cons:add('d', 4.3)
-cons:add('f', 2.2)
-cons:add('g', 2.0)
-cons:add('h', 6.1)
-cons:add('j', 0.2)
-cons:add('k', 0.8)
-cons:add('l', 4.0)
-cons:add('m', 2.4)
-cons:add('n', 6.7)
-cons:add('p', 1.9)
-cons:add('q', 0.1)
-cons:add('r', 6.0)
-cons:add('s', 6.3)
-cons:add('t', 9.1)
-cons:add('v', 1.0)
-cons:add('w', 2.4)
-cons:add('x', 0.2)
-cons:add('z', 0.1)
+-- The name generator now lives in Game/NameGen, so the SECTOR, REGION,
+-- STATION, OUTPOST, JUMPGATE and FIELD layers can all use it. The syllable
+-- tables and the word shape are copied verbatim from the genName that used to
+-- live here, so every name this world already generated is unchanged.
+local NameGen = require('Game.NameGen')
+local genName = NameGen.genName
 
-cons:add('ll', 0.4)
-cons:add('ss', 0.6)
-cons:add('tt', 0.9)
-cons:add('ff', 0.2)
-cons:add('rr', 0.6)
-cons:add('nn', 0.6)
-cons:add('pp', 0.2)
-cons:add('cc', 0.3)
-
-local vowels = Distribution()
-vowels:add('a',  8.2)
-vowels:add('e', 12.7)
-vowels:add('i',  7.0)
-vowels:add('o',  7.5)
-vowels:add('u',  2.8)
-vowels:add('y',  2.0)
-
-vowels:add('ee',  1.2)
-vowels:add('oo',  0.7)
-
-local function genName (rng)
-  local name = {}
-  for i = 1, rng:getInt(2, 5) do
-    insert(name, cons:sample(rng))
-    insert(name, vowels:sample(rng))
-  end
-  name[1] = name[1]:upper()
-  name = join(name)
-  return name
-end
 
 function System:spawnAI (shipCount)
   local player = Entities.Player()

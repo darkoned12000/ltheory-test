@@ -2,6 +2,9 @@ local CameraBindings = require('Game.Controls.CameraBindings')
 local ShipBindings = require('Game.Controls.ShipBindings')
 local Disposition = require('Game.Components.Dispositions')
 local Frustum = require('Game.Frustum')
+local Sector = require('Game.Region')
+local Seed = require('Game.Seed')
+local Container = require('UI.Container')
 
 -- Scratch vector for the frustum pre-cull in drawTargets. The target list
 -- holds every live, damageable entity in the system -- with a streamed
@@ -410,6 +413,120 @@ function HUD:onUpdate (state)
       self.dockable = dockable
     end
   end
+
+  self:updateSectorInfo(pPos)
+end
+
+--[[---------------------------------------------------------------------------
+  updateSectorInfo -- work out where you are, once per frame.
+
+  Kept out of onDraw because the panel and the bearing marker both need it and
+  it must be the SAME answer: a panel saying one region and an arrow pointing
+  at another would be worse than neither.
+
+  The heavy part -- the boundary bearing -- is recomputed only every few
+  frames. The boundary does not move quickly (the ship crosses one in
+  minutes), and the bearing search samples a ring of directions, so a few
+  frames of staleness is invisible.
+----------------------------------------------------------------------------]]
+local BEARING_INTERVAL = 8   -- frames between bearing recomputes
+
+function HUD:updateSectorInfo (shipPos)
+  local app = self.gameView and self.gameView.ltheory
+  local system = app and app.system
+  if not (system and shipPos) then
+    self.sectorInfo = nil
+    return
+  end
+
+  -- The sector's seed. For now there is one sector, so this is the world
+  -- seed; when there are several, this is where the current sector's index
+  -- goes.
+  local galaxySeed = app.seed or Seed.get()
+  local sectorSeed = Sector.seedFor(galaxySeed, 0)
+
+  -- The sector's extent. The asteroid field streams to loadRadius * chunkSize
+  -- around the ship, so the sector has to be at least that big for its
+  -- regions to contain the playable volume.
+  local sectorRadius = Config.game.sectorRadius or 60000
+
+  local regions, sectorName = Sector.regions(sectorSeed, Config.gen.origin,
+                                             sectorRadius)
+
+  local region, weights = Sector.Region.containing(regions, shipPos.x, shipPos.y, shipPos.z)
+  if not region then
+    self.sectorInfo = nil
+    return
+  end
+
+  -- The boundary bearing, recomputed on an interval.
+  self.bearingTick = (self.bearingTick or 0) + 1
+  if not self.bearingDir or self.bearingTick >= BEARING_INTERVAL then
+    self.bearingTick = 0
+    local dir = Sector.Region.boundaryBearing(regions, shipPos.x, shipPos.y, shipPos.z)
+    if dir then
+      self.bearingDir = dir
+    else
+      -- A sector with only ONE region has no interior boundary, so point at
+      -- the sector's edge instead -- the outermost boundary there is. Without
+      -- this the arrow would have nothing to point at in a small sector.
+      local edge = Sector.Region.sectorEdgeBearing(Config.gen.origin,
+                                                  sectorRadius,
+                                                  shipPos.x, shipPos.y, shipPos.z)
+      self.bearingDir = edge and edge[1] or nil
+    end
+  end
+
+  -- How close is the boundary? Used for the readouts, and to decide whether
+  -- the arrow is worth showing at all: if you are deep inside a region, an
+  -- arrow to the boundary is noise.
+  local boundaryDist = nil
+  if weights then
+    for i = 1, #weights do
+      local w = weights[i]
+      if w.region ~= region then
+        local d = w.d
+        if not boundaryDist or d < boundaryDist then boundaryDist = d end
+      end
+    end
+  end
+
+  local info = self.sectorInfo or {}
+  info.sectorLabel  = sectorName
+  info.regionLabel  = region.name
+  info.archetypeLabel = region.archetype and region.archetype.name or ''
+  info.bearingDir   = self.bearingDir
+  info.bearingDist  = boundaryDist
+
+  -- The bearing readout: how far the nearest boundary is. Shown only when it
+  -- is close enough to matter -- an arrow pointing at a boundary 40 km away
+  -- is noise, and the panel should not fill with numbers.
+  if boundaryDist and boundaryDist < 12000 then
+    info.bearingLabel = string.format('%.1f km to boundary', boundaryDist / 1000)
+  else
+    info.bearingLabel = ''
+  end
+
+  self.sectorInfo = info
+end
+
+--[[---------------------------------------------------------------------------
+  The HUD is a Container, so its children (the icon button, and the sector
+  panel) need the standard layout and update hooks. The HUD draws its HUD
+  elements straight into the UI pass, so it overrides onDraw -- which means it
+  has to drive the children's update and layout ITSELF, or they never poll
+  their content and never get positioned.
+----------------------------------------------------------------------------]]
+function HUD:onUpdateChildren (state)
+  Container.onUpdateChildren(self, state)
+end
+
+function HUD:onLayoutSizeChildren ()
+  Container.onLayoutSizeChildren(self)
+end
+
+function HUD:onLayoutPosChildren ()
+  Container.onLayoutPosChildren(self)
 end
 
 function HUD:onDraw (focus, active)
@@ -418,6 +535,99 @@ function HUD:onDraw (focus, active)
   Profiler.Begin('HUD.DrawReticle') self:drawReticle   (self.enabled) Profiler.End()
   Profiler.Begin('HUD.DrawPrompt')  self:drawDockPrompt(self.enabled) Profiler.End()
   Profiler.Begin('HUD.AtmoWarn')    self:drawAtmosphereWarning(self.enabled) Profiler.End()
+  Profiler.Begin('HUD.DrawSector')  self:drawSectorPanel(self.enabled) Profiler.End()
+  Profiler.Begin('HUD.DrawRegion')  self:drawRegionBearing(self.enabled) Profiler.End()
+  -- The HUD's own widgets (the icon button, and the sector panel added as a
+  -- child) are drawn LAST, on top of the world-space overlay. The HUD draws
+  -- its HUD elements straight into the UI pass, so the children have to be
+  -- drawn explicitly -- Container:onDraw is what does that, and overriding
+  -- onDraw without calling it leaves every child invisible.
+  Container.onDraw(self, focus, active)
+end
+
+--[[---------------------------------------------------------------------------
+  drawSectorPanel -- the upper-left readout of where you are.
+
+  Phase A of the region work: name the place you are in. Without it a region
+  is a NUMBER in a field, and crossing one changes nothing you can see or
+  read.
+
+  The panel itself is a UI.SectorPanel widget (see script/UI/SectorPanel.lua)
+  added as a child of the HUD, so it lays itself out and picks up the theme.
+  This function only keeps its content up to date.
+----------------------------------------------------------------------------]]
+function HUD:drawSectorPanel (a)
+  local panel = self.sectorPanel
+  if not panel then return end
+  panel.alpha = a
+end
+
+--[[---------------------------------------------------------------------------
+  drawRegionBearing -- an arrow toward the nearest region boundary.
+
+  Phase B of the region work, and the answer to "which way do I fly?".
+
+  The idiom is the one the sun marker already established (GameView:drawSunMarker):
+  project the direction, and when it falls outside the view rect, CLAMP it to
+  the edge so it reads as a bearing rather than disappearing. A marker that
+  vanishes exactly when you need it is worse than no marker.
+
+  This works at ANY distance, because the boundary is defined by the FIELD --
+  a pure function of position -- and not by geometry. That matters: a region
+  is far larger than the visible reach of the medium (the volumetric march
+  stops at ~14k units; a region spans far more), so a marker that only
+  worked for boundaries you could SEE would be useless most of the time.
+----------------------------------------------------------------------------]]
+function HUD:drawRegionBearing (a)
+  local info = self.sectorInfo
+  if not info or not info.bearingDir or a <= 0.01 then return end
+
+  local camera = self.gameView.camera
+  local w, h = camera.sx, camera.sy
+  if not (w and h and w > 1 and h > 1) then return end
+
+  -- The bearing direction is a WORLD direction. Project it far away so it
+  -- lands at the right screen position.
+  local dir = info.bearingDir
+  local far = camera.pos + Vec3f(dir.x, dir.y, dir.z):normalize():muls(1e5)
+  local ndc = camera:worldToNDC(far)
+  if not (ndc and ndc.z and ndc.z > 0) then return end
+  local s = camera:ndcToScreen(ndc)
+  local cx, cy = tonumber(s and s.x), tonumber(s and s.y)
+  if not (cx and cy and cx == cx and cy == cy) then return end
+
+  -- Rim clamp, exactly as the sun marker does it: clamp each axis by the
+  -- scale that puts it on the edge, and take the SMALLER, so the marker
+  -- exits through the nearest edge and keeps its bearing.
+  local inset = 40
+  local mx, my = w * 0.5, h * 0.5
+  local dx, dy = cx - mx, cy - my
+  local halfW, halfH = mx - inset, my - inset
+  local scaleW = dx ~= 0 and (halfW / math.abs(dx)) or 1e30
+  local scaleH = dy ~= 0 and (halfH / math.abs(dy)) or 1e30
+  local edge = math.min(scaleW, scaleH)
+  local offScreen = edge < 1.0
+  if offScreen then
+    cx, cy = mx + dx * edge, my + dy * edge
+  end
+
+  -- The arrow points the way you would fly to reach the boundary.
+  local ang = math.atan2(dy, dx)
+  local r = offScreen and 16 or 12
+  local alpha = a * (offScreen and 0.85 or 0.6)
+
+  -- A small chevron, drawn in the UI pass (screen space), so it reads as an
+  -- instrument rather than as part of the world.
+  local nx, ny = -math.sin(ang), math.cos(ang)
+  local px, py = math.cos(ang), math.sin(ang)
+  UI.DrawEx.PushAlpha(alpha)
+  for i = -1, 1 do
+    local o = i * 5
+    UI.DrawEx.Line(cx + px * r + nx * o, cy + py * r + ny * o,
+                   cx + px * (r * 0.45), cy + py * (r * 0.45),
+                   Color(0.55, 0.75, 0.95, 1))
+  end
+  UI.DrawEx.PopAlpha()
 end
 
 function HUD:onDrawIcon (iconButton, focus, active)
@@ -463,6 +673,23 @@ function HUD.Create (gameView, player)
 
     children  = List(),
   }, HUD)
+
+  -- The sector/region readout, in the upper left. It is a UI widget (not raw
+  -- draw calls) so it lays itself out and picks up the theme colours; see
+  -- script/UI/SectorPanel.lua.
+  self.sectorPanel = UI.SectorPanel()
+  -- The panel reads the info through a FUNCTION, not a field: the panel's
+  -- labels poll their text during the panel's own update, and the HUD's update
+  -- (which computes the info) can land either side of that in the UI tree's
+  -- update and draw passes. A function is read when the text is generated, so
+  -- the ordering cannot leave the panel a frame stale -- and the very first
+  -- frame cannot leave it empty.
+  self.sectorPanel.infoFn = function () return self.sectorInfo end
+  -- `add`, not `addImmediate`: `add` queues the child with the canvas, and
+  -- the canvas flushes that queue (Canvas:DeferredAddRemove) at the top of
+  -- every update -- so the panel joins the tree on the next frame. Adding it
+  -- directly would bypass the canvas's widget bookkeeping.
+  self:add(self.sectorPanel)
 
   self.icon:setOnDraw(function (ib, focus, active)
     self:onDrawIcon(ib, focus, active)

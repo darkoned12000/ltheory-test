@@ -274,6 +274,19 @@ Config.game = {
   aiFire                 = function (dt, rng) return rng:getExp() ^ 2 < dt end,
 
   dockRange              = 50,
+
+  -- The SECTOR's extent, in world units. A sector is a volume of space with
+  -- its own name and its own regions; this is how big it is.
+  --
+  -- It has to comfortably contain the playable volume: the asteroid field
+  -- streams to loadRadius * chunkSize around the ship (12 * 2500 = 30,000 at
+  -- the shipped defaults), so 60,000 gives the field room to sit inside a
+  -- region rather than always being at the sector's edge.
+  --
+  -- A region is a named place INSIDE the sector, and there are one to six of
+  -- them per sector (determined by the sector's seed). This number is the
+  -- sector's size, not a region's.
+  sectorRadius           = 60000,
 }
 
 Config.render = {
