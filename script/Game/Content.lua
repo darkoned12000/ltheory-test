@@ -17,6 +17,18 @@ insert(Item.T1, Item.Isotopes)
 insert(Item.T1, Item.Silver)
 insert(Item.T2, Item.Energy)
 
+-- What things are worth.
+--
+-- A station BUYS the raw commodities a belt yields, at these prices, and
+-- SELLS what its factory makes, for more than it paid. The spread is the
+-- station's margin, and it is the reason the player's loop is worth
+-- running: mine here, sell there, and the difference is yours.
+Item.Price = {
+  [Item.Isotopes] = 14,   -- the belt's raw product, and the reactors' fuel
+  [Item.Silver]   = 9,
+  [Item.Energy]   = 26,   -- a reactor makes 10 of these from one isotope
+}
+
 -- Production ------------------------------------------------------------------
 
 local Production = require('Game.Production')

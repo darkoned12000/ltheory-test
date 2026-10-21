@@ -62,11 +62,19 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
    what is in them, and a sector is guaranteed a belt and a yard so it always
    has something to mine and somewhere to sell. See
    `procedural-space-environment.md` §29l.
-   - **Still missing: the SELL.** The ore can be mined and carried, and the
-     market component has orders and a matching loop, but there is no
-     interface for it and no action, and the matching moves order counts
-     rather than items and credits. The economy's last mile is the next
-     piece.
+   - **The economy's last mile is walked too.** `Market:sell` and
+     `Market:buy` now move the goods and the credits between the two
+     parties (the matching loop only moved order counts), and there is a
+     MARKET PANEL at the dock: the station's name, the player's credits
+     and hold, the price the market will pay and will ask, and the keys
+     that move things (R sells everything, T buys one). The loop end to
+     end: mine the isotopes in a belt, sell them at a rig or a yard, buy
+     the energy cells the reactors make. The prices are in
+     `script/Game/Content.lua` with the items.
+   - **Still missing:** the credits buy energy cells, and the energy cells
+     have no use yet -- the ship's capacitor is not wired to them and there
+     is nothing to upgrade. The economy runs; it does not yet lead
+     anywhere.
 16. **The ship's speed vs the sector's scale** — ✅ **done**: the thrust now
    buys **500 u/s** and the boost **1000** (the real top speed was 203 u/s;
    the hardcoded 100 in `Ship:getTopSpeed` had never matched the physics).

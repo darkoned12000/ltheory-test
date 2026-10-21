@@ -54,6 +54,15 @@ local self = {
     WIP.Control.GamepadButton(Button.Gamepad.Y))
     :delta(),
 
+  -- The market, at a dock: R sells what you are carrying, T buys.
+  Sell = WIP.Control.Or(
+    WIP.Control.Key(Button.Keyboard.R),
+    WIP.Control.GamepadButton(Button.Gamepad.Left)):delta(),
+
+  Buy = WIP.Control.Or(
+    WIP.Control.Key(Button.Keyboard.T),
+    WIP.Control.GamepadButton(Button.Gamepad.Right)):delta(),
+
   SquadAttackTarget = WIP.Control.GamepadButton(Button.Gamepad.Up):delta(),
   SquadScramble     = WIP.Control.GamepadButton(Button.Gamepad.Down):delta(),
 }

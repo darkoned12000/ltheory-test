@@ -446,17 +446,32 @@ function LTheory:buildPlace (region, sectorName)
   place:setScale(45)
   place:setPos(Vec3f(region.center.x, region.center.y, region.center.z))
 
-  -- The market. It BUYS ore, which is the demand that makes a belt worth
-  -- the trip.
+  -- The market.
+  --
+  -- It BUYS the raw commodities a belt yields -- that demand is what makes a
+  -- belt worth the trip -- and it SELLS what its own factory makes, for
+  -- more than it paid. So the player's loop is: mine the isotopes here,
+  -- sell them there, and buy the energy cells the reactors make.
   local Item = require('Game.Item')
   place:addMarket()
-  place.market:addBuy(place, Item.Ore, 100, 12)
+  -- The place's working capital: it has to be able to PAY for what it
+  -- buys, or the market's transfer fails on the buyer's side.
+  place:addCredits(100000)
+  for _, item in ipairs(Item.T1) do
+    place.market:addBuy(place, item, 200, Item.Price[item] or 10)
+  end
 
-  -- A yard makes things.
+  -- A yard makes things, and sells them.
   if kind == 'yard' then
     local Production = require('Game.Production')
     place:addFactory()
-    place:addProduction(Production.All()[1])
+    local prod = Production.All()[1]
+    place:addProduction(prod)
+    -- iterOutputs() is ipairs over the outputs, so it yields the INDEX
+    -- first; the list itself is the public field.
+    for _, out in ipairs(prod.outputs) do
+      place.market:addSell(place, out.item, 200, Item.Price[out.item] or 20)
+    end
   end
 
   self.system:addChild(place)
@@ -532,6 +547,7 @@ function LTheory:enterSector (index, ship)
 end
 
 function LTheory:onUpdate (dt)
+  end
   -- TEMP: headless settings snapshot.
   if os.getenv('PHX_DUMP_SETTINGS') and not self.__dumped then
     self.__dumped = true

@@ -356,8 +356,11 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
     -- The draw is from the chunk's own rng, so a chunk's ore is fixed once
     -- it is generated and does not change under the player.
     if oreChance > 0 and rng:getUniform() < oreChance then
+      -- Which commodity, from the game's own list (Content.lua's T1), so
+      -- the belts yield what the rest of the economy is built around: the
+      -- isotopes are the reactors' fuel, the silver is the money.
       local Item = require('Game.Item')
-      asteroid:addYield(Item.Ore, 1.0)
+      asteroid:addYield(rng:choose(Item.T1), 1.0)
     end
     -- Remember the generating position (NOT the entity's live position) so
     -- clumping anchors stay put even if a rock is later destroyed.

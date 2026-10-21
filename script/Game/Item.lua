@@ -35,13 +35,5 @@ end
 Item.Credit = Item('Credit')
 Item.Credit.mass = 0
 
--- ORE: what a belt region is FOR.
---
--- The old code marked the last N rocks of a static field as ore-bearing
--- with `rng:choose(Item.T1)` -- and there is no Item.T1, so every one of
--- those rocks was given a yield of NIL, which is a mining action that hands
--- the player nothing. The item the game had been reaching for did not
--- exist.
-Item.Ore = Item('Ore')
 
 return Item

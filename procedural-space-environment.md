@@ -1995,13 +1995,40 @@ Three things had to move with it:
   made the ship twice as sluggish to turn; doubling them keeps most of
   that, and the rest is a feel call the player is better placed to make.
 
-**WHAT IS STILL MISSING.** The player can mine the ore and carry it, but
-there is no SELL: the market component exists, with buy and sell orders
-and a matching loop, and no user interface for it and no action. The
-market's matching is also cosmetic -- it moves order counts, not items
-and not credits (the escrow is a TODO). So the economy's last mile --
-dock at a rig, sell the ore, buy something with the credits -- is the
-next piece, and it is a piece of work rather than a piece of wiring.
+**AND THE ECONOMY'S LAST MILE, WHICH IS NOW WALKED.**
+
+The player could mine the ore and carry it, and there was nowhere to turn
+it into anything. The market component existed -- with buy and sell
+orders, a matching loop, and a TODO where the escrow should have been --
+and its matching moved ORDER COUNTS rather than items and credits, so a
+trade changed the books and nothing else. There was no interface for it
+and no action.
+
+So:
+
+* **The transaction.** `Market:sell` and `Market:buy` move the goods and
+  the credits between the two parties, against the market's best bid (the
+  highest) and best ask (the lowest). A place has to be able to PAY, so
+  the places have working capital.
+* **The market panel**, at the dock. It is the economy's front door: the
+  station's name, the player's credits and hold, the price the market will
+  pay and the price it will ask, and the two keys that move things (R
+  sells everything, T buys one).
+* **The prices**, in Content.lua with the items -- a station buys the raw
+  commodities at 14 and 9 and sells what its reactor makes for 26, and
+  the spread is the reason the loop is worth running.
+
+The loop, end to end: mine the isotopes in a belt, carry them to a rig or
+a yard, sell them, and buy the energy cells the reactors make. Measured in
+the running game: three isotopes sold for 42 credits, and an energy cell
+bought for 26.
+
+**WHAT IS STILL MISSING.** The credits buy energy cells, and the energy
+cells have no use yet -- the ship's capacitor is not wired to them, and
+there is nothing to upgrade. The economy runs; it does not yet lead
+anywhere. And the market's NPC-to-NPC matching is still cosmetic: the
+traders move order counts, not goods.
+
 
 30. Visual "Wow Factor" Stack
 
