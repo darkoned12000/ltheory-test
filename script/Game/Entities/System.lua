@@ -458,8 +458,20 @@ function System:spawnAsteroidField (count, oreCount)
   self:addZone(zone)
 end
 
-function System:spawnPlanet ()
-  local rng = self.rng
+-- Spawn a planet.
+--
+-- `rng` and `origin` are optional. Without them the planet is drawn from the
+-- SYSTEM's own shared rng stream, at the system's origin -- which is what
+-- generation at boot wants, because that stream is shared with the rest of
+-- the world and reordering its draws silently reshuffles every existing
+-- world.
+--
+-- With them, the planet is a pure function of that rng and that origin --
+-- which is what a SECTOR wants: each sector has its own planet, drawn from
+-- the sector's own seed, so that arriving in a new sector is arriving
+-- SOMEWHERE ELSE and not just somewhere with a new name.
+function System:spawnPlanet (rng, origin)
+  rng = rng or self.rng
   local planet = Entities.Planet(rng:get64())
 
   -- DRAW ORDER IS DELIBERATE. These two draws happen in the same sequence as
@@ -487,6 +499,7 @@ function System:spawnPlanet ()
   local clearance = Config.gen.planetClearance or 2.5
   local dist = math.max(kSystemScale * (1.0 + expDraw), scale * clearance)
   local pos = rng:getDir3():scale(dist)
+  if origin then pos = origin + pos end
   planet:setPos(pos)
   planet:setScale(scale)
   planet:setName(genName(rng))

@@ -70,14 +70,6 @@ Region.ARCHETYPES = {
     desc = 'quiet, nothing much here' },
 }
 
--- How far a region's influence reaches, as a fraction of the sector radius.
--- See placeRegions: with one region it covers the whole sector; with several
--- the regions are smaller and overlap.
---
--- (The reach is computed per-region in placeRegions, because it depends on the
--- region COUNT as well as on this fraction.)
-local INFLUENCE = 0.62
-
 -- How sharply membership falls off with distance, in the smoothstep sense.
 -- 1 = a hard edge, larger = a broader transition. This is the "softness"
 -- knob: the whole point is that it is NOT 1.
@@ -139,25 +131,43 @@ local function placeRegions (sectorSeed, origin, radius)
   end
 
   local regions = {}
+
+  -- The regions are arranged on a RING around the sector's centre: each one
+  -- gets its own BEARING, so the sector reads as a set of distinct places
+  -- around a common middle, and the lanes can radiate from that middle
+  -- without two of them ever running alongside each other.
+  --
+  -- (The first layout scattered the regions on a golden-angle spiral in 3D,
+  -- and it was wrong twice over. The spiral's third axis was mapped onto the
+  -- VERTICAL, so every region ended up above the sector's centre; and a
+  -- random 3D scatter puts regions at all sorts of distances from the
+  -- middle, so the lane between two of them ran straight across the sector
+  -- and through the middle, where it met the other lanes. The map was a
+  -- knot, and the sky above the ship was a knot of rails.)
+  --
+  -- The ring is BIG on purpose. A warp lane's whole value is the distance it
+  -- covers -- it is a road, not a door -- so the lanes have to be long, and
+  -- each one runs most of the way out to the sector's edge.
+  local ringR = radius * 0.82
+  -- The ring's starting bearing, so two sectors do not look alike.
+  local ringA0 = SpaceField.hash32(0, 0, 0, s, 96) * math.pi * 2
+  -- How far a region's bearing may stray from its even share of the ring.
+  local ringAJitter = (math.pi * 2 / count) * 0.55
+
   for i = 1, count do
-    -- Place the centre on a golden-angle spiral around the sector origin, so
-    -- the regions are spread through the volume rather than clustered at one
-    -- end. The golden angle gives an even spread for any count, which a
-    -- random placement does not (it clumps).
-    --
-    -- The spiral is scaled so that the regions' centres sit WITHIN the sector,
-    -- and their reaches overlap enough that no point in the sector is
-    -- uncovered.
-    local ga = 2.39996323  -- golden angle, radians
-    local z = 1 - 2 * (i - 0.5) / count
-    local r = sqrt(max(0, 1 - z * z))
-    local theta = ga * (i - 1)
-    local dx, dy = r * cos(theta), r * sqrt(max(0, 1 - z * z))
-    -- The third axis is the sector's Z, but the placement only needs to be
-    -- DETERMINISTIC and spread; the exact frame does not matter.
-    local jitter = 0.25
     local h = SpaceField.hash32(i, 0, 0, s, 92)
     local h2 = SpaceField.hash32(i, 0, 0, s, 93)
+    local h3 = SpaceField.hash32(i, 0, 0, s, 97)
+    -- An even bearing for each region, jittered so the ring is not
+    -- mechanical, and a radius jitter so the regions are not all the same
+    -- distance out.
+    local theta = ringA0 + (i - 1) * (math.pi * 2 / count) + (h - 0.5) * ringAJitter
+    local rr = (count > 1) and (ringR * (0.80 + 0.40 * h2)) or 0
+    -- The ring lies in the sector's HORIZONTAL plane -- X and Z -- with only
+    -- a little height variation, so the lanes run out across the sky rather
+    -- than up and down it.
+    local dx, dz = cos(theta), sin(theta)
+    local dy = (h3 - 0.5) * 0.10
 
     -- The archetype. Not every region needs one -- a sector can be a plain
     -- belt -- so one region in a few is left unarchetyped.
@@ -182,12 +192,10 @@ local function placeRegions (sectorSeed, origin, radius)
     -- The reach is capped at the sector radius: a region whose influence
     -- reached past the sector would make the sector's own edge invisible, and
     -- the sector edge is the outermost boundary a player can be told about.
-    local spread, reach
+    local reach
     if count == 1 then
-      spread = 0
       reach  = radius
     else
-      spread = 0.55
       -- Enough reach that the regions overlap AND the outermost one still
       -- covers the sector wall: reach >= spread*radius + radius would be
       -- needed for full coverage, but that is the whole sector -- so instead
@@ -202,9 +210,9 @@ local function placeRegions (sectorSeed, origin, radius)
       name     = nil,             -- assigned below
       archetype= archetype,
       center   = {
-        x = origin.x + dx * radius * spread + (h - 0.5) * radius * jitter,
-        y = origin.y + dy * radius * spread + (h2 - 0.5) * radius * jitter,
-        z = origin.z + z * radius * 0.55,
+        x = origin.x + dx * rr,
+        y = origin.y + dy * radius,
+        z = origin.z + dz * rr,
       },
       reach    = reach,
       hue      = archetype and (archetype.hue[1] +
@@ -225,6 +233,89 @@ local function placeRegions (sectorSeed, origin, radius)
 end
 
 Region.place = placeRegions
+
+-- ---------------------------------------------------------------------------
+-- The lanes
+-- ---------------------------------------------------------------------------
+
+-- The LANES of a sector: the links between its regions.
+--
+-- The old Limit Theory's System.lts built its transit network out of WARP
+-- RAILS -- `WarpNode:BuildRailRadial` made four concentric rings around the
+-- planet, and `WarpNode:BuildRail` linked the points of interest. Riding one
+-- took you to another place in the SAME system.
+--
+-- That is a different thing from a wormhole, and the old game kept them
+-- apart: a wormhole left the system entirely, a rail did not. So there are
+-- two kinds of link, and the player has to be able to tell them apart:
+--
+--    * a WORMHOLE (a 'sector' gate) leaves the sector -- a new place, a new
+--      sky, a new planet.
+--    * a LANE (a 'region' gate) leads to another place in THIS sector -- the
+--      highway system of a region.
+--
+-- The lanes are the region's own connections, and they form a STAR: one
+-- spoke from the sector's hub out to each region.
+--
+-- That is not an invention. The old Limit Theory did exactly this, in
+-- UniverseGen/System.lts, in its "POI Rails" section:
+--
+--     for poiIndex 1 to pois.Size
+--       ref a (pois.Get 0)
+--       ref b (pois.Get poiIndex)
+--       ...
+--       WarpNode:BuildRail self p1 p2
+--
+-- -- every point of interest was linked to the FIRST one, and the rail ran
+-- -- from a's surface to b's surface.
+--
+-- A star is what makes the network legible. N regions give N lanes, each
+-- leaving the hub in its own direction, and no two of them ever run
+-- alongside each other -- so the sky above the ship is a set of distinct
+-- roads, not a knot.
+--
+-- (The first version linked each region to its two NEAREST neighbours.
+-- With six regions that produced EIGHT lanes, and because the regions were
+-- scattered through the volume rather than arranged around the middle, all
+-- eight ran across the sector and met in the middle of it: the map was a
+-- knot, and the sky above the ship was a knot of rails. Two rails running
+-- side by side is not a road network, it is a mistake.)
+--
+-- The hub is the sector's own centre -- the point the player starts at, and
+-- the one place every road leads back to.
+function Region.lanes (regions, hub)
+  local out = {}
+  -- The hub's position. It defaults to the middle of the regions, which for
+  -- a ring layout IS the sector's centre; the caller passes the sector's
+  -- centre explicitly so the junction is exactly where the player spawns.
+  local hx, hy, hz = 0, 0, 0
+  if hub then
+    hx, hy, hz = hub.x, hub.y, hub.z
+  else
+    for _, r in ipairs(regions) do
+      hx = hx + r.center.x; hy = hy + r.center.y; hz = hz + r.center.z
+    end
+    local n = #regions
+    if n > 0 then hx, hy, hz = hx / n, hy / n, hz / n end
+  end
+
+  for _, r in ipairs(regions) do
+    -- The spoke runs from the hub to the region's own centre: the rail is the
+    -- ROAD to the place, and it ends where the place is.
+    local bx, by, bz = r.center.x, r.center.y, r.center.z
+    out[#out + 1] = {
+      a = nil, b = r,
+      pos = { x = (hx + bx) * 0.5, y = (hy + by) * 0.5, z = (hz + bz) * 0.5 },
+      -- The two ends: the hub, and the region.
+      aPos = { x = hx, y = hy, z = hz },
+      bPos = { x = bx, y = by, z = bz },
+      -- Which way the lane goes: the hub, and the region at the far end.
+      aName = hub and hub.name or nil,
+      bName = r.name,
+    }
+  end
+  return out
+end
 
 -- ---------------------------------------------------------------------------
 -- Membership

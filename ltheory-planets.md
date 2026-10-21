@@ -10,25 +10,33 @@ running `planets-work` log. Branch: `planets-work`.
 and tint, emissive lava, skybox night-ambient, planet↔map integration, names,
 and an engine-driven sun/nebula lighting pass are all in.
 
-**Focus now (in order):**
+**Status 2026-10-21: the ORDERED LIST IS DONE.** W1–W8 are all in (W7a
+clouds, W7b rings, W7c biomes), S1 is closed, and the shipped look is no
+longer the un-validated `Config.App` default — it is now the **player's own
+settings snapshot**, promoted to the shipped default for every seed
+(§11.20). What remains is not a task list but three decisions that need a
+human (§11.5) and two deferred features (§11.3).
+
+**What was finished, in order:**
 1. **Green speckle** — ✅ root cause found + fixed (misaligned anchor upload).
-2. **Deterministic lighting** — ✅ done 2026-10-12 (seeded, prefiltered irMap).
-3. **Reproducible world streams** — ✅ done 2026-10-12 (`Game.Seed`).
-4. **Nebula medium actually using its own data** — ✅ done 2026-10-12 (W3).
-5. **W4 look fixes** — ✅ done 2026-10-12 (marker clamped; the other two needed
+2. **Deterministic lighting** — ✅ 2026-10-12 (seeded, prefiltered irMap).
+3. **Reproducible world streams** — ✅ 2026-10-12 (`Game.Seed`).
+4. **Nebula medium actually using its own data** — ✅ 2026-10-12 (W3).
+5. **W4 look fixes** — ✅ 2026-10-12 (marker clamped; the other two needed
    no code — see §11.0).
-6. **W5 density + god-rays re-tune** — ✅ done 2026-10-12 (density 2.2→3.0,
-   coverage 2.0→1.6, god-rays on at 8; measured, table in §11.0). W6 FPS next.
-7. **W7 deferred planet features** — W7a clouds landed; W7b rings, W7c biomes,
-   W7d gas giants, W7e atmosphere entry, ordered in §11.3. W6's *scaling* half
-   (rock/NPC load) folded into the `procedural-space-environment.md` work.
+6. **W5 density + god-rays re-tune** — ✅ 2026-10-12 (density 2.2→3.0,
+   coverage 2.0→1.6; measured, table in §11.0).
+7. **W6 FPS under load** — ✅ CLOSED 2026-10-16.
+8. **W7a clouds / W7b rings / W7c biomes** — ✅ all three (§11.3, §11.16,
+   §11.20).
+9. **W8 planet scale** — ✅ 2026-10-16 (§11.17).
 
-**Deferred:** clouds, gas giants (both expected to be FPS-expensive — defer
-until the perf budget is understood). Rings / biomes / atmosphere-entry are
-further out; see §11.
+**Deferred:** gas giants and atmosphere entry (§11.3) — both are new feature
+work, not finishing this pass.
 
-**Status: planet work is parked, not finished.** W1–W3 are in; the rest of the
-ordered dependency list is in **§11.0** — pick it up there.
+**Open:** three LOOK decisions that need a human (§11.5), and the two
+remaining §11.1a refactors (one shared CPU/GPU hash; one seed field for the
+skybox + the anchors + the medium).
 
 ---
 
@@ -55,8 +63,9 @@ ordered dependency list is in **§11.0** — pick it up there.
 ## 2. Generation (`gen/planet.glsl`)
 
 A single 64-bit seed drives everything. The generator renders a **RGBA16F cube
-map**: `R = height`, `G = color` (unused by the material), `B = clouds`
-(unused), `A = 0`. Base args: `seed`, `freq` (~4–8), `power` (~1.5–2), `coef`
+map**: `R = height`, `G = color` (**the moisture field** — consumed by the
+W7c biome blend, §11.21), `B = clouds` (consumed by the cloud deck, W7a),
+`A = 0`. Base args: `seed`, `freq` (~4–8), `power` (~1.5–2), `coef`
 (4 random weights). It is sampled in **local** space (`vertPos =
 vertex_position` in `vertex/wvp.glsl`), which is why rotating the body spins the
 visible terrain.
@@ -108,7 +117,7 @@ h = h    - crack   * cracks                    // narrow rifts
 Weighted table; `Planet` picks one per seed (`pickType`). `forceType` in
 `Config.Local.lua` pins it for auditioning. A type drives: **generator**,
 **palette** (`hue`/`sat`/`light`), **ocean**, **atmosphere** (`atmo` scale,
-`atmoTint`), **`weather`** (cloud chance — reserved for Phase C), and the
+`atmoTint`), **`weather`** (cloud chance — live since W7a), and the
 generator/material amplitudes (`mountain`/`crater`/`valley`/`crack`, `relief`,
 `emissive`/`emissiveAmt`).
 
@@ -136,7 +145,8 @@ no-solid-surface path, not a palette entry.
   the parent's `spinAxis`, small `inclination` off it; radius preserved exactly).
 - `System:spawnPlanet` spawns `Config.gen.nMoons(rng)` (**0–3**) per planet.
 - `Config.render.planet.moon`: `orbitSpeed` `0.004–0.018 rad/s` (minutes per
-  orbit), `scale` `0.03–0.14 × parent`, `minRadius = 800` (no pebble-moons),
+  orbit), `scale` `0.03–0.14 × parent`, `minRadiusFrac = 0.03` (3% of the
+  parent — no pebble-moons, at any parent size),
   `orbit` `1.6–3.2 × parent` with an `orbitMax = 220000` cap (far-plane safety)
   and a floor `≥ 1.5 × parent radius` (never inside a huge planet).
 - Moons are **barren**: no atmosphere, `oceanLevel 0`, dark low-saturation
@@ -263,12 +273,16 @@ tune a look against a frame that will change shape under you** (W3–W5 before W
 | W4 | Small look fixes (star in haze, marker rim clamp, integer-hash medium) | W1 | S | ✅ 2026-10-12 |
 | W5 | Re-tune density ⇒ god-rays gain together | W3, W4 | S | ✅ 2026-10-12 |
 | W6 | FPS: profile on the *final* W5 settings | W5 | M | ✅ **CLOSED 2026-10-16** — see below |
-| W7 | Deferred features (clouds, gas giants, rings, biomes, atmosphere entry) | W6 | L | §11.3 — split below |
+| W7 | Deferred features (clouds, gas giants, rings, biomes, atmosphere entry) | W6 | L | §11.3 — clouds/rings/**biomes** done; gas giants + atmosphere entry deferred |
 | W8 | Planet scale vs `kSystemScale` (planets can engulf the system) | — | M | ✅ **DONE 2026-10-16** — `scalePlanet` honoured, clearance derived from radius, stand-off and moon floor made relative. See §11.17. |
-| S1 | Speckle watch — verify on seeds beyond the repro | W1 | S | open |
+| S1 | Speckle watch — verify on seeds beyond the repro | W1 | S | ✅ **CLOSED 2026-10-14** — all four repro seeds clean, measured (§11.9) |
 
-Two **pending decisions** (not tasks — someone has to pick a side): §11.5's
-`Material.Metal` ship hull and the albedo-clamped lava emission.
+Three **pending decisions** (not tasks — someone has to pick a side): §11.5's
+`Material.Metal` ship hull, the albedo-clamped lava emission, and (since
+§11.11) what the shipped nebula default should be — the third is now MOOT:
+§11.20 promoted the player's own settings snapshot to the shipped default, so
+the question "which of the two looks ships" has been answered by choosing
+both, in different places.
 
 **W1 — deterministic, prefiltered irradiance cube. ✅ DONE 2026-10-12.**
 The last known nondeterminism in the *renderer*. `TexCube_GenIRMap` took its
@@ -1227,18 +1241,17 @@ gate. The asymmetry looked like a rendering mystery for a full session because
 each individual toggle "did nothing", and two earlier rounds of my own A/B were
 wrong before I trusted the player's observation that density controls it.
 
-### 11.4 Scale / universe-gen (= §11.0 W8)
-- **`spawnPlanet` uses `scale = 1e5 * erlang(2)`** and does not wire
-  `Config.gen.scalePlanet` as the base. Planets are therefore huge relative to
-  `kSystemScale = 10000` and can **engulf the system** (the residual Bullet
-  `Overflow in AABB`, non-fatal). Latest work caps/⌈tunes⌉ radius — keep that in
-  mind. Taming it fully means capping scale or placing planets outside
-  `kSystemScale`.
-- **Done when:** `Config.gen.scalePlanet` is actually honoured as the base (it
-  is currently dead config in `Config.Local.lua`), and no seed produces a planet
-  that swallows the belt/station cluster. Independent of W1–W6 — it is a
-  gameplay/streaming question, not a lighting one, so it can be picked up in
-  parallel.
+### 11.4 Scale / universe-gen (= §11.0 W8) — ✅ DONE, see §11.17
+- **This section described the DEFECT; the fix is in §11.17.** `spawnPlanet`
+  used `scale = 1e5 * erlang(2)` and ignored `Config.gen.scalePlanet`, so
+  planets were ~20x the system they sat in and could engulf it.
+- **Now:** `scalePlanet` is the honoured base in the live spawn path, and the
+  placement distance is derived from the radius
+  (`max(kSystemScale*(1+exp), radius*planetClearance)`), so **no value of
+  `scalePlanet` can produce an engulfing planet** — engulfment is made
+  structurally impossible rather than merely unlikely. The moon radius floor
+  and the ship's stand-off became relative to the parent's radius at the same
+  time. Verified over five seeds (§11.17).
 
 ### 11.5 Look decisions
 
@@ -1246,11 +1259,17 @@ wrong before I trusted the player's observation that density controls it.
   is the lever if we want it lit like the asteroids.
 - **Lava emission** currently tops out at the albedo clamp — let the emissive
   exceed 1 if we want bloom on molten surfaces.
-- **What ships as the nebula default** (added 2026-10-14, from §11.11). `Config.App`
-  ships rays **off** and a ~0.6× veil versus the tuned preset, and the two sit at
-  different quality tiers whose step counts differ in measured brightness by ~29%.
-  Safe and not broken — but "shipped" currently means "the preset with two things
-  turned down" rather than a look validated in its own right. Needs a taste call.
+- **What ships as the nebula default** — ✅ **ANSWERED 2026-10-21.** This was
+  the third decision: `Config.App` shipped rays **off** and a ~0.6x veil versus
+  the tuned preset, and the two sit at different quality tiers whose step
+  counts differ in measured brightness by ~29%, so "shipped" meant "the preset
+  with two things turned down" rather than a look validated in its own right.
+  It is now neither: §11.20 promoted the **player's own settings snapshot** —
+  a look they had tuned and signed off by playing it — to the shipped default
+  for every seed. The god rays are on at the physical gain, the nebula density
+  is 2.495 (neither the old 1.5 nor the preset's 3.0), the palette mix is
+  0.5067 and the coverage is 1.009. That is a *third* look, and it is the one
+  that ships.
 
 ### 11.6 Pulling out dead post passes (Distant Haze + Auto-Exposure)
 
@@ -1777,6 +1796,117 @@ outcome, not a bug.
   **only inside the fade band**. An unstructured integer hash reads as even grain
   instead; blue noise is better still but has to be plumbed through `Material`.
 
+### 11.20 The settings baseline — the player's own look, shipped for every seed
+
+**2026-10-21.** The debug panel's "Dump Settings" button (it writes
+`log/settings_dump.txt`) was used to snapshot a look the player had tuned and
+signed off by playing it. That snapshot is now **the shipped default for every
+seed**: the values live in `Config.gpu` in `script/Config.App.lua` (which the
+panel seeds itself from), the panel's own fallbacks carry the same numbers, and
+`Config.Local.lua` no longer pins a competing machine preset.
+
+**Why this is a real change and not a copy-paste.** The panel's effective
+value for a key is `Config.gpu[<gpu name>]` if that field exists, and the
+row's `default` otherwise. So a "default" that only lives in the panel table
+is a *fallback*, and a value that only lives in `Config.Local.lua` is a
+*machine preset* that nobody else inherits. A look that is meant to be THE
+look has to be in `Config.gpu`.
+
+**Verified by snapshot, not by eye.** The running game was booted with
+`PHX_DUMP_SETTINGS=1` (an env hook that calls the debug window's own
+`DumpSettings`), and the resulting 118-key snapshot was compared
+key-by-key against the player's dump: **0 differences.** The same hook is how
+any future change to the shipped look should be checked.
+
+**What moved, in one place:**
+
+| area | was | now |
+|---|---|---|
+| nebula | density 1.5, background 0.2, coverage 2.0, radius 14000, g 0.4, palette 1.0, jitter 0.5 | 2.495 / 0.1019 / 1.009 / 22010 / 0.07659 / 0.5067 / 0.3056 |
+| god rays | **off** in `Config.App` | **on**, strength 1 (the physical gain), g 0.7, ceiling 2 |
+| asteroid field | **off** in `Config.App` | **on**, 2.004 rocks/chunk, reach 10.04, fade 8.53 |
+| sun | intensity 1, fill 0.4564, warmth 0.7476, star disc 30, halo 900, glow 0.35 | 1.245 / 0.5135 / 0.7568 / 49.98 / 505.5 / 0.5558 |
+| colour grading | sat 1, contrast 1, temp 0, tint 0 | 1.078 / 1.034 / 0.07901 / 0.06725 |
+| exposure | 0 EV | 0.03791 EV |
+| planet | clouds 1.25, shell 0.02, wind 0.04, storms 1.0, flashes 0, biomes 1.0, spin 0.6, rings chance 0.45 | 1.3 / 0.0303 / 0.1007 / 0.8715 / 1.351 / 0.5019 / 0.2081 / 0.9124 |
+| camera | FOV 75, vsync on | FOV 79.95, vsync off |
+| shadows | 2 lights, 2-frame period | 1.509 lights, 1.499-frame period |
+
+Three of these are worth calling out, because they are decisions rather than
+numbers:
+
+- **The god rays are ON, at strength 1.** §11.11 established that the old
+  "rays on at 8" was calibrated against a gain that has since been removed as
+  unphysical, and that at the physical gain the shafts are nearly invisible.
+  The player has them on and the frame is not blown, which settles it.
+- **The asteroid field is ON by default.** It was off in `Config.App` and on
+  only in the local preset. A sector with no rocks in it is a different game
+  from one with them, so it belongs in the shipped default.
+- **The planet's flashes are ON (1.351).** They were off by default because
+  "it fires unprompted on load, which reads as a glitch rather than weather" —
+  and the player's own tuned value has them on, so that judgement is theirs to
+  make and it has been made.
+
+### 11.21 W7c — true biomes, finished
+
+**The mechanic was already in place** (the doc's §11.3 re-scope was right about
+the cost: the moisture is the generator's `genColor` field, which comes with
+the cube fetch the material was already doing, and the climate is latitude
+plus elevation — all free). What was missing was that **the biomes could not
+be seen**, for three separate reasons, each of which had to be found by
+measuring the weights rather than by looking.
+
+**1. The biome centres were not where the climate field lives.** The field is
+biased: `temperature = 1 - lat*1.10 - height*0.55` only reaches its top at the
+equator over low ground, and `moisture = genColor*0.75 + (1-lat)*0.25` is wet
+at the equator and dry at the poles. The first version put the biomes at
+(0.85,0.15), (0.60,0.85), (0.55,0.50) and (0.12,0.50) — points the field
+essentially never visits. The weights say it plainly: the **temperate** biome
+held 0.52–0.65 of the weight from the equator to mid-latitudes, the **dry**
+biome never exceeded 0.05 *anywhere*, and the **moist** biome never exceeded
+0.33. So a planet had one biome (temperate) with a cold cap, and the wet/dry
+split the whole idea rests on never happened. The centres are now (0.80,0.20),
+(0.66,0.80), (0.42,0.50) and (0.08,0.45), with the widths widened so
+adjacent biomes overlap. The same table then gives: dry at the equator over a
+dry field, moist at the equator over a wet one, temperate at mid-latitudes,
+cold at the poles and over high ground.
+
+**2. The cold biome WAS the elevation ramp's peak colour.** The ramp's peak
+is the type's hue at a low saturation and a high lightness, and the cold biome
+was the type's middle at a low saturation and a high lightness — the same
+colour, so a cold cap was invisible against a mountain. The cold biome is now
+pushed COOL (a +0.22 hue shift), because snow is blue-white on every world and
+that is exactly what makes it read as snow rather than as more terrain.
+
+**3. Nothing was wrong with the continuity.** The weights are normalised
+Gaussians, so the biome colour is a convex combination of continuous functions
+— continuous everywhere, with no threshold anywhere, and no boundary that can
+pop as the camera moves. That was the one thing §11.3 called the hard part,
+and it was already right.
+
+**Measured.** On a terrestrial world with the atmosphere and cloud deck off
+(the shipped defaults put a lot of both in front of the surface), the biomes
+change **2.2% of the frame** at the shipped strength of 0.5019, and the
+planet reads as a wet/dry patchwork — bright sand-coloured basins against a
+dark green lowland, following the moisture field's contours. Before the
+centre fix the same A/B measured **0.35%** — invisible.
+
+**The cost is zero.** The biome block is arithmetic on values the material
+already has in registers: the green channel comes with the cube fetch the
+surface was already doing, the latitude is a dot product with the body's spin
+axis, and the height is the height. There is no extra texture fetch and no
+extra pass. Measured at 4K, the difference between the biomes at 0.5019 and
+at 0 is inside the harness's own noise (±20%).
+
+**One honest caveat, and it is not the biome's fault.** From orbit, the
+shipped look puts a lot of atmosphere and cloud deck between the camera and
+the surface — at the shipped `atmoGlow` 0.756 and a cloud coverage of 1.3,
+the surface is a pale blue veil with the terrain showing through. That is the
+look the player signed off, so it is not changed here, but it does mean the
+biomes are a feature you see by turning the atmosphere down, not one that
+reads through it. The surface's own look — the biome patchwork — is in
+§11.21's measurement above.
+
 ## 13. Verification workflow
 
 1. Edit.
@@ -1804,8 +1934,11 @@ outcome, not a bug.
 
 ## 14. Non-goals (this pass)
 
-Rings, gas-giant rendering, true biomes, atmosphere entry/landing — see §11.3;
-each is a separate, larger effort, and each is gated behind §11.0 W6.
+**Updated 2026-10-21.** Rings and true biomes are DONE (§11.16, §11.21) — this
+list was written before them and was stale. What is genuinely still out of scope
+is **gas-giant rendering** and **atmosphere entry/landing** (§11.3): each is a
+separate, larger effort, and each was explicitly deferred rather than left
+unstarted.
 
 ### 11.9 S1 — speckle watch: CLOSED (measured on all four repro seeds, 2026-10-14)
 
@@ -2435,7 +2568,7 @@ recommended order is §15.4.
 |---|---|---|
 | **Fixed-camera harness** | Every look A/B in this doc was taken under a moving camera and a drifting window size. W5 concluded it was needed; §11.6/§12 later proved it twice more. Without it, measurements are only valid *within* a family of identical frame cost. | ✅ **2026-10-14** — see §10.1/§10.2. Bit-identical frames across runs, verified. |
 | **S1 speckle watch** | The §11.1 fix was verified on **one** of four recorded repro seeds. | ✅ **2026-10-14** — all four clean, measured. See §11.9. |
-| **Re-validate the shipped `Config.App` defaults** | W5 calibrated at High and deliberately shipped `Config.App` unvalidated (density 1.5 / background 0.2 / coverage 2.0 at Low). §11.7 then changed what Low *renders* (10 steps, was 20), so the "re-tune with the harness" note is now doubly out of date. | open |
+| **Re-validate the shipped `Config.App` defaults** | W5 calibrated at High and deliberately shipped `Config.App` unvalidated (density 1.5 / background 0.2 / coverage 2.0 at Low). §11.7 then changed what Low *renders* (10 steps, was 20), so the "re-tune with the harness" note is now doubly out of date. | ✅ **2026-10-21** — §11.20: the shipped default is now the player's own tuned snapshot, verified key-by-key against a live snapshot of the running game (118 keys, 0 differences). |
 
 **B. W6 — FPS, properly**
 
@@ -2453,7 +2586,7 @@ under load, plus `render.resolutionScale` / supersampling as the real levers
 |---|---|---|---|
 | ~~W7a polish~~ | — | S | ✅ **Done 2026-10-15.** Shell + parallax, shadows, spin-relative wind, coverage retune all landed and signed off. Rain/storms deliberately **dropped** — see §11.12. |
 | ~~W7b rings~~ | — | M | ✅ **Done 2026-10-16** (§11.16). Landed *without* W8: geometry is in planet-radii, so the W8 dependency dissolved rather than being obeyed. |
-| W7c biomes | W7a | M | consumes the dead `genColor` channel. The hard part is continuity, not the lookup — biomes must *blend*, never switch (`procedural-space-environment.md` §7). |
+| W7c biomes | W7a | M | ✅ **DONE 2026-10-21** — §11.21. The `genColor` channel is the moisture field, the blend is continuous (normalised Gaussian weights, no threshold anywhere), and the biome centres were re-placed where the climate field actually lives — the first version put them where the field never went, and the dry biome never appeared. |
 | W7d gas giants | W7c | L | banded generator + no-solid-surface path. Explicitly the expensive one; must not start before W6 is re-measured with load. **⛔ deferred 2026-10-14** (see below). |
 | W7e atmosphere entry | — | L | gameplay, not rendering, and blocked by nothing. `exp(-altitude/scaleHeight)` → drag/lift → landing zones. **⛔ deferred 2026-10-14.** |
 
@@ -2465,20 +2598,24 @@ honoured as the base and no seed produces a planet that swallows the belt.
 **E. Loose ends found during the §11.6/§11.7 audit — deferred to the planned
 `.glsl` review, recorded so they are not lost**
 
-- `res/shader/fragment/gen/nebula2.glsl`, `nebula3.glsl`, `nebula4_weak.glsl` —
-  **zero references anywhere**; only `gen/nebula`, `gen/nebula_emit`,
-  `gen/nebula_absorb` are loaded. The `starGlow` uniform was added to all three
-  in commit `8ab0869` for nothing. Delete or wire.
-- `nebula.starGlow` is **inert for Nebula2 sectors**: `Nebula2.lua` sets it on
-  `gen/nebula_emit`, which does not declare it. Only `gen/nebula` (Nebula1, the
-  IFS skybox) honours it.
-- `gen/clouds_cube.glsl` still in the tree hardcoding `seed = 1337.0` and
-  unreferenced — W7a made it unnecessary.
-- `genColor` in `gen/planet.glsl`: a 12-iteration fractal per texel read by
-  nothing. W7c consumes it; until then every planet cube pays for it.
-- Dead uniforms with working in-shader fallbacks (harmless, not bugs):
-  `bloompre.maxBrightness` (falls back 5.0), `tonemap.lensDirtStrength` /
-  `lensDirtTex` (stub at 0.0).
+- ~~`res/shader/fragment/gen/nebula2.glsl`, `nebula3.glsl`,
+  `nebula4_weak.glsl`~~ — ✅ **already deleted.** Only `gen/nebula`,
+  `gen/nebula_emit` and `gen/nebula_absorb` are loaded.
+- `nebula.starGlow` is **inert for Nebula2 sectors**: `Nebula2.lua` used to set
+  it on `gen/nebula_emit`, which does not declare it — that was the §11.10
+  boot crash, and the set is gone.
+- ~~`gen/clouds_cube.glsl`~~ — ✅ **already deleted** (it hardcoded
+  `seed = 1337.0`, and W7a made it unnecessary).
+- `genColor` in `gen/planet.glsl` — ✅ **no longer dead**: W7c consumes it as
+  the moisture field (§11.20), so the 12-iteration fractal every planet cube
+  was paying for finally has a reader.
+- Dead uniforms with working in-shader fallbacks — ✅ **removed 2026-10-21.**
+  `bloompre.maxBrightness` was never uploaded, so it sat at 0 and the in-shader
+  fallback (5.0) is what always ran — the knob was a lie, and it is now the
+  constant it actually was. `tonemap.lensDirtStrength` / `lensDirtTex` were
+  worse: a GLSL **default initializer** links the value into the program, so
+  the branch was provably never taken and the sampler was an unbound sampler
+  inside unreachable code. The whole lens-dirt overlay is gone.
 - **The baked Central Star amplitude is still unevaluated** (§11.3, part 1). The
   `nebula.starGlow` knob exists (0.35) but nobody has looked at the result. It
   changes the sky *and* everything `irMap` convolves from it.
@@ -2563,6 +2700,12 @@ The `.glsl` dead-code review (§11.8 E) is deliberately *not* in this list: it i
 orthogonal, touches no behaviour, and should ride with a dedicated pass rather
 than be smuggled between items.
 
-**Do not** re-run the W5 density sweep. §11.7 established that the marching
-integral is step-count independent, so the calibration still holds; the sweep
-would only re-measure the harness, not the look.
+**Do not** re-run the W5 density sweep **as a density calibration.** §11.11
+later CORRECTED §11.7's reasoning: the marching integral is *not*
+step-count independent (10 steps reads 24–29% brighter than 48), and High
+additionally dims the everywhere-field through a density mask — so a density
+tuned at one quality tier reads differently at another. The W5 numbers were
+also tuned around a god-ray gain that §11.6 removed as unphysical. What
+survives is the *method* (a fixed-camera harness, a sky crop, the structure
+ratio), not the specific density/background/coverage values — and the shipped
+values are now the player's own (§11.20), not W5's.

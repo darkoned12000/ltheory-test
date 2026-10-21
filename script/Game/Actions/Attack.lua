@@ -23,7 +23,6 @@ function Attack:onStart (e)
 end
 
 local kVelFactor = 0.0
-local expMap = PHX.Math.ExpMap1Signed
 
 function Attack:onUpdateActive (e, dt)
   local target = self.target

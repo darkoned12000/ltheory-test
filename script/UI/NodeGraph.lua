@@ -10,6 +10,7 @@ local Window = require('UI.Window')
 local Inspector = require('UI.NodeGraphInspector')
 local Util = require('UI.NodeGraphUtil')
 local GraphProvider = require('UI.GraphProvider')
+local SectorGraph = require('Game.SectorGraph')
 
 -- Stateless classifier provider for the module-level LOD contract.
 -- Each NodeGraph instance gets its OWN provider (with its own scratch) so
@@ -45,7 +46,27 @@ local cLabel     = { r = 1.00, g = 1.00, b = 1.00, a = 0.90 }
 local cReticle   = { r = 1.00, g = 1.00, b = 1.00, a = 0.90 }
 -- A JUMPGATE. Its own hue, so a gate never reads as an ordinary place --
 -- the map's blue is for bodies, amber is for regions, and this is neither.
-local cGate      = { r = 0.45, g = 0.80, b = 1.00, a = 0.95 }
+-- The two kinds of gate.
+--
+--   cJumpgate -- a gate that leaves the SECTOR. Cyan, and the brightest
+--                thing on the map after the player.
+--   cGate     -- an intra-sector gate: another place in the SAME sector.
+--                Amber, the same family as the regions, because it leads to
+--                one.
+local cGate      = { r = 0.98, g = 0.76, b = 0.30, a = 0.95 }
+local cJumpgate  = { r = 0.45, g = 0.80, b = 1.00, a = 0.95 }
+-- A SECTOR, on the galaxy level of the map.
+local cGalaxy    = { r = 0.55, g = 0.75, b = 1.00, a = 0.90 }
+-- A JUMPGATE link, and the far end of a gate (a ghost node standing for the
+-- other sector's side of the pair).
+local cWarp      = { r = 0.45, g = 0.80, b = 1.00, a = 0.55 }
+local cWarpFar   = { r = 0.45, g = 0.80, b = 1.00, a = 0.45 }
+-- A RAIL: the amber line between two connected regions.
+local cRail      = { r = 0.85, g = 0.62, b = 0.30, a = 0.55 }
+-- The HUB: the sector's centre, where every lane starts. It is not a region
+-- -- it is the junction the regions' roads all lead back to -- so it gets a
+-- hue of its own, warm enough to be clearly not a region and not a body.
+local cHub       = { r = 1.00, g = 0.58, b = 0.42, a = 0.95 }
 
 -- LOD classifier: delegates to the default (system) provider. Kept as a
 -- module function because it is the documented LOD contract and unit-tested.
@@ -86,7 +107,16 @@ function NodeGraph:seedFromSystem ()
   -- A zone context IS its members' level: do not suppress them.
   -- Provider supplies the units at this context; NodeGraph owns the merge.
   -- isRoot tells the provider not to treat a named sector root as a zone.
-  local units = self.provider.children(sys, sys == self.system)
+  local units
+  if self.galaxyLevel then
+    -- The GALAXY level: the sectors are the nodes, and the gates are the
+    -- links between them. The old Limit Theory's map was one graph with
+    -- the galaxy at its outermost level; this is the same thing.
+    local st = self.regionState
+    units = self.provider.galaxyChildren(st and st.sectors, st and st.sectorIndex)
+  else
+    units = self.provider.children(sys, sys == self.system)
+  end
   local seen = self._seen
   if not seen then seen = {}; self._seen = seen end
   for k in pairs(seen) do seen[k] = nil end
@@ -100,36 +130,42 @@ function NodeGraph:seedFromSystem ()
   for i = 1, #units do
     local u = units[i]
     local e = u.entity
-    if e then
+    -- A unit may have NO entity, as long as it has an id: the GALAXY
+    -- level's nodes are SECTORS, which are places and not bodies.
+    local id = u.id or (e and e.id)
+    if id then
       -- The region filter needs the body's POSITION, which the unit record
       -- already carries (the map is a top-down X/Z projection, but the
       -- membership is a 3D question, so the full position is used).
       local keep = true
-      if regionFilter and inRegion then
+      if e and regionFilter and inRegion then
         keep = inRegion(regionFilter, u.x, u.wy or 0, u.y)
       end
       if not keep then
         -- Not in this region: drop it from the level entirely.
-        seen[e.id] = nil
+        seen[id] = nil
       else
-      seen[e.id] = true
-      local n = self.nodes[e.id]
+      seen[id] = true
+      local n = self.nodes[id]
       if not n then
         n = {
-          id     = e.id,
+          id     = id,
           entity = e,
           cat    = u.cat or 'rock',
           x = u.x, y = u.y, tx = u.x, ty = u.y,
           r = u.r or 1,
           major = u.major,
           color = (e == self.focusEntity) and cPlayer
+               or (u.cat == 'jumpgate' and cJumpgate)
+               or (u.cat == 'gatefar' and cWarpFar)
                or (u.cat == 'gate' and cGate)
+               or (u.cat == 'sector' and cGalaxy)
                or (u.major and cNode or cMinor),
           label = nil,
         }
-        if u.major then n.label = u.label or Util.resolveLabel(e) end
+        if u.major then n.label = u.label or (e and Util.resolveLabel(e)) end
         if e == self.focusEntity then n.label = n.label or 'YOU' end
-        self.nodes[e.id] = n
+        self.nodes[id] = n
       else
         n.entity = e
         n.cat = u.cat or n.cat or 'rock'
@@ -138,7 +174,9 @@ function NodeGraph:seedFromSystem ()
         if not n.manual then n.tx, n.ty = u.x, u.y end
         n.major = u.major or (e == self.focusEntity)
         -- Promoted late: a node must never be a ring without a label.
-        if n.major and not n.label then n.label = Util.resolveLabel(e) end
+        if n.major and not n.label then
+          n.label = u.label or (e and Util.resolveLabel(e))
+        end
       end
       -- P1.1: stamp drillability ONCE per node (it is stable; recomputing per
       -- frame would pcall over children for every entity). Drives the UI tell.
@@ -148,7 +186,9 @@ function NodeGraph:seedFromSystem ()
     end
   end
   for id, n in pairs(self.nodes) do
-    if n.entity and not seen[id] then
+    -- Not "n.entity and": a node with no entity (a sector on the galaxy
+    -- level) would never be pruned, and the table would grow for ever.
+    if not seen[id] then
       self.nodes[id] = nil
     end
   end
@@ -289,7 +329,13 @@ function NodeGraph:seedEdges ()
   for i = #edges, 1, -1 do edges[i] = nil end
   local ctx = self.context or self.system
   if not ctx then return end
-  local from = self.provider.links(ctx, self.nodes)
+  local from
+  if self.galaxyLevel then
+    local st = self.regionState
+    from = self.provider.galaxyLinks(st and st.sectors)
+  else
+    from = self.provider.links(ctx, self.nodes)
+  end
   for i = 1, #from do edges[i] = from[i] end
 end
 
@@ -299,6 +345,12 @@ function NodeGraph:onUpdate (state)
   -- disagree about which region you are in.
   if self.getSectorState then
     self.regionState = self.getSectorState()
+  end
+  -- The provider needs to know which sector the player is in: the gates it
+  -- lists are this sector's, and the far end of each is a ghost node in
+  -- another.
+  if self.provider.setSectorIndex and self.regionState then
+    self.provider:setSectorIndex(self.regionState.sectorIndex or 0)
   end
   if (self.context or self.system) then
     self:seedFromSystem()
@@ -756,8 +808,9 @@ end
 local function drawSymbolKey (x, y)
   local entries = {
     { 'you', 'you' }, { 'selected', 'selected' }, { 'place', 'place' },
-    { 'gate', 'gate' },
+    { 'jumpgate', 'jumpgate' }, { 'gate', 'gate' },
     { 'rock', 'rock' }, { 'trade', 'trade' }, { 'mine', 'mine' },
+    { 'warp', 'warp' }, { 'lane', 'lane' },
     { 'drill', 'drillable' },
   }
   local gx, tx = x + 6, x + 16
@@ -769,9 +822,13 @@ local function drawSymbolKey (x, y)
       DrawEx.Ring(gx, y, 5, cSelected)
     elseif kind == 'place' then
       DrawEx.Ring(gx, y, 5, cNode)
+    elseif kind == 'jumpgate' then
+      -- A JUMPGATE: a ring with a cross, in cyan. It leaves the sector.
+      DrawEx.Ring(gx, y, 5, cJumpgate)
+      DrawEx.Cross(gx, y, 3, cJumpgate)
     elseif kind == 'gate' then
-      -- A jumpgate: a ring with a cross through it, in the gate's own
-      -- colour, so a gate never reads as an ordinary place.
+      -- An INTRA-sector gate: the same shape, in amber. It leads to another
+      -- place in this sector.
       DrawEx.Ring(gx, y, 5, cGate)
       DrawEx.Cross(gx, y, 3, cGate)
     elseif kind == 'rock' then
@@ -780,6 +837,10 @@ local function drawSymbolKey (x, y)
       DrawEx.Dash(gx - 8, y, gx + 8, y, cTrade, 2, 6, 0)
     elseif kind == 'mine' then
       DrawEx.Line(gx - 8, y, gx + 8, y, cMine)
+    elseif kind == 'warp' then
+      DrawEx.Dash(gx - 8, y, gx + 8, y, cWarp, 1, 5, 0)
+    elseif kind == 'lane' then
+      DrawEx.Dash(gx - 8, y, gx + 8, y, cGate, 1, 4, 0)
     elseif kind == 'drill' then
       Draw.Color(cCore.r, cCore.g, cCore.b, 0.9)
       Draw.Line(gx - 4, y, gx + 4, y)
@@ -841,6 +902,40 @@ end
 function NodeGraph:drawRegionMarkers (vx, vy, vsx, vsy)
   local st = self.regionState
   if not (st and st.regions) then return end
+  -- The RAILS: a line between each pair of connected regions.
+  --
+  -- This is the old game's map, which drew the region's structure as a graph
+  -- of nodes joined by lines -- the lines being the connections. Here the
+  -- regions are the nodes and the rails are the lines.
+  local rails = st.rails
+  if rails then
+    for _, rail in ipairs(rails) do
+      local ax, ay = self:toScreen(rail.aPos.x, rail.aPos.z)
+      local bx, by = self:toScreen(rail.bPos.x, rail.bPos.z)
+      DrawEx.Dash(ax, ay, bx, by, cRail, 1, 8, 0)
+    end
+  end
+
+  -- The HUB: the sector's centre, where every lane starts. Drawn first, so
+  -- the regions' pins sit over it.
+  local hub = st.hub
+  if hub then
+    local hx, hy = self:toScreen(hub.x, hub.z)
+    local mx = math.min(math.max(hx, vx + 44), vx + vsx - 44)
+    local my = math.min(math.max(hy, vy + 34), vy + vsy - 24)
+    if (mx ~= hx) or (my ~= hy) then
+      DrawEx.Line(mx, my, hx, hy, { r = cHub.r, g = cHub.g, b = cHub.b, a = 0.25 })
+    end
+    local hname = hub.name or 'Hub'
+    local tw = #hname * 7 + 12
+    local pw = tw + 22
+    Draw.Color(0.02, 0.03, 0.06, 0.90)
+    Draw.Rect(mx - pw * 0.5, my - 11, pw, 22)
+    DrawEx.Cross(mx - pw * 0.5 + 11, my, 6, cHub)
+    DrawEx.TextAlpha(kLabelFont, hname, kLabelSize, mx + 8 - 110, my - 8, 220, 20,
+      cHub.r, cHub.g, cHub.b, cHub.a, 0.5, 0.0)
+  end
+
   for _, r in ipairs(st.regions) do
     local cur = (st.region == r)
     local drilled = (self.regionContext == r)
@@ -886,10 +981,16 @@ function NodeGraph:onDraw (focus, active)
   Draw.Rect(x, y, sx, sy)
   DrawEx.RectOutline(x, y, sx, sy, { r = 0.2, g = 0.5, b = 0.8, a = 0.6 })
 
+
   -- The regions: the sector's NAMED PLACES. The boundary goes under the
   -- nodes (it is the ground they sit on); the markers go over them (a place
   -- name buried under hundreds of asteroid labels is a name nobody reads).
-  self:drawRegionBoundary()
+  --
+  -- Not on the GALAXY level: that level's nodes are the SECTORS, and the
+  -- regions belong to the sector level.
+  if not self.galaxyLevel then
+    self:drawRegionBoundary()
+  end
 
   -- Edges under nodes. Solid rides the shared batch; dotted uses Dash (§6).
   -- Routes toggle hides trade lanes for a clean spatial read.
@@ -956,10 +1057,13 @@ function NodeGraph:onDraw (focus, active)
         local ring = selected and cSelected or (n.color or cNode)
         DrawEx.Ring(nx, ny, r, ring)
         DrawEx.Point(nx, ny, r * 0.35, selected and cLabel or cCore)
-        if n.cat == 'gate' then
-          -- A jumpgate gets a cross through it, matching the symbol key.
-          -- A gate is the one thing on the map you can FLY THROUGH, so it
-          -- has to be distinguishable from a place you merely visit.
+        if n.cat == 'gate' or n.cat == 'jumpgate' then
+          -- Both kinds of gate get a cross through it, matching the symbol
+          -- key: a gate is the one thing on the map you can FLY THROUGH, so
+          -- it has to be distinguishable from a place you merely visit.
+          --
+          -- The two kinds differ in COLOUR (a jumpgate is cyan, an
+          -- intra-sector gate is amber) and in the symbol key.
           DrawEx.Cross(nx, ny, r * 0.9, ring)
         end
         if n.isContext then
@@ -982,6 +1086,19 @@ function NodeGraph:onDraw (focus, active)
           Draw.Line(gx, gy - 4, gx, gy + 4)
         end
       if n.label then
+        -- A GATE's label gets an opaque plate behind it.
+        --
+        -- The asteroid field is a dense blob of near-white dots, and a
+        -- plain label drawn onto it is unreadable -- which is exactly where
+        -- the gates are, because they sit on the sector's rim and the rim
+        -- is where the field is densest. A gate is the one thing on the map
+        -- the player has to be able to FIND, so it gets the same backing
+        -- plate the region markers get.
+        if n.cat == 'gate' or n.cat == 'jumpgate' then
+          local tw = #n.label * 7 + 12
+          Draw.Color(0.02, 0.03, 0.06, 0.92)
+          Draw.Rect(nx - tw * 0.5, ny + r + 1, tw, 18)
+        end
         DrawEx.TextAlpha(kLabelFont, n.label, kLabelSize,
           nx - 100, ny + r + 2, 200, 20,
           cLabel.r, cLabel.g, cLabel.b, cLabel.a, 0.5, 0.0)
@@ -1144,7 +1261,9 @@ function NodeGraph:onDraw (focus, active)
   -- keys and filters).
   drawSymbolKey(x + 16, y + sy - 62)
   -- The region markers go LAST, over the node field.
-  self:drawRegionMarkers(x, y, sx, sy)
+  if not self.galaxyLevel then
+    self:drawRegionMarkers(x, y, sx, sy)
+  end
   -- Cursor readout: world X/Z under the pointer + range from YOU.
   do
     local mp = Input.GetMousePosition()
@@ -1224,6 +1343,11 @@ function NodeGraph:onInput (state)
   -- panning the map must never fly the ship. Standalone SystemMap keeps WASD
   -- because nothing else is listening there.
   local dt = math.max(1e-6, state.dt)
+
+  -- V (the galaxy level) is handled by the HUD, which runs whether or not
+  -- the map is open -- so it is NOT handled here as well, or the level would
+  -- toggle twice while the map is up.
+
   local pan = kPanSpeed * dt / self.zoom
   self.pos.x = self.pos.x + pan * (
     Input.GetValue(Button.Keyboard.Right) - Input.GetValue(Button.Keyboard.Left))
@@ -1375,6 +1499,11 @@ function NodeGraph.Create (system, opts)
   -- map must not hold a stale copy of where you were.
   self.getSectorState = o.getSectorState
   self.regionState = nil
+  -- The GALAXY LEVEL: the sectors are nodes and the gates are links. It is
+  -- a level of the SAME graph, not a separate map -- see the old Limit
+  -- Theory's map, where "Universe", "Region", "System" and "Wormhole" were
+  -- all node types in one graph.
+  self.galaxyLevel = false
   -- The REGION the map is drilled into, if any. A region is a place, not a
   -- body: it has no entity, so it lives beside the entity context rather
   -- than inside it.

@@ -113,9 +113,11 @@ local function biomePalette (rng, t)
     return x
   end
 
-  local function at (frac, sBias, lBias)
+  local function at (frac, sBias, lBias, hueShift)
     -- frac 0 = the LOW end of the type's hue range, 1 = the HIGH end.
-    local hh = wrapHue(hLo + frac * (hHi - hLo))
+    -- hueShift moves the hue off the type's range (used to push the cold
+    -- biome COOL, because snow is blue-white on every world).
+    local hh = wrapHue(hLo + frac * (hHi - hLo) + (hueShift or 0))
     local s = sLo + (sHi - sLo) * sBias
     local l = lLo + (lHi - lLo) * lBias
     local c = Color.FromHSL(hh, Math.Saturate(s), Math.Saturate(l))
@@ -124,13 +126,22 @@ local function biomePalette (rng, t)
 
   return {
     -- dry: bright and warm (sand/scrub) -- the LOW end of the hue range
-    at(0.0,  1.0,  0.75),
+    at(0.0,  1.0,  0.88),
     -- moist: dark and cool (vegetation) -- the HIGH end
-    at(1.0,  0.85, 0.25),
+    at(1.0,  0.90, 0.12),
     -- temperate: the type's own middle
-    at(0.5,  0.5,  0.45),
-    -- cold: the middle again, but pale and desaturated (tundra/snow)
-    at(0.5,  0.12, 0.95),
+    at(0.5,  0.55, 0.42),
+    -- cold: near-white, and pushed COOL.
+    --
+    -- The cold biome used to be the type's middle at a low saturation -- which
+    -- is EXACTLY the elevation ramp's peak colour (the ramp's peak is the
+    -- type's hue at a low saturation and a high lightness). So the cold biome
+    -- and the snowy peaks were the same colour, and a cold cap was invisible
+    -- against a mountain. Snow is blue-white on every world, so the cold
+    -- biome is pushed toward the cool end of the wheel, away from the type's
+    -- family: it is the one biome that is not the planet's own hue, and that
+    -- is exactly what makes it read as snow rather than as more terrain.
+    at(0.5,  0.05, 0.98, 0.22),
   }
 end
 

@@ -20,8 +20,14 @@ local GraphProvider = {}
 
 -- Default system/sector provider: entities as nodes, sockets + parent links +
 -- economy jobs as edges. Extracted verbatim from NodeGraph (behavior-preserving).
-function GraphProvider.system ()
+function GraphProvider.system (opts)
   local P = {}
+  local o = opts or {}
+  -- The sectors of the galaxy. The GALAXY level's nodes are the sectors, and
+  -- the links between them are the jumpgates -- the same shape the old
+  -- Limit Theory's map had, where a system was a node and a wormhole was a
+  -- link to the next system.
+  local getSectors = o.getSectors
 
   -- Returns worthy, major, cat ('station' | 'ship' | 'rock').
   function P.classify (entity)
@@ -54,7 +60,15 @@ function GraphProvider.system ()
     -- A JUMPGATE is a place, and a place you travel through -- so it gets
     -- its own category, which gives it its own colour and its own symbol on
     -- the map. (The old Limit Theory drew its wormholes as wormholes too.)
-    if entity.isWormhole then return true, true, 'gate' end
+    --
+    -- There are two kinds, and the player has to be able to tell them
+    -- apart: a 'sector' gate is a JUMPGATE and leads out of the sector
+    -- entirely, and a 'region' gate is an intra-sector link and leads
+    -- somewhere else inside it. They are different sizes of journey and the
+    -- map says which is which.
+    if entity.isWormhole then
+      return true, true, (entity.kind == 'region') and 'gate' or 'jumpgate'
+    end
     -- Ships have SOCKETS -- a hull with hardpoints. A station does not, and
     -- that is what separates the two: both have actions and both have
     -- children, so neither the action nor the child count can tell them
@@ -79,6 +93,53 @@ function GraphProvider.system ()
   -- inferred from `.name` alone: a named sector root would then be treated as
   -- a zone and skip member suppression (leaking every zone member into the
   -- sector view).
+  -- The GALAXY level: the sectors are the nodes.
+  --
+  -- The old Limit Theory's map was ONE node graph, and the galaxy was its
+  -- outermost level: a Universe's children were Regions, a Region's children
+  -- were Systems, and the wormholes were the LINKS between the siblings.
+  -- (Its object types included "Universe", "Region", "System" and
+  -- "Wormhole" side by side.) So the sectors are nodes here too, and the
+  -- gates are links -- not a separate map with its own camera.
+  function P.galaxyChildren (sectors, currentIndex)
+    local out = P._units
+    if not out then out = {}; P._units = out end
+    for i = #out, 1, -1 do out[i] = nil end
+    for _, sec in ipairs(sectors or {}) do
+      local r = sec.radius or 60000
+      out[#out + 1] = {
+        id    = 'sector:' .. sec.index,
+        major = true,
+        cat   = 'sector',
+        x = sec.center.x, y = sec.center.z,
+        r = r,
+        label = sec.name .. (sec.index == currentIndex and '  (you are here)' or ''),
+      }
+    end
+    return out
+  end
+
+  -- Which sector the player is in. The provider is per-NodeGraph, so this is
+  -- just a field the map sets each frame.
+  function P.setSectorIndex (i) P.sectorIndex = i end
+
+  -- The links between the sectors: the jumpgates.
+  function P.galaxyLinks (sectors)
+    local out = {}
+    local SectorGraph = require('Game.SectorGraph')
+    for _, sec in ipairs(sectors or {}) do
+      for _, g in ipairs(SectorGraph.gates(sectors, sec.index)) do
+        out[#out + 1] = {
+          a = 'sector:' .. sec.index,
+          b = 'sector:' .. g.partner,
+          kind = 'warp',
+          label = g.otherName,
+        }
+      end
+    end
+    return out
+  end
+
   function P.children (ctx, isRoot)
     local out = P._units
     if not out then out = {}; P._units = out end
@@ -163,6 +224,35 @@ function GraphProvider.system ()
         end
       end
     end
+    -- The OTHER END of each gate.
+    --
+    -- The old Limit Theory put the two wormhole endpoints at fixed world
+    -- positions -- 400000 units either side of the line between the two
+    -- systems -- so the map at the system level could draw the wormhole AND
+    -- its link out to the other end. That is the useful thing about it: you
+    -- could see which way the exit lay.
+    --
+    -- Here the partner is in another sector, but its position is known just
+    -- as well, so the same trick works: a ghost node at the far end, and a
+    -- dotted link to it.
+    if getSectors then
+      local SectorGraph = require('Game.SectorGraph')
+      local sectors = getSectors()
+      if sectors and #sectors > 0 then
+        local SectorGraph_ = SectorGraph
+        for _, g in ipairs(SectorGraph_.gates(sectors, P.sectorIndex or 0)) do
+          out[#out + 1] = {
+            id    = 'gatefar:' .. g.partner,
+            major = false,
+            cat   = 'gatefar',
+            x = g.other.x, y = g.other.z,
+            r = 300,
+            label = g.otherName,
+          }
+        end
+      end
+    end
+
     -- The drill parent itself (non-root levels): keep the body you drilled
     -- into visible at the centre, so its satellites read in context
     -- ("the planet, with moons slowly orbiting it").
@@ -209,6 +299,36 @@ function GraphProvider.system ()
         end
       end
     end
+    -- Each gate is LINKED to the ghost node standing for its far end -- the
+    -- other side of the pair, which is in another sector.
+    --
+    -- This is the old Limit Theory's map trick: the two wormhole endpoints
+    -- were at fixed world positions, so the map could draw the wormhole AND
+    -- its link out to the other end, and you could see which way the exit
+    -- lay. Here the far end is in another sector, but its position is known
+    -- just as well, so the same trick works.
+    for _, e in pairs(nodes) do
+      if e.entity and e.entity.isWormhole then
+        if e.entity.partnerEntity then
+          -- A LANE: its partner is another entity in THIS level, so the
+          -- link is between two things you can both see.
+          local pid = e.entity.partnerEntity.id
+          if nodes[pid] then
+            out[#out + 1] = { a = e.id, b = pid, kind = 'lane',
+                              label = e.entity.partnerName }
+          end
+        elseif e.entity.partnerSector then
+          -- A WORMHOLE: its far end is in another sector, so it is a ghost
+          -- node standing for that other side of the pair.
+          local far = 'gatefar:' .. e.entity.partnerSector
+          if nodes[far] then
+            out[#out + 1] = { a = e.id, b = far, kind = 'warp',
+                              label = e.entity.partnerName }
+          end
+        end
+      end
+    end
+
     if ctx.hasEconomy and ctx:hasEconomy() then
       local eco = ctx:getEconomy()
       for _, job in ipairs(eco.jobs or {}) do

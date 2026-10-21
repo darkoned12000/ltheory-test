@@ -17,7 +17,6 @@ LightningStorm.__index = LightningStorm
 
 local LightningBolt = require('Game.Entities.LightningBolt')
 
-local MAX_EVENTS = 6      -- texLightning rows (quality caps at 4 or 6)
 local VAPOR_MIN   = 600   -- density * extent field a nucleus needs to host a storm
 
 -- 32-bit integer hash: identical to NebulaVolumes.hash32 (deterministic, exact).

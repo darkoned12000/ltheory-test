@@ -73,6 +73,8 @@ function LTheory:generate ()
 
   for i = 1, 1 do
     local planet = self.system:spawnPlanet()
+    -- Kept so it can be REPLACED when the player warps to another sector.
+    self.sectorPlanet = planet
     local controlling = self.player:getControlling()
     if controlling then
       local center   = planet:getPos()
@@ -189,6 +191,8 @@ function LTheory:onInit ()
   -- start now.
   self.audioReady = true
   self:startGateSounds()
+
+
   self.canvas = UI.Canvas()
   self.canvas
     :add(self.gameView
@@ -206,6 +210,9 @@ function LTheory:onInit ()
     -- The sector state, shared with the HUD's panel.
     getSectorState = function () return self.sectorState end,
   })
+  -- PHX_GALAXY=1 opens the map on the GALAXY LEVEL (the sectors and the
+  -- gates between them), for a headless capture.
+  if os.getenv('PHX_GALAXY') then self.nodeGraph.galaxyLevel = true end
   self.gameView.nodeGraph = self.nodeGraph
   -- The map starts hidden (F10 opens it). PHX_MAP=1 opens it at boot, which
   -- is what a headless capture wants: the map is a widget, so it is only in
@@ -228,6 +235,19 @@ end
   leave are the gates of the sector you arrive in, and they are different
   gates.
 -----------------------------------------------------------------------------]]
+-- Whether the warp lanes exist at all. Read live, so the debug window's
+-- switch works without a restart.
+--
+-- (A file-local, not a method: the class table and the app instance share
+-- their fields here, so a method with this name and an instance field with
+-- this name are the same slot.)
+local function railsEnabled ()
+  if Settings.exists('universe.rails.enable') then
+    return Settings.get('universe.rails.enable') and true or false
+  end
+  return false
+end
+
 function LTheory:buildGates ()
   if not self.sectors then return end
 
@@ -242,6 +262,22 @@ function LTheory:buildGates ()
 
   local here = self.sectors[self.sectorIndex + 1]
   if not here then return end
+
+  -- The sector's own regions -- the lanes are built from them. (The lanes
+  -- themselves are built by buildRails, which the debug window's switch can
+  -- call on its own.)
+  local _, sectorName = Sector.Region.place(here.seed, here.center, here.radius)
+
+  -- The HUB: the sector's own centre, and the one place every lane starts
+  -- from. It is where the player spawns, so the roads all lead back to
+  -- where they started, and it is the middle of the star the lanes make.
+  --
+  -- (This is the old game's own shape: UniverseGen/System.lts linked every
+  -- point of interest to the first one, and ran the rail from a's surface
+  -- to b's surface.)
+  local hub = { x = here.center.x, y = here.center.y, z = here.center.z,
+                name = sectorName }
+  self.sectorHub = hub
 
   for _, gate in ipairs(SectorGraph.gates(self.sectors, self.sectorIndex)) do
     -- The gate is named after the sector it LEADS TO, not the one it stands
@@ -272,11 +308,137 @@ function LTheory:buildGates ()
     -- later (see startGateSounds).
     if self.audioReady then wormhole:startSound() end
   end
+
+  -- The RAILS: the sector's own highways, between its regions.
+  --
+  -- Josh's words, from the May 2013 development video: "if you want to get
+  -- from point A to point B within a system, you use these lanes, warp
+  -- lanes, to get around quickly -- assuming you can hit them."
+  --
+  -- So a rail is a ROAD, not a door. It is a physical tube of energy, and
+  -- flying into it CAPTURES the ship and carries it to the far end. That is
+  -- what the old WarpNode controller did, with a rail force, a lane-locking
+  -- force and a torque (see script/Game/Entities/Rail.lua).
+  --
+  -- The first version of this made each lane a pair of teleport markers --
+  -- wrong twice over: they were wormhole-shaped (so the map was full of
+  -- portals), and they teleported instead of carrying you.
+  self:buildRails()
 end
+
+--[[---------------------------------------------------------------------------
+  buildRails -- (re)create the sector's warp lanes.
+
+  The lanes are the intra-sector roads: you fly into one and it carries you
+  across the sector.
+
+  They are OFF by default. A road network only earns its keep if there is
+  somewhere to go, and the sector's regions are currently areas of space with
+  nothing in them -- so a lane ends in empty space, and a lane that ends in
+  empty space is a lane nobody would use. The debug window's "Universe >
+  Warp Rails" switch builds them when you want to look at them, and takes
+  them away again when you do not.
+---------------------------------------------------------------------------]]
+function LTheory:buildRails ()
+  -- Clear the old ones.
+  if self.rails then
+    for _, l in ipairs(self.rails) do
+      if l:getParent() then l:getParent():removeChild(l) end
+      l:delete()
+    end
+  end
+  self.rails = {}
+  -- The rail connections, for the map: the old game's map drew the region
+  -- structure as a graph of nodes joined by lines, and the lines were the
+  -- connections. Ours are the rails.
+  self.sectorRails = {}
+
+  local on = railsEnabled()
+  self.railsEnabled = on
+  if not on then return end
+
+  local here = self.sectors and self.sectors[self.sectorIndex + 1]
+  if not here then return end
+  local regions = select(1, Sector.Region.place(here.seed, here.center, here.radius))
+  local hub = self.sectorHub
+  if not hub then
+    hub = { x = here.center.x, y = here.center.y, z = here.center.z }
+    self.sectorHub = hub
+  end
+
+  for _, lane in ipairs(Sector.Region.lanes(regions, hub)) do
+    -- Each pair is listed ONCE, so the rail is built from both ends here.
+    --
+    -- (Looking for a reciprocal entry could never work: Region.lanes dedupes
+    -- each pair to a single record, so there is no second record to find.)
+    local rail = Entities.Rail({
+      from = lane.aPos, to = lane.bPos,
+      fromName = lane.aName, toName = lane.bName,
+      name = 'Rail to ' .. lane.bName,
+      -- The frames start clear of the hub, so six lanes do not stack their
+      -- first frames on the same spot.
+      clearStart = Entities.Rail.HUB_CLEARANCE,
+    })
+    rail.material = Material.Rail()
+    -- The frame's bracket: a solid pale structure, drawn in the forward
+    -- pass with a self-shaded material.
+    rail.bracketMaterial = Material.Bracket()
+    self.system:addChild(rail)
+    self.rails[#self.rails + 1] = rail
+    self.sectorRails[#self.sectorRails + 1] = {
+      a = lane.aName, b = lane.bName,
+      aPos = lane.aPos, bPos = lane.bPos,
+    }
+  end
+end
+
 
 -- Start the hum on every gate. Called once the audio engine is up.
 function LTheory:startGateSounds ()
   for _, g in ipairs(self.gates or {}) do g:startSound() end
+end
+
+--[[---------------------------------------------------------------------------
+  regenerateSectorContent -- a new sector has to LOOK new.
+
+  Without this, warping changed the NAME and nothing else: the same planet,
+  the same sky, the same rocks. Which is worse than not having the feature at
+  all -- the player is told they have travelled, and the world says
+  otherwise. (This was exactly the complaint that prompted it: "the sector I
+  am brought to looks the same as the last".)
+
+  What changes:
+
+    * the PLANET -- a new one, of a new type, at a new size and a new
+      distance, drawn from the SECTOR's seed. It is the thing you look at.
+    * the SKY -- a new nebula and a new starfield, from the sector's seed.
+      The nebula is most of the screen, so this is most of the difference.
+    * the ROCKS -- already different, and not because of this: the asteroid
+      field is a pure function of (world seed, chunk coordinate), and the
+      sectors are hundreds of thousands of units apart, so a new sector is
+      new chunks.
+
+  The nebula costs a hitch (the skybox is generated on the CPU and the
+  irradiance map is convolved). That is the right place for one: a jump
+  should feel like a jump.
+-----------------------------------------------------------------------------]]
+function LTheory:regenerateSectorContent (index)
+  local sector = self.sectors and self.sectors[index + 1]
+  if not sector then return end
+  local centre = Vec3f(sector.center.x, sector.center.y, sector.center.z)
+
+  -- The planet.
+  if self.sectorPlanet then
+    self.sectorPlanet:delete()
+    self.sectorPlanet = nil
+  end
+  local rng = RNG.Create(sector.seed):managed()
+  self.sectorPlanet = self.system:spawnPlanet(rng, centre)
+
+  -- The sky.
+  local nebula = Entities.Nebula(sector.seed, self.system.starDir)
+  nebula:forceLoad()
+  self.system.nebula = nebula
 end
 
 --[[---------------------------------------------------------------------------
@@ -291,6 +453,7 @@ end
 function LTheory:enterSector (index, ship)
   if index == nil or index == self.sectorIndex then return end
   self.sectorIndex = index
+  self:regenerateSectorContent(index)
   self:buildGates()
 
   -- The ship is now somewhere else; its sector's state is recomputed from
@@ -304,6 +467,11 @@ function LTheory:enterSector (index, ship)
 end
 
 function LTheory:onUpdate (dt)
+  -- TEMP: headless settings snapshot.
+  if os.getenv('PHX_DUMP_SETTINGS') and not self.__dumped then
+    self.__dumped = true
+    require('Game.GUI.DebugWindow').DumpSettings()
+  end
   -- getRoot() is nil with no controlling ship, and a DESTROYED ship detaches
   -- from the tree (no `update`). Guard so a bad spawn can't kill the process.
   local root = self.player and self.player:getRoot()
@@ -311,7 +479,37 @@ function LTheory:onUpdate (dt)
   -- Atmosphere bubble: push the ship back out of planet atmospheres before it
   -- can grind the surface (see System:handleAtmosphere).
   local ship = self.player and self.player:getControlling()
-  if self.system and ship then self.system:handleAtmosphere(ship) end
+  -- The RAILS carry the ship.
+  --
+  -- "You flew into it and you started going very fast, and as long as you
+  -- kept the ship in the lane you travelled until you reached the end."
+  --
+  -- So the rail applies its forces to any ship that is in it: a push down
+  -- the lane, a force pulling it back onto the line, and -- when it has
+  -- arrived at the far end -- a nudge that takes it off the rail.
+  --
+  -- This runs BEFORE the atmosphere push, because the two disagree: the
+  -- atmosphere shell pushes the ship out of the planet, and the rail wants
+  -- it to stay on the line. A ship on a rail is not in an atmosphere.
+  -- The warp lanes' on/off, live: the debug window's switch builds them and
+  -- takes them away again, without a restart.
+  if self.sectors and (railsEnabled() ~= self.railsEnabled) then
+    self:buildRails()
+  end
+
+  if ship and self.rails then
+    self.railRiding = nil
+    for _, rail in ipairs(self.rails) do
+      if rail:ride(ship, dt) then
+        self.railRiding = rail
+        break
+      end
+    end
+  end
+
+  if self.system and ship and not self.railRiding then
+    self.system:handleAtmosphere(ship)
+  end
   -- Asteroid field streaming, driven from the same resolved ship for the same
   -- reason: System has no way to tell the player's ship from a thousand
   -- identical rocks it is itself streaming in.
@@ -328,6 +526,85 @@ function LTheory:onUpdate (dt)
     self.sectorState = Sector.state(self.seed, p.x, p.y, p.z,
                                     self.sectorIndex or 0,
                                     sector and sector.center)
+    -- The galaxy the sector belongs to, and which one it is -- the map's
+    -- GALAXY level needs both: the sectors to draw, and which of them the
+    -- player is standing in.
+    if self.sectorState then
+      self.sectorState.sectors = self.sectors
+      self.sectorState.sectorIndex = self.sectorIndex
+      -- The rail connections, for the map.
+      self.sectorState.rails = self.sectorRails
+      -- The hub the lanes all start from.
+      self.sectorState.hub = self.sectorHub
+      -- The nearest LANE, and where it goes.
+      --
+      -- A rail is the intra-sector transport, and it is HARD TO FIND: the
+      -- lanes run between region centres, which can be tens of thousands of
+      -- units apart, and nothing about them announces itself from a
+      -- distance. So the panel says where the nearest one is, the way it
+      -- says where the nearest jumpgate is.
+      local nearestLane, nearestLaneD
+      for _, rail in ipairs(self.rails or {}) do
+        -- The distance to the nearest WARP NODE, not to the middle of the
+        -- rail: the node is the thing you fly into, and the middle of a
+        -- thirty-thousand-unit rail can be a long way from either end.
+        local t = rail:project(p.x, p.y, p.z)
+        local nt = rail:nearestFrame(t)
+        if nt then
+          local a = rail.from
+          local nx = a.x + rail.dir.x * nt
+          local ny = a.y + rail.dir.y * nt
+          local nz = a.z + rail.dir.z * nt
+          local dx, dy, dz = nx - p.x, ny - p.y, nz - p.z
+          local d2 = dx * dx + dy * dy + dz * dz
+          if not nearestLaneD or d2 < nearestLaneD then
+            nearestLane, nearestLaneD = rail, d2
+          end
+        end
+      end
+      if nearestLane then
+        self.sectorState.nearestLane = {
+          name = nearestLane.toName,
+          dist = math.sqrt(nearestLaneD),
+          node = nearestLane,
+        }
+      end
+
+      -- The nearest gate, and where it goes.
+      --
+      -- The player should never have to hunt for their way out, and never
+      -- have to open the map to find out where it leads. The panel carries
+      -- the answer, always.
+      local nearest, nearestD
+      for _, g in ipairs(self.gates or {}) do
+        local gp = g:getPos()
+        local dx, dz = gp.x - p.x, gp.z - p.z
+        local d2 = dx * dx + dz * dz
+        if not nearestD or d2 < nearestD then
+          nearest, nearestD = g, d2
+        end
+      end
+      if nearest then
+        local gd = math.sqrt(nearestD)
+        self.sectorState.nearestGate = {
+          name = nearest:getPartnerName(),
+          kind = nearest.kind or 'sector',
+          dist = gd,
+          node = nearest,
+        }
+        -- The hum: ONE sound, for the NEAREST gate, with the volume worked
+        -- out from the distance. It is not a 3D sound, because the engine's
+        -- inverse attenuation (rolloff 2) makes a sound at the far end of a
+        -- sector inaudible -- and the hum is exactly the cue that says
+        -- "there is a portal over there".
+        if nearest.sound then
+          nearest.sound:setVolume(Entities.Wormhole.droneVolume(gd))
+        end
+        for _, g in ipairs(self.gates or {}) do
+          if g ~= nearest and g.sound then g.sound:setVolume(0) end
+        end
+      end
+    end
   else
     self.sectorState = nil
   end

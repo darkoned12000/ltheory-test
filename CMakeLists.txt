@@ -110,6 +110,20 @@ add_custom_target (phx_validate_regions
 add_dependencies (lt phx_validate_regions)
 add_dependencies (phx_validate_regions phx)
 
+# The universe: the sector lattice and the gate graph between sectors. The
+# graph has to be CONNECTED (the player is never stranded), SPARSE (a
+# fully-connected mesh puts N-1 gates on every rim), and have a cycle in it
+# (so there is a way around rather than a corridor). Checked offline, with
+# no GL context.
+add_custom_target (phx_validate_sectors
+  COMMAND "${CMAKE_SOURCE_DIR}/libphx/ext/bin/linux64/luajit" tools/validate_sectors.lua
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Validating the universe sector graph"
+  VERBATIM)
+
+add_dependencies (lt phx_validate_sectors)
+add_dependencies (phx_validate_sectors phx)
+
 # --- Build-time SDL validation gates ---------------------------------------
 add_custom_target (phx_validate_sdl
   COMMAND "${PHX_VALIDATOR_PY}" tools/validate_sdl.py

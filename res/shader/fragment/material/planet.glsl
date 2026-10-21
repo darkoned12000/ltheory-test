@@ -219,16 +219,35 @@ void main() {
     float moist = clamp(map.g * 0.75 + (1.0 - lat) * 0.25, 0.0, 1.0);
 
     // Gaussian falloff around each biome's (temperature, moisture) point.
+    //
+    // The POINTS are where the climate field actually lives, which is NOT
+    // the middle of the unit square -- the fields are biased, and the
+    // heights and the latitude pull them off centre:
+    //
+    //   temperature = 1 - lat*1.10 - height*0.55, so it only reaches its
+    //     top at the equator over low ground, and it hits zero well before
+    //     the poles.
+    //   moisture    = the generator's field*0.75 + (1-lat)*0.25, so the
+    //     equatorial band is wet on every world and the poles are dry.
+    //
+    // The first version put the biomes at (0.85,0.15), (0.60,0.85),
+    // (0.55,0.50) and (0.12,0.50) -- points the field essentially never
+    // visits. The consequence was measurable: the TEMPERATE biome held
+    // 0.52-0.65 of the weight from the equator to mid-latitudes, the DRY
+    // biome never exceeded 0.05 anywhere, and the MOIST biome never
+    // exceeded 0.33. So a planet had one biome (temperate) with a cold
+    // cap, and the wet/dry split the whole idea rests on never happened.
+    //
     // The widths are wide enough that adjacent biomes overlap, which is what
     // turns a classification into a blend.
-    float wDry  = exp(-((temp - 0.85) * (temp - 0.85) * 5.0
-                      + (moist - 0.15) * (moist - 0.15) * 14.0));
-    float wMois = exp(-((temp - 0.60) * (temp - 0.60) * 5.0
-                      + (moist - 0.85) * (moist - 0.85) * 14.0));
-    float wTemp = exp(-((temp - 0.55) * (temp - 0.55) * 3.0
-                      + (moist - 0.50) * (moist - 0.50) * 5.0));
-    float wCold = exp(-((temp - 0.12) * (temp - 0.12) * 9.0
-                      + (moist - 0.50) * (moist - 0.50) * 3.0));
+    float wDry  = exp(-((temp - 0.80) * (temp - 0.80) * 9.0
+                      + (moist - 0.20) * (moist - 0.20) * 12.0));
+    float wMois = exp(-((temp - 0.66) * (temp - 0.66) * 9.0
+                      + (moist - 0.80) * (moist - 0.80) * 12.0));
+    float wTemp = exp(-((temp - 0.42) * (temp - 0.42) * 7.0
+                      + (moist - 0.50) * (moist - 0.50) * 6.0));
+    float wCold = exp(-((temp - 0.08) * (temp - 0.08) * 7.0
+                      + (moist - 0.45) * (moist - 0.45) * 4.0));
     float wSum = wDry + wMois + wTemp + wCold;
     wSum = max(wSum, 1e-5);
     vec3 biome = (biomeColor1 * wDry + biomeColor2 * wMois

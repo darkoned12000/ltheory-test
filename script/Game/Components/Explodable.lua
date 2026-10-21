@@ -1,8 +1,6 @@
 local Entity = require('Game.Entity')
 local GPUParticles = require('Game.Entities.GPUParticles')
 
-local rng = RNG.Create(1231)
-
 --[[ Ship destruction: one scale-boosted GPU particle burst replaces the eight
   legacy Explosion billboards this used to spawn. ]]
 local function explode (self, source)

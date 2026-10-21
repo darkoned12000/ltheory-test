@@ -33,3 +33,9 @@ screenshot/
 # The old Limit Theory warp/wormhole source, dropped in for reference while
 # the jumpgates were ported. Not part of the build.
 /Warping/
+# The old Limit Theory source, dropped in for reference while the jumpgates
+# and the universe generator were ported. Not part of the build.
+/UniverseGen/
+
+# Screenshots the app saves during a session.
+/script/Screenshot_*.png

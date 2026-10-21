@@ -327,6 +327,7 @@ local kSectionLabels = {
   render    = 'Render',
   ssao      = 'GTAO',
   exposure  = 'Exposure',
+  universe  = 'Universe',
 }
 
 function DebugWindow:getSection (name)

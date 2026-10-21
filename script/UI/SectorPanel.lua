@@ -93,6 +93,8 @@ local LINES = {
   { key = 'regionLabel',    prefix = 'Region:' },
   { key = 'archetypeLabel', prefix = '', subtle = true },
   { key = 'bearingLabel',   prefix = '', subtle = true },
+  { key = 'gateLabel',      prefix = '', subtle = true },
+  { key = 'laneLabel',      prefix = '', subtle = true },
 }
 
 function SectorPanel.Create ()

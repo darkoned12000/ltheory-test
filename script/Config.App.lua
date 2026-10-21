@@ -19,14 +19,14 @@ Config.debug.physics = {
   drawBoundingBoxesworld = false,
 }
 
-local goodSeeds = {
-  14589938814258111262ULL,
-  15297218883250103974ULL,
-  1842258441393851360ULL,
-  1305797465843153519ULL,
-  5421862249219039751ULL,
-  638780708004697442ULL,
-}
+-- Seeds known to look good (paste into Config.gen.seedGlobal to
+-- reproduce one):
+  --   14589938814258111262ULL
+  --   15297218883250103974ULL
+  --   1842258441393851360ULL
+  --   1305797465843153519ULL
+  --   5421862249219039751ULL
+  --   638780708004697442ULL
 
 Config.gen = {
   debug      = false, -- Enable verbose mesh-generation diagnostics (bad normals, etc.)
@@ -291,7 +291,8 @@ Config.game = {
 
 Config.render = {
   fullscreen = false,
-  vsync      = true,
+  vsync      = false, -- the dump's value: vsync on double-buffers a 4K frame
+                      --     by a whole frame, which is very visible at 60 Hz.
   -- CPU-side draw batching/submit. OFF by default so the running app is unchanged;
   -- override in Config.Local.lua to opt in.
   multithread      = false,
@@ -404,7 +405,7 @@ Config.gpu = {
   sharpenRadius      = 2,      --   blur radius for the high-pass mask (1..6)
   tonemap            = true,   -- HDR -> display (ACES) + sRGB; false = raw clamp
   tonemapOperator    = 'ACES', --   AgX | ACES | Filmic | Khronos
-  exposureEV         = 0,      --   exposure stops (-4..4)
+  exposureEV         = 0.03791,      --   exposure stops (-4..4)
   exposureMeter      = false,  --   run the HDR exposure meter (filter/exposure) and
                           --     feed the debug panel's `hdr:` line. It costs
                           --     ~0.75-1.05 ms/frame (20-28% of a 3.7 ms
@@ -421,6 +422,13 @@ Config.gpu = {
   -- smoothing a constant. Beyond that it is the wrong tool here: this game spans
   -- a lit planet surface and empty space, and absolute brightness is information
   -- the player is meant to read. Use `exposureEV` by hand.
+  -- Colour grading (post-tonemap, in linear space). The panel's
+  -- 'Post FX > Saturation / Contrast / Temp / Tint' read these live.
+  colorSat      = 1.078,   --   saturation multiplier (0..3)
+  colorContrast = 1.034,   --   contrast multiplier (0..3)
+  colorTemp     = 0.07901, --   warm/cool bias, -1..1
+  colorTint     = 0.06725, --   magenta/green bias, -1..1
+
   vignette           = true,   -- cinematic darkened corners
   vignetteStrength   = 0.5,    --   (0..1)
   vignetteHardness   = 20,     --   falloff toward center (2..32)
@@ -429,6 +437,8 @@ Config.gpu = {
   aberration         = false,  -- chromatic aberration (lens fringe)
   aberrationStrength = 1,      --   (0..1)
   aberrationDispersion = 0.0002, -- UV offset at the frame edge (0..0.01); was hardcoded
+  fxaa               = false,  -- cheap full-res post-AA (an alternative to
+                          --     the capture-only 2x supersample)
   radialblur         = false,  -- radial motion blur / scanlines
   radialblurStrength = 1,      --   (0..1)
   radialblurScanlines = 1,     --   (0..1)
@@ -454,15 +464,15 @@ Config.gpu = {
   -- and these run 'Low', where the march (and so the veil) differs. Re-tune
   -- with a fixed-camera harness before changing them; see ltheory-planets.md 11.0
   -- W5 for why frame-timing drift makes the naive sweep untrustworthy.
-  nebulaDensity  = 1.5,        --   medium master gain (0..4)
-  nebulaAmbient  = 1.0,        --   irMap ambient scale in the inscatter (0 = sun-term only)
-  nebulaPalette  = 1.0,        --   medium albedo mix (1 = palette, 0 = flat tint)
-  nebulaJitter   = 0.5,        --   blue-noise ray-start jitter in step units (no extra march work)
-  nebulaBackground = 0.2,      --   everywhere-field presence (0..1.5, anchors unaffected)
-  nebulaCoverage = 2,          --   bank size/density multiplier (0.25..2.5)
-  nebulaRadius   = 14000,      --   max march distance, world units
-  nebulaG        = 0.4,        --   Henyey-Greenstein phase (phase 1.5 tune-up)
-  nebulaStarGlow  = 0.35,      --   Central Star baked into the envMap cube at
+  nebulaDensity  = 2.495,        --   medium master gain (0..4)
+  nebulaAmbient  = 1.002,        --   irMap ambient scale in the inscatter (0 = sun-term only)
+  nebulaPalette  = 0.5067,        --   medium albedo mix (1 = palette, 0 = flat tint)
+  nebulaJitter   = 0.3056,        --   blue-noise ray-start jitter in step units (no extra march work)
+  nebulaBackground = 0.1019,      --   everywhere-field presence (0..1.5, anchors unaffected)
+  nebulaCoverage = 1.009,          --   bank size/density multiplier (0.25..2.5)
+  nebulaRadius   = 22010.0,      --   max march distance, world units
+  nebulaG        = 0.07659,        --   Henyey-Greenstein phase (phase 1.5 tune-up)
+  nebulaStarGlow  = 0.5585,      --   Central Star baked into the envMap cube at
                           --     generation time. Was hardcoded 8.0/4.0 (a 12x peak
                           --     that clipped to solid white over a broad patch of
                           --     sky). Changing it needs a relaunch; the cube is
@@ -492,12 +502,12 @@ Config.gpu = {
   -- (Renderer.lua's SETTINGS), and the panel is what actually drives the live
   -- field settings. Remaining shape (chunkSize, unloadRadius, sizes, clumping,
   -- planetMargin) stays in Config.gen.asteroidField.
-  asteroidFieldEnabled    = false,
-  asteroidFieldPerChunk   = 0.8,
-  asteroidFieldLoadRadius = 12,
-  asteroidFieldFadeStart  = 8.75,
+  asteroidFieldEnabled    = true,
+  asteroidFieldPerChunk   = 2.004,
+  asteroidFieldLoadRadius = 10.04,
+  asteroidFieldFadeStart  = 8.53,
 
-  godraysEnabled  = false,
+  godraysEnabled  = true,
   godraysStrength = 1,          -- shaft gain. 1.0 = the pass IS the single-scatter
                           -- integral, i.e. no amplification: 14k units of thin gas
                           -- really do scatter only a little. Raising this is a
@@ -530,19 +540,19 @@ Config.gpu = {
   -- dust lanes read as "lit by the system's star" (System.starDir). Matches the
   -- hardcoded starColor (1, 0.5, 0.1) used by planet atmospheric scattering.
   sunLight        = true,  -- directional + dust backlight contribution
-  sunIntensity    = 1,     --   direct/ambient brightness (0..6)
+  sunIntensity    = 1.245,     --   direct/ambient brightness (0..6)
   -- The star DRAWN in the skybox at starDir (separate from the lighting above).
   -- `sunStarHalo` is the one that matters for realism: at the old 120 it spread
   -- the glow over ~20 degrees of sky, so a star sitting just beyond a planet's
   -- limb read as a light source ON the planet. Higher = tighter.
-  sunStarTight    = 20000, --   disc exponent (higher = smaller disc)
-  sunStarDisc     = 30,    --   disc brightness (HDR, rolled off by the tonemap)
-  sunStarHalo     = 900,   --   halo exponent (higher = tighter halo)
-  sunStarGlow     = 0.35,  --   halo brightness
-  sunAmbientFill  = 0.4564,--   hemisphere fill so shadows aren't pure black; lifted
+  sunStarTight    = 14830.0, --   disc exponent (higher = smaller disc)
+  sunStarDisc     = 49.98,    --   disc brightness (HDR, rolled off by the tonemap)
+  sunStarHalo     = 505.5,   --   halo exponent (higher = tighter halo)
+  sunStarGlow     = 0.5558,  --   halo brightness
+  sunAmbientFill  = 0.5135,--   hemisphere fill so shadows aren't pure black; lifted
                            --   from 0.12 so GTAO (ambient-only) has visible contrast
                            --   (ao_on==ao_off composite measured 2026-09-10)
-  sunWarmth       = 0.7476,--   1 = warm orange (matching starColor), 0 = white
+  sunWarmth       = 0.7568,--   1 = warm orange (matching starColor), 0 = white
   sunMarker       = false, --   draw a crosshair where starDir projects (analysis aid)
   sunShadows      = true,  -- directional shadow map from the sun
   sunShadowRange  = 8000,  --   half-size of the ortho shadow box (world units)
@@ -561,7 +571,7 @@ Config.gpu = {
   planetTerminator = 0.35, -- day/night falloff: 0 = cosine law (physical, dims
                           -- toward the limb), 1 = the old flat wrap, which kept 37%
                           -- brightness AT the limb and read as a glow on the edge.
-  planetBiomes      = 1.0,     -- biome blend strength (W7c). 0 = the pre-W7c look
+  planetBiomes      = 0.5019,     -- biome blend strength (W7c). 0 = the pre-W7c look
                           -- exactly (one elevation ramp, one character per planet);
                           -- 1 = the full blend, where a planet's climate is decided
                           -- by latitude + altitude (temperature) and by the
@@ -572,12 +582,12 @@ Config.gpu = {
                            -- THIS to turn clouds off, not Coverage=0: per-planet
                           -- cloudLevel is a bias that can be negative, so 0 gain
                           -- still leaves clouds on ~1/3 of desert worlds.
-  planetClouds   = 1.25,    -- cloud-deck gain (0..3.0). NOT a 0..1 fraction: it
+  planetClouds   = 1.3,    -- cloud-deck gain (0..3.0). NOT a 0..1 fraction: it
                           -- positions the coverage window smoothstep(0.70-0.20c,
                           -- 0.95-0.20c), so it stays meaningful above 1. Per-planet coverage is
                           -- type.weather x this x a per-planet bias; airless bodies
                           -- carry weather = 0 and never pay for it.
-  planetCloudHeight = 0.02, -- cloud SHELL altitude as a fraction of planet radius.
+  planetCloudHeight = 0.0303, -- cloud SHELL altitude as a fraction of planet radius.
                           -- 0 = the old deck projected onto the ground (no
                           -- parallax -- the clouds are welded to the terrain);
                           -- >0 puts the deck on a sphere above it, so the camera
@@ -585,35 +595,37 @@ Config.gpu = {
                           -- A real cloud deck is ~0.16% of a planet's radius up;
                           -- the default is higher because a physically-scaled
                           -- shell is too thin to read at any sane camera distance.
-  planetCloudShadow = 0.55, -- how much the deck dims the sun term on the ground
+  planetCloudShadow = 0.5698, -- how much the deck dims the sun term on the ground
                           --     beneath it (0..1). One extra cube fetch on an
                           --     already-bound texture, no new pass. 0 = off.
+  planetSpinRate    = 0.2081,  -- multiplier on the per-planet rotation rate
+                          --     (0 = frozen; 1 = the seed's own rate)
   planetRingsEnabled = true, -- master switch for rings. Checked at spawn AND at
                           --     draw time, so it hides an existing ring live --
                           -- every other ring knob is construction-time and
                           --     cannot affect the world already on screen.
-  planetRingVariation = 1.0, -- 0 = every ringed world gets the same canonical
+  planetRingVariation = 0.5745, -- 0 = every ringed world gets the same canonical
                           --     ring (good for A/B-ing a look change across
                           --     seeds), 1 = full spread.
-  planetRingChance  = 0.45,   -- GLOBAL multiplier on each type's per-type `ring`
+  planetRingChance  = 0.9124,   -- GLOBAL multiplier on each type's per-type `ring`
                           --     weight, so ring frequency is tunable without
                           --     touching the type table. Per-type chances are
                           --     ~0.2-0.3, so at 0.45 roughly one world in six
                           --     ends up ringed -- a treat, not the norm. 0 forces
                           --     every type off and is a clean A/B.
-  planetRingOpacity = 1.0,    -- ring optical depth scale
+  planetRingOpacity = 2.0,    -- ring optical depth scale
   planetRingBright  = 1.0,    -- overall ring brightness multiplier
-  planetRingEnv     = 1.0,    -- how strongly a ring picks up the skybox / nebula
+  planetRingEnv     = 1.306,    -- how strongly a ring picks up the skybox / nebula
                           --     irradiance. Light scattered toward the eye comes
                           --     from the star's direction, so a backlit ring
                           --     takes the colour of whatever nebula bank is
                           --     behind it. 0 = star light only.
 
-  planetStorms      = 1.0,     -- storminess multiplier on the type's `weather` prior
+  planetStorms      = 0.8715,     -- storminess multiplier on the type's `weather` prior
                           --     (ocean .70 / terr .60 / ice .40 / lava .15 /
                           --     desert .08 / barren+moon 0). Storms read as
                           --     DARKER convective cells, per ISS photography.
-  planetStormFlash  = 0.0,     -- intra-cloud lightning. OFF by default: it fires
+  planetStormFlash  = 1.351,     -- intra-cloud lightning. OFF by default: it fires
                           --     unprompted the moment a clouded world loads, which
                           --     reads as a rendering glitch rather than weather.
                           --     Raise it (or drag the panel's " - Flashes"
@@ -625,7 +637,7 @@ Config.gpu = {
                           --     Planet:render in agreement -- Config.gpu is what
                           --     actually seeds the panel at launch, so changing
                           --     only one of the three leaves the world flashing.
-  planetCloudWind   = 0.04, -- cloud advection as a FRACTION OF THE PLANET'S SPIN,
+  planetCloudWind   = 0.1007, -- cloud advection as a FRACTION OF THE PLANET'S SPIN,
                           --     not an absolute rate. Real drift is ~6% of Earth's
                           --     rotation; relative keeps the feel identical on a
                           --     2-minute planet and a 10-minute one, and the deck
@@ -646,7 +658,7 @@ Config.gpu = {
   aoBlur        = 1,     -- bilateral denoise passes (0/1/2)
 
   -- Texture / edge quality.
-  fovY          = 75,       -- camera vertical FOV (deg)
+  fovY          = 79.95,       -- camera vertical FOV (deg)
   filtering     = 'Bilinear', -- Bilinear | Trilinear | Aniso (texture filter quality)
   resolutionScale = '100%', -- render 3D below window size, upscale on present
                             -- (100%|85%|75%|67%|50%; big perf lever at 4K)

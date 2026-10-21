@@ -257,11 +257,52 @@ function HUD:drawReticle (a)
   UI.DrawEx.Ring(x, y, 16, c)
 end
 
+-- The name of the key a binding is bound to, if it is a plain key.
+--
+-- The dock prompt used to say "Press ??? to Dock", which is no use at all:
+-- the player cannot act on a prompt that does not say which key, and for a
+-- JUMPGATE it did not say where the gate went either.
+-- The name of the key a binding is bound to, if it is a plain key.
+--
+-- Button.ToString returns the raw ENUM NAME -- "Button_Keyboard_F" -- so
+-- the prefix is stripped: the prompt should say "Press F to Dock", not
+-- "Press Button_Keyboard_F to Dock".
+local function bindingKeyName (binding)
+  local c = binding and binding.control
+  if not c then return nil end
+  local raw
+  if c.key then
+    raw = tostring(Button.ToString(c.key))
+  elseif c.controls then
+    for _, sub in ipairs(c.controls) do
+      if sub.key then raw = tostring(Button.ToString(sub.key)) break end
+    end
+  end
+  if not raw then return nil end
+  return raw:match('Button_Keyboard_(.+)$')
+      or raw:match('Button_Gamepad_(.+)$')
+      or raw
+end
+
 function HUD:drawDockPrompt (a)
   local x, y, sx, sy = self:getRectGlobal()
+  local text = 'Press ??? to Dock'
+  local key = bindingKeyName(ShipBindings.Dock)
+  if key then text = 'Press ' .. key .. ' to Dock' end
+
+  -- A jumpgate says where it goes. "Press F to Dock" is fine for a station;
+  -- for a gate, where you will END UP is the entire question.
+  local d = self.dockable
+  if d and d.getPartnerName then
+    local dest = d:getPartnerName()
+    if dest and dest ~= '' then
+      text = text .. '  --  ' .. dest
+    end
+  end
+
   UI.DrawEx.TextAdditive(
     'NovaMono',
-    'Press ??? to Dock',
+    text,
     16,
     x, y, sx, sy,
     1, 1, 1, self.dockPromptAlpha * a,
@@ -384,7 +425,15 @@ function HUD:onInput (state)
 
   if self.dockable then
     if ShipBindings.Dock:get() > 0 then
-      e:pushAction(Actions.DockAt(self.dockable))
+      local d = self.dockable
+      if d.warpOnDock and d.warp then
+        -- A JUMPGATE: the ship warps on the spot. The generic dock action
+        -- would fly the ship at a point BELOW the dockable, which is right
+        -- for a station you pull up to and wrong for a portal you fly into.
+        d:warp(e)
+      else
+        e:pushAction(Actions.DockAt(d))
+      end
       self.dockable = nil
     end
   end
@@ -393,6 +442,30 @@ end
 function HUD:onUpdate (state)
   self.targets:update()
   self.dockables:update()
+
+  -- V opens the map on the GALAXY level, and swaps between the two levels
+  -- when it is already open.
+  --
+  -- It is handled HERE, and not in the map's own input handler, because that
+  -- only runs while the map is open -- so pressing V in the game did nothing.
+  -- The map's two levels are the SECTOR level (the bodies, the regions, the
+  -- gates) and the GALAXY level (the sectors, and the gates between them),
+  -- and they are LEVELS of the one node graph rather than two separate maps.
+  if Input.GetPressed(Button.Keyboard.V) then
+    local graph = self.gameView and self.gameView.nodeGraph
+    if graph then
+      if not graph:isEnabled() then
+        graph:toggleEnabled()
+        graph.galaxyLevel = true
+      else
+        graph.galaxyLevel = not graph.galaxyLevel
+      end
+      -- The level changed, so the nodes have to be re-seeded from scratch.
+      graph.nodes, graph.edges = {}, {}
+      graph.focus, graph.follow = nil, nil
+      graph._fitted = false
+    end
+  end
 
   local f = 1.0 - exp(-state.dt * 8.0)
   local alphaT = self.dockable and 1 or 0
@@ -495,6 +568,31 @@ function HUD:updateSectorInfo (shipPos)
     end
   else
     info.bearingLabel = ''
+  end
+
+  -- The nearest gate and where it leads.
+  --
+  -- This is the "how do I get out of here" line. The panel carries it
+  -- ALWAYS, so the player never has to open the map and hunt for a gate,
+  -- and never has to guess where a gate leads -- which is the thing the
+  -- map could not tell them on its own.
+  local ng = st.nearestGate
+  if ng and ng.name then
+    local what = (ng.kind == 'region') and 'gate to' or 'jumpgate to'
+    info.gateLabel = string.format('Nearest %s %s  %.0f km',
+                                   what, ng.name, ng.dist / 1000)
+  else
+    info.gateLabel = ''
+  end
+
+  -- The nearest LANE. A lane is the intra-sector transport, and it is hard
+  -- to find -- so the panel says where the nearest one is.
+  local nl = st.nearestLane
+  if nl and nl.name then
+    info.laneLabel = string.format('Nearest lane to %s  %.0f km',
+                                   nl.name, nl.dist / 1000)
+  else
+    info.laneLabel = ''
   end
 
   self.sectorInfo = info

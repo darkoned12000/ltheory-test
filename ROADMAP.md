@@ -17,6 +17,26 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
 - **Multithreaded render/submit (#10)** — done 2026-09-04 (see `multithreading.md`): pre-flight + Phases 0/1/3/4/5 (CPU batching, worker-built batches, persistent pooling).
 - **SDL2 → SDL3 (#9)** — done 2026-09-03: system SDL3 3.4.14, GL 4.6 core on native Wayland.
 - **SSAO / GTAO (#2)** — done & **signed off 2026-09-10/11** (branch `ssao-gtao`): 3-pass GTAO — half-res view-ray (`filter/aoview.glsl`), full cosine-windowed sky horizon integral with 64×64 blue-noise slice rotation (`filter/ao.glsl`), depth-aware full-res upsample+denoise (`filter/aoblur.glsl`). Upgraded with LOD 0.0 depth sampling, sky gating ($d \ge 900000$), and center-tap fallback on edge discontinuities ($w_{\text{sum}} < 1\text{e-}4$) to eliminate silhouette outlines. Material-aware **ambient-only** dispatch in `light/global.glsl`.
+- **Sectors, regions, places and the one map** — done (Phases A–H of
+  `procedural-space-environment.md`): a sector is a named, seeded place; a
+  region is a named volume inside it with an EXACT Apollonius boundary (a
+  sphere, solved in closed form, not sampled); the HUD names the sector and
+  the region and points at the next boundary; the map is ONE node graph whose
+  outermost level is the galaxy (V) and whose levels below are the sector
+  (F10) and a region (double-click). Regions are clickable and drillable.
+  Every level shares one camera, one fit and one drill stack.
+- **Jumpgates / inter-sector travel** — done: the old game's wormholes, ported
+  from the recovered `Warping/` source. A gate is a PAIR of linked endpoints
+  (one in each of two sectors) and the travel is a DOCK — fly into the glow,
+  press F, and the ship is in another sector, which regenerates its planet,
+  its sky and its rocks from its own seed. The gate graph is the old game's
+  shape: the union of TWO MINIMUM SPANNING TREES over the sectors, with
+  randomised edge weights (`tools/validate_sectors.lua` checks it is
+  connected, spread, mutual, and identical with the JIT on and off).
+- **A shipped look, and a look that is a look** — done 2026-10-21: the
+  debug panel's own settings snapshot is now the SHIPPED default for every
+  seed (in `Config.gpu`, not in a local preset), verified key-by-key against
+  a live snapshot of the running game. See `ltheory-planets.md` §11.20.
 - **Volumetric Nebula & Participating Media (fog-nebula)** — done & **signed off 2026-09-11** (branch `fog-nebula`): 2-pass participating media with world-space snapped grid density, anisotropic Henyey-Greenstein scattering, and deterministic per-cell plume anchors (`NebulaVolumes.lua`). Resolved planet silhouette outlines and floating cube faces via Euclidean spherical falloffs, LOD 0.0 depth sampling, and 32-bit bitwise integer cell PRNG. `Renderer:volume` optimized with persistent `anchorBytes` pooling to eliminate per-frame GC allocations.
 
 ## Rendering & graphics
@@ -33,14 +53,45 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
 ## Content & gameplay
 7. **Procedural content expansion**: L-system stations, SDF planets with biome terrain, procedural nebulae, procedural sky/env cubemaps.
 8. **Game screens**: Main menu / settings screen app on `script/UI/`.
+15. **Places in the regions** — a sector currently has a planet, a station and
+   an asteroid field, and its regions are named AREAS with nothing in them. The
+   old game's points of interest were real objects (a planet, a field, a
+   station, a colony) and its warp rails ran between THOSE. Without this there
+   is nowhere to travel to, and the warp lanes have no purpose: they are
+   built and correct, and switched OFF in the debug window for exactly that
+   reason. See `procedural-space-environment.md` §29j.
+16. **The ship's speed vs the sector's scale** — the sector is 120 km across
+   and `Ship:getTopSpeed` is a hardcoded 100 u/s, so crossing a sector takes
+   twenty minutes of flight. The two scales disagree by two orders of
+   magnitude. Either the ship gets faster or the sector gets smaller; right
+   now the sector is 60,000 units and the ship is a 100 u/s scooter.
+17. **A save format** — there is none: no `saveGame`, no `loadGame`. The map
+   holds the sector seeds in memory and that is the whole of "the sector
+   remembers itself".
 
 ## Platform & systems
 11. **Jolt Physics** — Modern SAP broadphase + multithreaded physics replacement if Bullet 3 becomes a bottleneck.
 12. **Vulkan** — Modern low-level target (renderer rewrite; post-GL path settlement).
 
 ## Vastness & atmosphere systems
-13. **Procedural streaming + LOD crossfade for endless sectors (atmosphere / vastness)** — Endless sector streaming with frustum + distance culling, LOD crossfading (`VisibleLodMesh`), and horizon fading via the landed distance haze pass (`postfx.fog.*`).
+13. **Procedural streaming + LOD crossfade for endless sectors (atmosphere / vastness)** — Endless sector streaming with frustum + distance culling, LOD crossfading (`VisibleLodMesh`), and horizon fading. (The "distance haze pass" this used to name was REMOVED — it hazed by depth alone, modelling an unbounded exponential atmosphere, so it applied ~50% of haze to a planet 137k away across ~120k of vacuum and halved the planet's local contrast. The volumetric pass already scatters correctly, over the medium that actually exists. See `ltheory-planets.md` §11.6.) The asteroid field already streams per chunk with a fragment-discard curtain; what is left is the near/mid/far representation tiers and the crossfade.
+    - **13a the shared SpaceField** — the load-bearing idea of
+      `procedural-space-environment.md` and the biggest open item in it: one
+      deterministic environmental field that the nebula, the asteroids, the
+      dust and the lightning all read, so a rock field can never land in a
+      clear void by chance.
+    - **13f region personality** — the regions have IDENTITY (a name, an
+      exact boundary, a HUD readout, a map pin) and no APPEARANCE: their
+      six archetypes carry a density, a storm and a light that nothing reads.
+      Wiring them is what makes "Violet Veil" a place rather than a word.
 
 ## Known polish / tech debt (small, unbundled)
 - **Audio polish**: Fixed `ThrustController.lua` thruster audio by correcting `set3DMinMaxDistance` attenuation parameters (`maxDist` fixed from `0` to `1000`) and adding Exponential Moving Average (EMA) volume smoothing to prevent zipper noise. Pre-load rapid SFX buffers once with `ClonePlayFree` for dogfight audio.
+- **Dead code**: the unreferenced nebula generators (`gen/nebula2/3/4_weak`),
+  `gen/clouds_cube`, the `ItemCount` class, a dozen unused file-locals, and
+  two dead uniforms (`bloompre.maxBrightness`, which was never uploaded and
+  whose in-shader fallback always ran, and the tonemap's lens-dirt overlay,
+  whose branch was provably unreachable behind a GLSL default initializer) are
+  all gone. `genColor` is no longer dead either -- the W7c biome blend
+  consumes it as the moisture field.
 - **Perf hardening:** Pooled `self.anchorBytes` inside `Renderer:volume()` to eliminate 768-byte allocations per frame in nebulae. Restored missing `shader:start()` call in `Renderer:presentAll()`.

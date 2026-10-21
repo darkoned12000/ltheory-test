@@ -1,5 +1,4 @@
 local Test = Application()
-local rng = RNG.FromTime()
 local icon
 
 function Test:onInit ()

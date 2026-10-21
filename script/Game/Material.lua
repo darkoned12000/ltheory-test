@@ -186,7 +186,12 @@ function Material.Wormhole ()
     cache.wormhole = Material.Create('effect/wormhole')
     cache.wormhole.onStart = function ()
       -- Culling off: the gate is a sphere you are INSIDE of, so the surface
-      -- you see is the far side, which is back-facing.
+      -- you see is the far side, which is back-facing -- and the near wall
+      -- contributes as well, which is what makes the throat bright.
+      --
+      -- (Culling the FRONT faces instead would halve the fragment work and
+      -- give a dimmer, harder-edged glow. It was tried and it did not look
+      -- as good, so it went back to drawing both walls.)
       RenderState.PushCullFace(CullFace.None)
       BlendMode.PushAdditive()
     end
@@ -196,6 +201,35 @@ function Material.Wormhole ()
     end
   end
   return cache.wormhole
+end
+
+-- The WARP RAIL material: the flowing energy tube.
+--
+-- Ported from the original Limit Theory's Warping/warprail.jsl, which drew
+-- a tube of moving light along the rail. Drawn additively, and with culling
+-- off so you can see the inside of the tube when you are in it.
+function Material.Rail ()
+  if not cache.rail then
+    cache.rail = Material.Create('effect/warprail')
+    cache.rail.onStart = function ()
+      RenderState.PushCullFace(CullFace.None)
+      BlendMode.PushAdditive()
+    end
+    cache.rail.onStop = function ()
+      BlendMode.Pop()
+      RenderState.PopCullFace()
+    end
+  end
+  return cache.rail
+end
+
+-- The RAIL FRAME material: the pale structure around a warp lane's opening.
+-- Drawn in the forward pass, self-shaded (see the shader for why).
+function Material.Bracket ()
+  if not cache.bracket then
+    cache.bracket = Material.Create('effect/railbracket')
+  end
+  return cache.bracket
 end
 
 return Material

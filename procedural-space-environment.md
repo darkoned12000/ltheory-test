@@ -1149,39 +1149,58 @@ so two stations in one sector never share a name.
 These are the decisions still open. Each one changes the shape of the
 generator, so they are answered before the SpaceField is built.
 
-    * HOW FAR DOES A SECTOR REACH, AND HOW BIG IS A REGION?
+    * HOW FAR DOES A SECTOR REACH, AND HOW BIG IS A REGION? -- ANSWERED IN
+      CODE, NEVER WRITTEN DOWN. The sector radius is 60,000 units (a sector
+      is 120 km across) and a sector holds 1, 5 or 6 regions (a design
+      parameter, decided by the sector's seed -- see 29d). The regions are
+      arranged on a RING around the sector's centre, each with its own
+      bearing, and their boundaries are exact Apollonius spheres (29c).
+      This is the answer to write down, and it is the answer the scale
+      question was asking for: at 120 km across with 5-6 regions, each
+      region is ~40-50 km across, which is a REGION-SIZED place, not a
+      patch. The remaining half of the question -- how big is a PLACE --
+      is answered below, and the answer is "not built yet" (see 29h).
 
-      Sector extent and region size set the scale of every field channel.
-      If a sector is 10^6 units across and a region 10^5, then the macro
-      field has room for real variation. If a sector is 10^4 and a region
-      10^3, the region count per sector is small and the "field"
-      degenerates into per-region constants.
+    * DO REGIONS HAVE RULES, OR ONLY A LOOK? -- STILL OPEN, AND THE ANSWER
+      IS CURRENTLY "NOT EVEN A LOOK".
 
-    * DO REGIONS HAVE RULES, OR ONLY A LOOK?
+      The archetypes in `Game/Region.lua` (Silent Deep, Violet Veil,
+      Shattered Belt, Solar Graveyard, Dust Expanse, Deep Field) each
+      carry a `density`, a `storm` and a `light` -- and **NOTHING READS
+      THEM.** The only consumer is the HUD's archetype NAME label. So
+      "Violet Veil" is currently a word on a panel, not a place: crossing
+      into it changes the text and nothing else. This is the gap between
+      29a's "APPEARANCE is continuous" and the code, and it is the whole
+      of 13f below.
 
-      §6's archetypes imply contested space and trade hubs are
-      gameplay-distinct, not just visually distinct. If regions carry
-      rules (hostility, tariffs, which faction owns what), a region needs
-      an identity that survives a save — a handle, not just a seed.
+      It is also the answer to the rails' purpose problem (29h): a region
+      that has no appearance and no place IN it is not somewhere worth
+      travelling to.
 
-    * IS THE SECTOR GRAPH FULLY CONNECTED, OR DISTANCE-WEIGHTED?
+    * IS THE SECTOR GRAPH FULLY CONNECTED, OR DISTANCE-WEIGHTED? -- ANSWERED
+      BY THE OLD SOURCE (29f): neither. It is the union of TWO MINIMUM
+      SPANNING TREES over the siblings, with randomly perturbed edge
+      weights, which is sparse, connected by construction, and has cycles
+      for redundancy. Implemented, and `tools/validate_sectors.lua` checks
+      that it is connected, spread, mutual, and identical with the JIT on
+      and off.
 
-      A fully-connected mesh is simple and always solvable. A
-      distance-weighted graph ("only connect to sectors within N hops")
-      is more interesting — it makes some sectors remote — but it means
-      the graph is a global constraint and cannot be grown lazily.
+    * DOES THE PLAYER GENERATE THE UNIVERSE, OR IS IT FIXED? -- ANSWERED IN
+      PRACTICE, NEVER WRITTEN DOWN: the galaxy is generated from the WORLD
+      seed, so it is player-generated, and `Config.gen.seedGlobal` pins it
+      for reproducibility. The old game had a fixed universe with known
+      coordinates; this one does not. If a fixed universe is wanted later,
+      this is the decision to revisit -- and the sector seeds are already
+      recorded per sector, which is half of it.
 
-    * DOES THE PLAYER GENERATE THE UNIVERSE, OR IS IT FIXED?
-
-      A fixed universe (one galaxy seed, known to the player) makes
-      "the same sector" mean the same thing to everyone. A player-
-      generated universe is more personal and makes sharing harder.
-
-    * WHAT IS THE SAVE FORMAT?
-
-      The player's map holds sector seeds. That is a small, well-defined
-      structure, but it needs to be decided before the map is built,
-      because the map is where "the sector remembers itself" lives.
+    * WHAT IS THE SAVE FORMAT? -- STILL OPEN, AND BIGGER THAN IT LOOKS.
+      There is NO save system at all in the tree: no `saveGame`, no
+      `loadGame`, nothing. The map holds the sector seeds in memory, and
+      that is the whole of "the sector remembers itself". A save format is
+      therefore not a tuning question but a missing feature, and it is
+      not on anybody's list. It also blocks the "points of interest stay
+      put" requirement in 29a for anything that is not derived from the
+      sector seed.
 
 29c. Phase C — the map knows where you are
 ------------------------------------------
@@ -1420,6 +1439,401 @@ replacement: a deterministic spiral of eight sectors, which gives the gates
 something to connect. The real generator is the next thing to port, and it
 is the piece that decides how many sectors exist, how they are placed, and
 which gates exist between them.
+
+29f. Phase F — the universe generator, and the bug it exposed
+----------------------------------------------------------
+
+The old game's universe generator was recovered (a `UniverseGen/` folder:
+Universe.cpp, Region.cpp, Interior.cpp, universe.lts, System.lts), and it
+settled the other open question.
+
+**THE GATE GRAPH IS NOT A FULLY-CONNECTED MESH**
+
+§29b recorded "fully-connected mesh" as the decision. The old source says
+otherwise. From Region.cpp:
+
+    const size_t kConnectivity = 2;
+    for (size_t i = 0; i < kConnectivity; ++i) {
+      ... a complete graph with edge weight Length(p1 - p2) * (1 + 0.5 * Exp)
+      AutoPtr<Graph<ObjectT*>> mst = graph->ComputeMST();
+      for each mst edge: Connect(src, dst);   // -> Object_Wormholes
+    }
+
+So the gate graph is the union of TWO MINIMUM SPANNING TREES over the
+sibling regions, with randomly perturbed edge weights. That shape is right:
+
+  * a spanning tree is connected by construction -- every region is
+    reachable, so the player is never stranded;
+  * it is SPARSE -- N-1 edges per tree, not N*(N-1)/2. At the old game's
+    512 nodes a fully-connected mesh would put 511 gates on every rim;
+  * the second tree adds REDUNDANCY -- the union has cycles, so a gate is
+    not the only way between two places;
+  * the random weight perturbation means the tree is not simply the
+    minimum-distance one, so the galaxy does not degenerate into a path.
+
+The layout is the old game's too: the children of a region are scattered
+through a DISC around it, at random positions, each smaller than the
+parent and smaller the further out it is, and never overlapping a sibling
+-- the same principle as the regions inside a sector.
+
+**THE BUG THIS EXPOSED: THE UNIVERSE WAS NOT DETERMINISTIC**
+
+The sector layout came out DIFFERENT with LuaJIT's JIT on and with it off.
+That is not a rounding curiosity: the galaxy's topology comes out of
+COMPARISONS on the sector coordinates (which edge is cheapest, which sector
+overlaps which), so a one-bit difference flips a comparison and the whole
+galaxy changes shape.
+
+And the difference is not one bit. `SpaceField.hash32` mixes its arguments
+by MULTIPLICATION in floating point, and its terms overflow the 32-bit
+range -- so the final conversion of the sum to an integer is on a value
+OUTSIDE the range the conversion is defined for, and LuaJIT's compiled
+code and its interpreter do that conversion differently. The same call can
+return a different hash depending on whether the function was hot.
+
+So the offline validator and the game were describing two DIFFERENT
+universes, and the validator's idea of the galaxy was not the galaxy the
+player flies through.
+
+The fix is that the layout now uses EXACT 32-bit integer arithmetic
+throughout:
+
+  * a precomputed cosine/sine table, indexed by an INTEGER angle, because
+    LuaJIT's compiled code replaces math.cos with a fast polynomial that
+    does not agree with libm to the last bit;
+  * a xor-and-shift mixer for the randomness, instead of hash32's
+    float-based mixing;
+  * an INTEGER weight for the spanning tree's edges, because a minimum
+    spanning tree is decided by comparisons and a comparison between two
+    floats can flip;
+  * and the sibling-overlap rule SHRINKS a sector rather than REJECTING
+    one, so nothing in the layout can change WHICH sectors exist.
+
+tools/validate_sectors.lua checks all of it: the graph is connected, the
+gates are spread and mutual, the galaxy is deterministic, and -- the one
+that caught this -- **the layout does not depend on whether the JIT is
+running**.
+
+**WHAT IS STILL MISSING**
+
+The old game's hierarchy is a TREE of regions: a Universe contains a
+Region, a Region contains sub-regions, and the leaves are Systems. The
+wormholes connect SIBLINGS, at each level.
+
+What is implemented here is the FLAT version of that: one level of
+sectors, connected by the old gate-graph algorithm. The nested version --
+regions containing regions, and the hierarchy the player navigates -- is
+the natural next step, and it needs the "regions" concept raised from a
+field value to an object, which is a bigger change than it sounds (the
+region's identity, its membership and its boundary are currently derived
+from a seed and a position).
+
+29g. Phase G — two maps, and how you actually travel
+---------------------------------------------------
+
+**THE MAP IS ONE NODE GRAPH, WITH THE GALAXY AS ITS OUTERMOST LEVEL**
+
+This was wrong at first: there were two maps with two cameras. The old
+Limit Theory's screenshots settled it -- it was ONE graph, and the galaxy
+was simply its outermost level. Its object types were "Universe",
+"Region", "System" and "Wormhole" SIDE BY SIDE: a Universe's children were
+Regions, a Region's children were Systems, and the wormholes were the
+LINKS between the siblings.
+
+So:
+
+    * The SECTOR level (F10) shows what is IN the sector: the bodies, the
+      named regions, and the gates on its rim.
+    * The GALAXY level (V) shows the SECTORS as nodes and the gates as
+      links.
+
+Same camera, same fit, same drill machinery -- the V key swaps the LEVEL.
+
+**AND THE GATE'S FAR END IS A NODE, LIKE THE OLD GAME'S WORMHOLES**
+
+The old game put the two wormhole endpoints at fixed world positions --
+400000 units either side of the line between the two systems -- so the map
+at the system level could draw the wormhole AND its link out to the other
+end. You could see which way the exit lay.
+
+Here the far end is in another sector, but its position is known just as
+well, so the same trick works: a ghost node standing for the other side of
+the pair, with a DOTTED link to it. (Dotted, because a solid line reads as
+a physical strut, and a gate is not a strut -- it is a way through, and it
+goes somewhere the map is not showing.)
+
+**TWO KINDS OF GATE, AND HOW THE PLAYER TELLS THEM APART**
+
+The old game had two, and they are not the same size of journey:
+
+    * a SECTOR gate -- a JUMPGATE. It leaves the sector entirely: another
+      part of the galaxy, with its own name, its own regions, its own
+      look. (The old game's wormholes.)
+    * a REGION gate -- an intra-sector link: another place in THIS sector.
+      (The old game's warp-node rail network -- the orbital rails around a
+      planet.)
+
+So the kind is on the entity (`kind = 'sector' | 'region'`) and the map
+draws them differently: a jumpgate is CYAN, an intra-sector gate is
+AMBER (the same family as the regions, because it leads to one), and the
+symbol key shows both.
+
+**AND THE PLAYER IS NEVER LEFT TO WORK IT OUT**
+
+Three places say what a gate does, so the map never has to be the only
+source of the answer:
+
+    * the PANEL carries it always --
+      "Nearest jumpgate to The Totohi Reach  55 km". The player does not
+      have to open the map and hunt for a gate, and does not have to
+      guess where a gate leads.
+    * the DOCK PROMPT names the destination when they are close enough to
+      dock: "Press F to Dock -- The Katapa Void".
+    * the MAP names every gate after its far end ("The Totohi Reach
+      Wormhole") and links it, dotted, to a ghost node standing for the
+      other side of the pair -- so you can see which way the exit lies.
+
+**A NEW SECTOR HAS TO LOOK NEW**
+
+Warping changed the NAME and nothing else: the same planet, the same sky,
+the same rocks. Which is worse than not having the feature at all -- the
+player is told they have travelled, and the world says otherwise. (This was
+the exact complaint: "the sector I am brought to looks the same as the
+last".)
+
+So arriving in a sector REGENERATES that sector's contents from the
+sector's seed:
+
+    * the PLANET -- a new one, of a new type, at a new size and a new
+      distance. It is the thing you look at. (System:spawnPlanet now takes
+      an optional rng and an optional origin, so a planet can be a pure
+      function of a sector rather than of the world's shared rng stream --
+      which cannot be re-rolled, because that stream is shared with the
+      rest of generation and reordering its draws reshuffles every
+      existing world.)
+    * the SKY -- a new nebula and a new starfield. The nebula is most of
+      the screen, so this is most of the difference. It costs a hitch (the
+      skybox is generated on the CPU and the irradiance map is convolved),
+      which is the right place for one: a jump should feel like a jump.
+    * the ROCKS -- already different, and not because of this: the asteroid
+      field is a pure function of (world seed, chunk coordinate), and the
+      sectors are hundreds of thousands of units apart, so a new sector is
+      new chunks.
+
+Measured across a warp: the planet went from an ICE body of radius 10867
+to a TERRESTRIAL one of radius 5541, and the sky went from a teal
+nebula to a green-and-violet one.
+
+**HOW YOU TRAVEL: FLY IN AND DOCK**
+
+    1. Fly to a gate. It is a big glowing sphere on the sector's rim, and
+       the map says which sector it leads to.
+    2. The dock prompt appears as you enter the portal's glow -- NOT when
+       you are dead centre inside it. The player should not have to aim
+       at the middle of a thing they can see the edge of.
+    3. Press F (or the gamepad Y). The ship warps on the spot.
+
+The warp is INSTANT, deliberately. The generic dock action flies the ship
+at a point a radius-and-a-quarter BELOW the dockable, which is right for a
+station you pull up to and wrong for a portal you fly into -- diving at
+the floor of a portal looks like a bug. So a gate warps on the spot, the
+way the old game did (`Wormhole::Dock` moved the docker into the
+destination container directly).
+
+The prompt names the key and the destination: "Press F to Dock -- The
+Katapa Void".
+
+**WHAT IS STILL MISSING**
+
+The old game's hierarchy is a TREE of regions: a Universe contains a
+Region, a Region contains sub-regions, and the leaves are Systems. The
+wormholes connect SIBLINGS, at each level.
+
+What is implemented here is the FLAT version of that: one level of
+sectors, connected by the old gate-graph algorithm. The nested version --
+regions containing regions, and the hierarchy the player navigates -- is
+the natural next step, and it needs the "regions" concept raised from a
+field value to an object, which is a bigger change than it sounds (the
+region's identity, its membership and its boundary are currently derived
+from a seed and a position).
+
+29g. Phase G -- the warp lanes, rebuilt from the old code
+--------------------------------------------------------
+
+Josh's own words, from the May 2013 development video:
+
+    "if you want to get from point A to point B within a system, you use
+     these lanes, warp lanes, to get around quickly -- assuming you can hit
+     them."
+
+So a lane is a ROAD, not a door: you fly into it, it CAPTURES you, and it
+carries you to the other end.
+
+**WHAT THE OLD CODE ACTUALLY BUILT** (Warping/WarpNode.cpp, WarpRail.cpp)
+
+    * The WARP NODE was a sphere of ICE:
+
+          model = Model_Create()->Add(
+            Mesh_BoxSphere(16, true)->SetU(1),
+            Material_Ice());
+
+      A CHAIN of these along the lane is what you see from a distance --
+      the reference frames show a line of small blue structures, and those
+      are the nodes, not the rail.
+
+    * The WARP RAIL was a TUBE:
+
+          model = Model_Create()->Add(Mesh_Cylinder(50)
+            ->Scale(V3(1, 0.5f, 1))
+            ->Translate(V3(0, 0.5f, 0))
+            ->Rotate(V3(0, kPi2, 0)), shader);
+
+      with the shader ADDITIVE, CULLING DISABLED and NO DEPTH WRITE. The
+      culling is the important one: the camera is INSIDE the tube, so the
+      surface you see is the far wall -- that is the wall effect, and it is
+      the graphics rather than the geometry.
+
+      (In that snapshot the rail's own drawable was commented out, so only
+      the nodes were visible. The tube is what the code describes, and it
+      is what the reference footage shows from inside one.)
+
+The first attempt at this was a rectangular lattice -- a "window frame" --
+which was wrong twice over: it was not what the old code built, and it was
+a window rather than a road.
+
+**THE THREE FORCES** (the old WarpNode controller)
+
+    1. a RAIL FORCE toward the next node, scaled by the ship's mass;
+    2. a LANE-LOCKING force, pulling the ship back onto the rail's line;
+    3. the ARRIVAL -- at the far end the rail lets go.
+
+The speed along the rail is CAPPED (1500), because the old game's drag
+capped it and this engine's ship has no friction.
+
+**THE LANES BRING YOU TO THE OTHER REGION**
+
+A rail runs from one region's centre to the other's, so the membership flips
+as you travel, and the region you arrive in is the other one. That is the
+"at a minimum, these lanes bring you to the different regions".
+
+**FINDING THEM** is the hard part -- they run between region centres tens
+of thousands of units apart, and nothing about them announces itself from
+a distance. So the panel carries the nearest one, the way it carries the
+nearest jumpgate: "Nearest lane to Sanusege  13 km", measured to the
+nearest warp NODE (the thing you fly into), not to the middle of the rail.
+
+29h. Phase H -- what the warp lane actually LOOKS like
+---------------------------------------------------------
+
+From the reference frames, a lane frame is:
+
+  * TWO large rectangular PANELS, one on each side of the lane, each
+    carrying a bright blue LATTICE;
+  * a GAP between them -- and THE GAP IS THE LANE. The ship flies through
+    the gap, and the grid on the panels is what accelerates it;
+  * the panels TILTED in OPPOSITE directions, so the pair reads as a funnel
+    rather than two flat sheets;
+  * a chunky pale BRACKET on each panel's inner edge -- the edges that
+    bound the gap.
+
+Three attempts got here, and each was wrong in an instructive way:
+
+  1. A continuous TUBE with SPHERES on it. The old code has no tube: the
+     old WarpRail's drawable was COMMENTED OUT, so what you saw was the
+     warp NODES. And a tube reads as one blown-out white streak from a
+     distance, which is nothing like a highway.
+  2. A rectangular lattice -- which is the right IDEA, but it rendered
+     black, twice, for two different reasons:
+       - the grid term was NEGATIVE between the lines (it is 1 on a line
+         and falls off past it), and a negative grid multiplied into the
+         colour drove the whole field to black. It needs a clamp.
+       - mWorldIT was left unset, so the vertex shader normalised a ZERO
+         vector and the whole fragment went NaN -- which under additive
+         blending is a black field, not a missing one.
+  3. The panels, tilted, with the brackets on their inner edges.
+
+Two GLSL traps worth remembering, both of which cost real time:
+
+  * `line` is a RESERVED KEYWORD in GLSL 4.x. `float line = ...` does not
+    compile.
+  * A mangled comment -- `//` turned into `--` -- is not a comment at all
+    in GLSL. `--` is a decrement operator, and the result is a syntax
+    error a hundred lines away from the cause.
+
+29i. WHERE THE PROGRAMME ACTUALLY STANDS (2026-10-21)
+-----------------------------------------------------
+
+A status read of the #13 items, because the list above was written as a
+proposal and most of it has since been built.
+
+| # | item | state |
+|---|------|-------|
+| 13a | Continuous SpaceField | **PARTLY.** `Game/SpaceField.lua` exists and is the exact 32-bit hash the universe layout needs, but it is NOT the environmental field 2 describes: the nebula, the asteroid field, the dust and the lightning still own private hash schemes, so the correlation failure 29a names -- "a beautiful clear void next to a rock field purely by chance", "rocks invisible inside the gas" -- is still exactly as likely. **This is the biggest open item in the whole document.** |
+| 13b | Volumetric dust / nebula | **DONE.** The participating medium, the anchor volumes, the two-pass composite, the star occlusion and the god rays are all in and signed off. |
+| 13c | Procedural asteroid fields | **DONE.** The endless chunk-streamed field, with the boundary hidden by a fragment discard rather than by scaling a body (which reallocates collision shapes and locks the game up). |
+| 13d | Environmental motion | **PARTLY.** The nebula's drift and the cloud deck's wind are in; the asteroid field's rocks do not move. |
+| 13e | Environmental events | **PARTLY.** Lightning is in and fires; radiation events, debris events and the rarity tiers are not. |
+| 13f | Region transitions | **NOT DONE, and this is the one that hurts.** The regions have IDENTITY (a name, an exact Apollonius boundary, a HUD readout, a map pin) and no APPEARANCE. Their archetypes carry a density, a storm and a light that nothing reads. |
+| 13g | Streaming / LOD | **PARTLY.** Chunk streaming is in for the asteroid field; the near/mid/far representation tiers and the crossfade are not. |
+| 13h | Ship / environment interaction | **PARTLY.** The hull is lit by the nebula's irradiance; the cockpit, the camera-motion response and the dust streaking are not. |
+| 13i | Sectors, regions and places | **DONE for sectors and regions; PLACES ARE THE HOLE.** The named hierarchy, the pinned seeds, the map and the drill-in are all in. A "place" -- something you can go to and do things with -- is not: a sector has one planet, one station and one asteroid field, and its regions are areas of space. |
+| 13j | Inter-sector travel | **DONE.** The jumpgates are the old game's wormholes, ported: a pair of linked endpoints, a dock, a warp, and a sector that regenerates itself from its own seed. The "FTL warp drive for long intra-sector travel" half is the warp lane, and that is where the next section is. |
+
+29j. The warp lanes, and the question they have not answered
+-----------------------------------------------------------
+
+The lanes are BUILT and they LOOK right: a chain of frames, each a pair of
+tilted grid panels with a ribbed bracket between them, the gap between the
+panels being the lane the ship flies through. The physics is the old game's
+three forces -- a rail force down the lane, a lane-locking force back onto
+the line, and the arrival at the far end -- with the capture fixed to the
+lane's CORRIDOR rather than to a single frame (the first version dropped the
+ship off the rail between gates), the ship made non-collidable while it is
+carried (it used to stop dead against a rock, two seconds into every ride),
+and a braking exit (it used to be released at full speed into an asteroid
+field).
+
+The topology was rebuilt twice, and both times because the old source
+settled it:
+
+* the first version linked each region to its two NEAREST neighbours, which
+  with six regions made EIGHT lanes that all met in the middle of the sector
+  -- the sky above the ship was a knot of rails;
+* the old game's own shape is a STAR from a hub (`UniverseGen/System.lts`
+  links every point of interest to the first one), so that is what it is now:
+  one spoke per region, each in its own direction, 41-58 km long.
+
+**And they still have no purpose, and the reason is not a rendering problem.**
+
+A lane that ends in empty space is a lane nobody would use, and that is
+exactly what a lane does here: the sector's regions are AREAS, and nothing
+is IN them. The player's own summary of it was the right one -- "if the warp
+rail goes to nothing (empty space) why have it? We should not be going to
+empty space."
+
+So the missing thing is not the lane. It is the DESTINATION:
+
+1. **A region needs a place in it.** The old game's POIs were a planet, a
+   field, a station, a colony -- real objects with a market and a factory,
+   and the rails ran between THOSE. Our regions are named volumes with a
+   boundary and an archetype, and no contents.
+2. **A region needs an appearance**, so that going somewhere is a change you
+   can SEE (13f). The archetypes already describe six places with a
+   character; nothing reads their density, storm or light.
+3. **The ship needs to be able to get there without a rail.** The ship's
+   top speed is a hardcoded 100 u/s (`Ship:getTopSpeed`, with its own TODO
+   admitting it) in a sector 120 km across -- so crossing a sector takes
+   TWENTY MINUTES of flight. That is why the rails were wanted in the first
+   place, and it is why "just make the thrusters faster" is the right
+   instinct: the scale of the sector and the scale of the ship disagree by
+   two orders of magnitude, and no amount of lane plumbing fixes that.
+
+**Where that leaves the lanes.** They are switched OFF in the debug window
+("Universe > Warp Rails"), because the alternative is a permanently visible
+road network that goes nowhere. The switch is live, so they can be looked at
+at any time. The work that would make them worth having is content work --
+places in the regions, a region personality, and a ship that can cross a
+sector -- and that is a bigger thing than this document's remaining items.
 
 30. Visual "Wow Factor" Stack
 

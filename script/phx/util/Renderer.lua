@@ -64,13 +64,13 @@ local SETTINGS = {
   { kind = 'bool',  key = 'postfx.tonemap.enable',    label = 'Tonemap',       default = true, gpu = 'tonemap' },
   { kind = 'enum',  key = 'postfx.tonemap.operator',  label = ' - Operator',   default = 2,
     options = { 'AgX', 'ACES', 'Filmic', 'Khronos' }, gpu = 'tonemapOperator' },
-  { kind = 'float', key = 'postfx.exposure.ev',       label = ' - Exposure EV', default = 0, min = -4, max = 4, gpu = 'exposureEV' },
+  { kind = 'float', key = 'postfx.exposure.ev',       label = ' - Exposure EV', default = 0.03791, min = -4, max = 4, gpu = 'exposureEV' },
 
   -- Color Grading Micro-Knobs (Roadmap #14)
-  { kind = 'float', key = 'postfx.color.sat',       label = ' - Saturation',  default = 1.0, min = 0, max = 3, gpu = 'colorSat' },
-  { kind = 'float', key = 'postfx.color.contrast',  label = ' - Contrast',    default = 1.0, min = 0, max = 3, gpu = 'colorContrast' },
-  { kind = 'float', key = 'postfx.color.temp',      label = ' - Temp (W/C)',  default = 0.0, min = -1, max = 1, gpu = 'colorTemp' },
-  { kind = 'float', key = 'postfx.color.tint',      label = ' - Tint (M/G)',  default = 0.0, min = -1, max = 1, gpu = 'colorTint' },
+  { kind = 'float', key = 'postfx.color.sat',       label = ' - Saturation',  default = 1.078, min = 0, max = 3, gpu = 'colorSat' },
+  { kind = 'float', key = 'postfx.color.contrast',  label = ' - Contrast',    default = 1.034, min = 0, max = 3, gpu = 'colorContrast' },
+  { kind = 'float', key = 'postfx.color.temp',      label = ' - Temp (W/C)',  default = 0.07901, min = -1, max = 1, gpu = 'colorTemp' },
+  { kind = 'float', key = 'postfx.color.tint',      label = ' - Tint (M/G)',  default = 0.06725, min = -1, max = 1, gpu = 'colorTint' },
 
   -- REMOVED: auto-exposure (postfx.autoexposure.*, Renderer:autoExposureEV).
   -- It never worked, for two independent reasons, both of which had to be true
@@ -105,7 +105,7 @@ local SETTINGS = {
 
   { kind = 'bool',  key = 'postfx.vignette.enable',   label = 'Vignette',    default = true, gpu = 'vignette' },
   { kind = 'float', key = 'postfx.vignette.strength', label = ' - Strength', default = 0.5, min = 0, max = 1, gpu = 'vignetteStrength' },
-  { kind = 'float', key = 'postfx.vignette.hardness', label = ' - Hardness', default = 20.0, min = 2, max = 32, gpu = 'vignetteHardness' },
+  { kind = 'float', key = 'postfx.vignette.hardness', label = ' - Hardness', default = 20, min = 2, max = 32, gpu = 'vignetteHardness' },
 
   { kind = 'bool',  key = 'postfx.grain.enable',   label = 'Film Grain', default = false, gpu = 'grain' },
   { kind = 'float', key = 'postfx.grain.strength', label = ' - Amount',  default = 1, min = 0, max = 4, gpu = 'grainStrength' },
@@ -115,28 +115,28 @@ local SETTINGS = {
     options = { 'Off', 'Low', 'Medium', 'High' }, gpu = 'nebulaQuality' },
   { kind = 'enum',  key = 'nebula.debug',   label = ' - Debug View', default = 1,
     options = { 'Off', 'Density', 'Transmittance', 'Lighting', 'Steps', 'Anchors' }, gpu = 'nebulaDebug' },
-  { kind = 'float', key = 'nebula.density', label = ' - Density',    default = 1.5, min = 0, max = 4, gpu = 'nebulaDensity' },
-  { kind = 'float', key = 'nebula.jitter',  label = ' - Ray Jitter', default = 0.5, min = 0, max = 1, gpu = 'nebulaJitter' },
-  { kind = 'float', key = 'nebula.ambient', label = ' - Ambient',    default = 1.0, min = 0, max = 3, gpu = 'nebulaAmbient' },
-  { kind = 'float', key = 'nebula.palette', label = ' - Palette',     default = 1.0, min = 0, max = 1, gpu = 'nebulaPalette' },
-  { kind = 'float', key = 'nebula.background', label = ' - Background', default = 0.2, min = 0, max = 1.5, gpu = 'nebulaBackground' },
-  { kind = 'float', key = 'nebula.coverage', label = ' - Coverage',  default = 2, min = 0.25, max = 2.5, gpu = 'nebulaCoverage' },
-  { kind = 'float', key = 'nebula.radius',  label = ' - Radius',     default = 14000, min = 500, max = 40000, gpu = 'nebulaRadius' },
-  { kind = 'float', key = 'nebula.g',       label = ' - Phase g',    default = 0.4, min = -1, max = 1, gpu = 'nebulaG' },
+  { kind = 'float', key = 'nebula.density', label = ' - Density',    default = 2.495, min = 0, max = 4, gpu = 'nebulaDensity' },
+  { kind = 'float', key = 'nebula.jitter',  label = ' - Ray Jitter', default = 0.3056, min = 0, max = 1, gpu = 'nebulaJitter' },
+  { kind = 'float', key = 'nebula.ambient', label = ' - Ambient',    default = 1.002, min = 0, max = 3, gpu = 'nebulaAmbient' },
+  { kind = 'float', key = 'nebula.palette', label = ' - Palette',     default = 0.5067, min = 0, max = 1, gpu = 'nebulaPalette' },
+  { kind = 'float', key = 'nebula.background', label = ' - Background', default = 0.1019, min = 0, max = 1.5, gpu = 'nebulaBackground' },
+  { kind = 'float', key = 'nebula.coverage', label = ' - Coverage',  default = 1.009, min = 0.25, max = 2.5, gpu = 'nebulaCoverage' },
+  { kind = 'float', key = 'nebula.radius',  label = ' - Radius',     default = 22010, min = 500, max = 40000, gpu = 'nebulaRadius' },
+  { kind = 'float', key = 'nebula.g',       label = ' - Phase g',    default = 0.07659, min = -1, max = 1, gpu = 'nebulaG' },
   -- Baked into the sky CUBE at generation time (gen/nebula.glsl 'Central Star'),
   -- so a change needs a relaunch to re-bake. Was a hardcoded 8.0/4.0 = 12x peak
   -- that clipped to white across a broad patch of sky.
-  { kind = 'float', key = 'nebula.starGlow', label = ' - Baked Star Glow', default = 0.35, min = 0, max = 3, gpu = 'nebulaStarGlow' },
-  { kind = 'float', key = 'nebula.tint',    label = ' - Glow Tint',  default = 0.0, min = 0, max = 1, gpu = 'nebulaTint' },
-  { kind = 'float', key = 'nebula.tintR',   label = '   Color R',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintR' },
-  { kind = 'float', key = 'nebula.tintG',   label = '   Color G',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintG' },
-  { kind = 'float', key = 'nebula.tintB',   label = '   Color B',    default = 1.0, min = 0, max = 1, gpu = 'nebulaTintB' },
+  { kind = 'float', key = 'nebula.starGlow', label = ' - Baked Star Glow', default = 0.5585, min = 0, max = 3, gpu = 'nebulaStarGlow' },
+  { kind = 'float', key = 'nebula.tint',    label = ' - Glow Tint',  default = 0, min = 0, max = 1, gpu = 'nebulaTint' },
+  { kind = 'float', key = 'nebula.tintR',   label = '   Color R',    default = 1, min = 0, max = 1, gpu = 'nebulaTintR' },
+  { kind = 'float', key = 'nebula.tintG',   label = '   Color G',    default = 1, min = 0, max = 1, gpu = 'nebulaTintG' },
+  { kind = 'float', key = 'nebula.tintB',   label = '   Color B',    default = 1, min = 0, max = 1, gpu = 'nebulaTintB' },
 
   -- God-rays (fog-nebula Phase 3, independent A/B product) ---------------
-  { kind = 'bool',  key = 'postfx.godrays.enable',   label = 'God Rays',      default = false, gpu = 'godraysEnabled' },
+  { kind = 'bool',  key = 'postfx.godrays.enable',   label = 'God Rays',      default = true, gpu = 'godraysEnabled' },
   { kind = 'float', key = 'postfx.godrays.strength', label = ' - Strength',   default = 1, min = 0, max = 32, gpu = 'godraysStrength' },
   { kind = 'float', key = 'postfx.godrays.g',        label = ' - Anisotropy', default = 0.7, min = 0, max = 0.98, gpu = 'godraysG' },
-  { kind = 'float', key = 'postfx.godrays.ceiling',   label = ' - Soft Ceiling', default = 2.0, min = 0, max = 12, gpu = 'godraysCeiling' },
+  { kind = 'float', key = 'postfx.godrays.ceiling',   label = ' - Soft Ceiling', default = 2, min = 0, max = 12, gpu = 'godraysCeiling' },
   { kind = 'enum',  key = 'postfx.godrays.debug',    label = ' - Debug View', default = 1,
     options = { 'Off', 'Shaft' }, gpu = 'godraysDebug' },
 
@@ -151,7 +151,7 @@ local SETTINGS = {
     options = { 'Off', 'Region', 'Energy' }, gpu = 'lightningDebug' },
 
   -- Core render -----------------------------------------------------------
-  { kind = 'float', key = 'render.fovY',        label = 'FOV',           default = 75, min = 50, max = 100, gpu = 'fovY' },
+  { kind = 'float', key = 'render.fovY',        label = 'FOV',           default = 79.95, min = 50, max = 100, gpu = 'fovY' },
   -- Asteroid field streaming (Game/Entities/AsteroidField.lua).
   --
   -- These are LIVE and deliberately on the panel rather than buried in Config:
@@ -187,10 +187,10 @@ local SETTINGS = {
   -- Pop-in is handled by a distance fade (AsteroidField:getFadeBand); Fade Start
   -- and Reach are measured in chunk-size multiples. Fade Start must be lower
   -- than the conservative fade end (Reach - half-cell diagonal - rock radius).
-  { kind = 'bool',  key = 'gen.asteroidField.enable',     label = 'Asteroid Field', default = false, gpu = 'asteroidFieldEnabled' },
-  { kind = 'float', key = 'gen.asteroidField.perChunk',   label = ' - Rocks/Chunk', default = 0.8, min = 0, max = 24, gpu = 'asteroidFieldPerChunk' },
-  { kind = 'float', key = 'gen.asteroidField.loadRadius', label = ' - Reach',       default = 12, min = 1, max = 12, gpu = 'asteroidFieldLoadRadius' },
-  { kind = 'float', key = 'gen.asteroidField.fadeStart',  label = ' - Fade Start',  default = 8.75, min = 1, max = 10.5, gpu = 'asteroidFieldFadeStart' },
+  { kind = 'bool',  key = 'gen.asteroidField.enable',     label = 'Asteroid Field', default = true, gpu = 'asteroidFieldEnabled' },
+  { kind = 'float', key = 'gen.asteroidField.perChunk',   label = ' - Rocks/Chunk', default = 2.004, min = 0, max = 24, gpu = 'asteroidFieldPerChunk' },
+  { kind = 'float', key = 'gen.asteroidField.loadRadius', label = ' - Reach',       default = 10.04, min = 1, max = 12, gpu = 'asteroidFieldLoadRadius' },
+  { kind = 'float', key = 'gen.asteroidField.fadeStart',  label = ' - Fade Start',  default = 8.53, min = 1, max = 10.5, gpu = 'asteroidFieldFadeStart' },
 
   -- Temporal anti-aliasing is the interactive AA option. The old live 2x/4x
   -- supersampling control is gone; only the Screenshot key keeps a hidden one-shot
@@ -208,6 +208,20 @@ local SETTINGS = {
   -- static (streamed rocks never move, planets turn at ~0.02 rad/s) so for a
   -- moving camera it is essentially exact. NPCs are the known artifact.
   { kind = 'bool',  key = 'render.taa.enable', label = 'TAA (Temporal AA)', default = false, gpu = 'taaEnabled' },
+
+  -- The universe: the jumpgates, the regions, and the warp rails.
+  --
+  --   Rails  OFF by default.
+  --
+  -- The rails are a ROAD NETWORK, and a road network only earns its keep if
+  -- there is somewhere to go: a rail that ends in empty space is a lane
+  -- nobody would use, and the sector's regions are currently areas of space
+  -- with nothing in them. The gates (the jumpgates) are the travel that
+  -- works, and they are left alone.
+  --
+  -- This is LIVE: switching it on builds the sector's rails and switching it
+  -- off takes them away again, without a restart.
+  { kind = 'bool',  key = 'universe.rails.enable', label = 'Warp Rails', default = false },
   { kind = 'float', key = 'render.taa.blend',  label = ' - History',      default = 0.9, min = 0, max = 1, gpu = 'taaBlend' },
 
   { kind = 'enum',  key = 'render.resolutionScale', label = 'Render Scale', default = 1,
@@ -226,29 +240,29 @@ local SETTINGS = {
   { kind = 'float', key = 'render.shadow.scale',  label = 'Shadow Slope Bias',   default = 0.0005, min = 0, max = 0.01 },
 
   { kind = 'bool',  key = 'render.sun.enable',    label = 'Sun Light',       default = true, gpu = 'sunLight' },
-  { kind = 'float', key = 'render.sun.intensity', label = ' - Intensity',    default = 1, min = 0, max = 6, gpu = 'sunIntensity' },
-  { kind = 'float', key = 'render.sun.fill',      label = ' - Ambient Fill', default = 0.4564, min = 0, max = 1, gpu = 'sunAmbientFill' },
-  { kind = 'float', key = 'render.sun.warmth',    label = ' - Warmth',       default = 0.7476, min = 0, max = 1, gpu = 'sunWarmth' },
+  { kind = 'float', key = 'render.sun.intensity', label = ' - Intensity',    default = 1.245, min = 0, max = 6, gpu = 'sunIntensity' },
+  { kind = 'float', key = 'render.sun.fill',      label = ' - Ambient Fill', default = 0.5135, min = 0, max = 1, gpu = 'sunAmbientFill' },
+  { kind = 'float', key = 'render.sun.warmth',    label = ' - Warmth',       default = 0.7568, min = 0, max = 1, gpu = 'sunWarmth' },
   { kind = 'bool',  key = 'render.sun.marker',    label = ' - Direction Marker', default = false, gpu = 'sunMarker' },
-  { kind = 'float', key = 'render.sun.starTight', label = ' - Star Disc',   default = 20000, min = 500, max = 60000, gpu = 'sunStarTight' },
-  { kind = 'float', key = 'render.sun.starDisc',  label = ' - Star Bright', default = 30,    min = 0,   max = 120,   gpu = 'sunStarDisc' },
-  { kind = 'float', key = 'render.sun.starHalo',  label = ' - Star Halo',   default = 900,   min = 60,  max = 6000,  gpu = 'sunStarHalo' },
-  { kind = 'float', key = 'render.sun.starGlow',  label = ' - Halo Glow',   default = 0.35,  min = 0,   max = 2,     gpu = 'sunStarGlow' },
+  { kind = 'float', key = 'render.sun.starTight', label = ' - Star Disc',   default = 14830, min = 500, max = 60000, gpu = 'sunStarTight' },
+  { kind = 'float', key = 'render.sun.starDisc',  label = ' - Star Bright', default = 49.98,    min = 0,   max = 120,   gpu = 'sunStarDisc' },
+  { kind = 'float', key = 'render.sun.starHalo',  label = ' - Star Halo',   default = 505.5,   min = 60,  max = 6000,  gpu = 'sunStarHalo' },
+  { kind = 'float', key = 'render.sun.starGlow',  label = ' - Halo Glow',   default = 0.5558,  min = 0,   max = 2,     gpu = 'sunStarGlow' },
   { kind = 'bool',  key = 'render.sun.shadows',   label = ' - Shadows',      default = true, gpu = 'sunShadows' },
   { kind = 'float', key = 'render.sun.shadowRange', label = ' - Shadow Range', default = 8000, min = 500, max = 20000, gpu = 'sunShadowRange' },
   { kind = 'enum',  key = 'render.sun.shadowSize',  label = ' - Shadow Res',   default = 3,
     options = { '256', '512', '1024', '2048' }, gpu = 'sunShadowSize', optKey = strKey },
-  { kind = 'float', key = 'render.shadow.maxLights', label = ' - Shadow Lights', default = 2, min = 0, max = 8 },
-  { kind = 'float', key = 'render.shadow.period',    label = ' - Shadow Update', default = 2, min = 1, max = 4 },
+  { kind = 'float', key = 'render.shadow.maxLights', label = ' - Shadow Lights', default = 1.509, min = 0, max = 8 },
+  { kind = 'float', key = 'render.shadow.period',    label = ' - Shadow Update', default = 1.499, min = 1, max = 4 },
 
-  { kind = 'bool',  key = 'render.vsync', label = 'VSync', default = true },
+  { kind = 'bool',  key = 'render.vsync', label = 'VSync', default = false },
 
   { kind = 'float', key = 'lighting.ambientEnv', label = 'Environment Light',   default = 1.35, min = 0, max = 3, gpu = 'ambientEnv' },
   { kind = 'float', key = 'lighting.specular',   label = 'Dielectric Specular', default = 0.35, min = 0, max = 1, gpu = 'dielectricSpec' },
 
   -- Planet self-lighting (planets are Material_NoShade; see material/planet.glsl).
-  { kind = 'float', key = 'render.planet.relief',    label = 'Planet Relief',      default = 1.0,   min = 0, max = 3, gpu = 'planetRelief' },
-  { kind = 'float', key = 'render.planet.sunScale',   label = 'Planet Sun Scale',   default = 1.0,   min = 0, max = 4, gpu = 'planetSunScale' },
+  { kind = 'float', key = 'render.planet.relief',    label = 'Planet Relief',      default = 1,   min = 0, max = 3, gpu = 'planetRelief' },
+  { kind = 'float', key = 'render.planet.sunScale',   label = 'Planet Sun Scale',   default = 1,   min = 0, max = 4, gpu = 'planetSunScale' },
   { kind = 'float', key = 'render.planet.envAmbient', label = 'Planet Nebula Fill', default = 1.75,  min = 0, max = 10, gpu = 'planetEnvAmbient' },
   { kind = 'float', key = 'render.planet.atmoGlow',   label = 'Planet Atmosphere',  default = 0.756, min = 0, max = 3,  gpu = 'planetAtmoGlow' },
   { kind = 'bool',  key = 'render.planet.cloudsEnabled', label = 'Planet Clouds', default = true, gpu = 'planetCloudsEnabled' },
@@ -270,40 +284,40 @@ local SETTINGS = {
   -- How much ringed worlds differ from each other. 0 = one canonical ring
   -- everywhere (good for comparing a look change across seeds), 1 = full spread.
   -- Construction-time, like ringChance.
-  { kind = 'float', key = 'render.planet.ringVariation', label = ' - Ring Variation', default = 1.0, min = 0, max = 1.0, gpu = 'planetRingVariation' },
-  { kind = 'float', key = 'render.planet.ringChance',  label = ' - Rings',     default = 0.45, min = 0, max = 2.0, gpu = 'planetRingChance' },
-  { kind = 'float', key = 'render.planet.ringOpacity', label = ' - Ring Opacity', default = 1.0, min = 0, max = 3.0, gpu = 'planetRingOpacity' },
+  { kind = 'float', key = 'render.planet.ringVariation', label = ' - Ring Variation', default = 0.5745, min = 0, max = 1.0, gpu = 'planetRingVariation' },
+  { kind = 'float', key = 'render.planet.ringChance',  label = ' - Rings',     default = 0.9124, min = 0, max = 2.0, gpu = 'planetRingChance' },
+  { kind = 'float', key = 'render.planet.ringOpacity', label = ' - Ring Opacity', default = 2, min = 0, max = 3.0, gpu = 'planetRingOpacity' },
   -- How strongly rings pick up the skybox / nebula irradiance around them.
   -- A backlit ring is lit by light arriving from the star's direction, so this is
   -- what makes it take the colour of whatever nebula bank lies behind it. 0
   -- leaves only the star and a small floor.
-  { kind = 'float', key = 'render.planet.ringEnv',     label = ' - Ring Env',  default = 1.0, min = 0, max = 3.0, gpu = 'planetRingEnv' },
-  { kind = 'float', key = 'render.planet.ringBright',  label = ' - Ring Bright',  default = 1.0, min = 0, max = 3.0, gpu = 'planetRingBright' },
-  { kind = 'float', key = 'render.planet.spinRate',  label = ' - Rotation',       default = 0.6, min = 0, max = 2.0, gpu = 'planetSpinRate' },
-  { kind = 'float', key = 'render.planet.clouds',     label = ' - Coverage',         default = 1.25,  min = 0, max = 3.0, gpu = 'planetClouds' },
+  { kind = 'float', key = 'render.planet.ringEnv',     label = ' - Ring Env',  default = 1.306, min = 0, max = 3.0, gpu = 'planetRingEnv' },
+  { kind = 'float', key = 'render.planet.ringBright',  label = ' - Ring Bright',  default = 1, min = 0, max = 3.0, gpu = 'planetRingBright' },
+  { kind = 'float', key = 'render.planet.spinRate',  label = ' - Rotation',       default = 0.2081, min = 0, max = 2.0, gpu = 'planetSpinRate' },
+  { kind = 'float', key = 'render.planet.clouds',     label = ' - Coverage',         default = 1.3,  min = 0, max = 3.0, gpu = 'planetClouds' },
   -- Cloud shell altitude as a fraction of the planet radius. 0 = the old
   -- ground-projected deck (clouds welded to the terrain, no parallax). The
   -- default is ~12x a physically-scaled cloud deck because a real 0.16% shell
   -- gives an offset too small to read at any sane camera distance.
-  { kind = 'float', key = 'render.planet.cloudHeight', label = ' - Shell Altitude', default = 0.02, min = 0, max = 0.12, gpu = 'planetCloudHeight' },
+  { kind = 'float', key = 'render.planet.cloudHeight', label = ' - Shell Altitude', default = 0.0303, min = 0, max = 0.12, gpu = 'planetCloudHeight' },
   -- How much the deck dims the sun term on the ground beneath it. One extra
   -- cube fetch on an already-bound texture; no new pass.
-  { kind = 'float', key = 'render.planet.cloudShadow', label = ' - Shadow',        default = 0.55, min = 0, max = 1, gpu = 'planetCloudShadow' },
+  { kind = 'float', key = 'render.planet.cloudShadow', label = ' - Shadow',        default = 0.5698, min = 0, max = 1, gpu = 'planetCloudShadow' },
   -- Advection speed as a FRACTION OF THE PLANET'S OWN SPIN, not an absolute
   -- rate. Real cloud drift is ~6% of Earth's rotation; the default is in that
   -- band. Because it is relative, the deck feels the same on a 2-minute planet
   -- and a 10-minute one, and creeps slowly BACKWARDS against the spin the way
   -- it does on Earth.
-  { kind = 'float', key = 'render.planet.cloudWind', label = ' - Wind', default = 0.04, min = 0, max = 0.2, gpu = 'planetCloudWind' },
+  { kind = 'float', key = 'render.planet.cloudWind', label = ' - Wind', default = 0.1007, min = 0, max = 0.2, gpu = 'planetCloudWind' },
   -- Storms: scale the type's existing `weather` prior, so storminess tracks how
   -- wet the world already is and airless bodies stay storm-free for free.
-  { kind = 'float', key = 'render.planet.storms',    label = ' - Storminess', default = 1.0, min = 0, max = 2.0, gpu = 'planetStorms' },
+  { kind = 'float', key = 'render.planet.storms',    label = ' - Storminess', default = 0.8715, min = 0, max = 2.0, gpu = 'planetStorms' },
   -- Intra-cloud lightning, split from storminess so flashes can be auditioned
   -- against a calm sky. Storms read as DARKER cells; this is the flash inside
   -- them, hashed per cell so cells fire out of phase. Defaults to 0 (off): it
   -- fires unprompted on load, which reads as a glitch rather than weather.
   -- Must match Config.gpu.planetStormFlash, which is what actually seeds this.
-  { kind = 'float', key = 'render.planet.stormFlash', label = ' - Flashes',   default = 0.0, min = 0, max = 3.0, gpu = 'planetStormFlash' },
+  { kind = 'float', key = 'render.planet.stormFlash', label = ' - Flashes',   default = 1.351, min = 0, max = 3.0, gpu = 'planetStormFlash' },
   { kind = 'float', key = 'render.planet.terminator', label = 'Planet Terminator',  default = 0.35, min = 0, max = 1,   gpu = 'planetTerminator' },
   -- Biomes (W7c). 0 = the pre-W7c look exactly (one elevation ramp, so a planet
   -- had a single character); 1 = the full blend, where climate comes from
@@ -311,7 +325,7 @@ local SETTINGS = {
   -- (moisture). The weights are normalised, so biomes cross-fade and never
   -- switch -- there is no threshold anywhere that could pop as the camera
   -- moves. Must match Config.gpu.planetBiomes, which seeds this.
-  { kind = 'float', key = 'render.planet.biomes', label = ' - Biomes', default = 1.0, min = 0, max = 1, gpu = 'planetBiomes' },
+  { kind = 'float', key = 'render.planet.biomes', label = ' - Biomes', default = 0.5019, min = 0, max = 1, gpu = 'planetBiomes' },
 
   -- SSAO / GTAO -------------------------------------------------------------
   { kind = 'bool',  key = 'ssao.enable',      label = 'Ambient Occlusion', default = false, gpu = 'aoEnabled' },

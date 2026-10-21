@@ -18,10 +18,6 @@ uniform vec3  colorLift     = vec3(0.0);   // (0,0,0) = neutral
 uniform vec3  colorGamma    = vec3(1.0);   // (1,1,1) = neutral
 uniform vec3  colorGain     = vec3(1.0);   // (1,1,1) = neutral
 
-/* Optional Lens Dirt Support */
-uniform sampler2D lensDirtTex;
-uniform float lensDirtStrength = 0.0;
-
 vec3 applyTonemap(vec3 c) {
   if (texOp == 1) return agxTonemap(c);
   if (texOp == 2) return acesFitted(c);
@@ -42,19 +38,13 @@ void main() {
   // 1. Apply Exposure
   c *= exposure;
 
-  // 2. Lens Dirt Overlay (Applies glass imperfctions to bright HDR light)
-  if (lensDirtStrength > 0.0) {
-    vec3 dirt = texture(lensDirtTex, uv).xyz;
-    c += c * dirt * lensDirtStrength;
-  }
-
-  // 3. Linear Space Color Grading
+  // 2. Linear Space Color Grading
   c = applyColorTint(c, colorTemp, colorTint);
   c = applySaturation(c, colorSat);
   c = applyContrast(c, colorContrast);
   c = applyLiftGammaGain(c, colorLift, colorGamma, colorGain);
 
-  // 4. Tonemap Operator & sRGB Encoding
+  // 3. Tonemap Operator & sRGB Encoding
   c = applyTonemap(c);
   c = encodeSrgb(c);
   c = clamp(c, vec3(0.0), vec3(1.0));
