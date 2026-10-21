@@ -27,6 +27,15 @@ local System = subclass(Entity, function (self, seed)
   self.players = {}
   self.zones = {}
 
+  -- The current sector's REGIONS, for the environmental field (13f).
+  --
+  -- The field is a function of a position and the regions, so anything that
+  -- wants to know "what kind of place is this" needs the regions. They are
+  -- set by the app when the sector changes, and they are stable for the
+  -- sector's lifetime -- which is what lets the asteroid field bake a
+  -- chunk's density in at generation time and never revisit it.
+  self.sectorRegions = nil
+
   -- Keep local-light discovery proportional to the number of lights, not the
   -- total number of System children (which includes thousands of asteroids).
   self.lightEntities = {}
@@ -262,6 +271,12 @@ end
   never touched and the world stays reproducible. See the module header for why
   the old clump-from-`rng:choose(children)` approach could not be streamed.
 ]]
+-- The sector's regions, for the environmental field (13f). The app calls
+-- this when the sector changes.
+function System:setSectorRegions (regions)
+  self.sectorRegions = regions
+end
+
 function System:streamAsteroidField (ship)
   local cfg = Config.gen and Config.gen.asteroidField
   if not cfg then return end

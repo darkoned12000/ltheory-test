@@ -55,20 +55,60 @@ local NameGen = require('Game.NameGen')
 --
 -- `hue` is the anchor for the region's palette; `density` and `storm` bias
 -- the field's macro channels; `light` is how bright the medium reads.
+--
+-- `rocks` was ADDED in 13f, and it is the channel the table was missing: the
+-- archetypes describe places, and "Shattered Belt -- rock, debris, low gas"
+-- describes a place full of ROCKS, but there was no rock density to say so.
+-- `density` is the GAS density (Violet Veil is dense gas), so the belt was
+-- the LEAST dense place in the table and the most rock-like one, which is
+-- exactly backwards. The two are separate channels now: gas, and rock.
 Region.ARCHETYPES = {
-  { name = 'Silent Deep',    hue = { 0.58, 0.68 }, density = 0.18, storm = 0.05, light = 0.30,
+  { name = 'Silent Deep',    hue = { 0.58, 0.68 }, density = 0.18, storm = 0.05, light = 0.30, rocks = 0.15,
     desc = 'clear sky, few stars lost' },
-  { name = 'Violet Veil',    hue = { 0.74, 0.82 }, density = 0.85, storm = 0.70, light = 0.55,
+  { name = 'Violet Veil',    hue = { 0.74, 0.82 }, density = 0.85, storm = 0.70, light = 0.55, rocks = 0.20,
     desc = 'dense gas, frequent lightning' },
-  { name = 'Shattered Belt', hue = { 0.05, 0.12 }, density = 0.30, storm = 0.20, light = 0.35,
+  { name = 'Shattered Belt', hue = { 0.05, 0.12 }, density = 0.30, storm = 0.20, light = 0.35, rocks = 0.95,
     desc = 'rock, debris, low gas' },
-  { name = 'Solar Graveyard',hue = { 0.02, 0.09 }, density = 0.55, storm = 0.80, light = 0.70,
+  { name = 'Solar Graveyard',hue = { 0.02, 0.09 }, density = 0.55, storm = 0.80, light = 0.70, rocks = 0.45,
     desc = 'hot haze, strong sun, storms' },
-  { name = 'Dust Expanse',   hue = { 0.10, 0.16 }, density = 0.62, storm = 0.15, light = 0.40,
+  { name = 'Dust Expanse',   hue = { 0.10, 0.16 }, density = 0.62, storm = 0.15, light = 0.40, rocks = 0.40,
     desc = 'thin dust, clear stars' },
-  { name = 'Deep Field',     hue = { 0.60, 0.72 }, density = 0.35, storm = 0.12, light = 0.25,
+  { name = 'Deep Field',     hue = { 0.60, 0.72 }, density = 0.35, storm = 0.12, light = 0.25, rocks = 0.20,
     desc = 'quiet, nothing much here' },
 }
+
+-- The NEUTRAL value of each channel: what a region with no archetype
+-- contributes to the field.
+--
+-- A region does not have to have an archetype (29a: "a sector with one
+-- region may simply be a vast asteroid field"), so the blend needs a value
+-- for it. The obvious one -- zero -- is WRONG, and wrong in a way that is
+-- invisible in the code and obvious in the world: an un-archetyped region
+-- would contribute NOTHING, so it would drag the whole field down toward
+-- zero, and the size of that drag would depend on how many of the sector's
+-- regions happen to lack an archetype. Two sectors with the same kind of
+-- place in them would read differently because of a roll of the dice.
+--
+-- The neutral value is the MEAN of the archetypes: a plain place is an
+-- average place, and the field's scale then depends only on what the
+-- regions ARE, not on which ones were given a preset.
+local NEUTRAL = { density = 0, storm = 0, light = 0, rocks = 0 }
+do
+  local n = 0
+  for _, a in ipairs(Region.ARCHETYPES) do
+    NEUTRAL.density = NEUTRAL.density + (a.density or 0)
+    NEUTRAL.storm   = NEUTRAL.storm   + (a.storm   or 0)
+    NEUTRAL.light   = NEUTRAL.light   + (a.light   or 0)
+    NEUTRAL.rocks   = NEUTRAL.rocks   + (a.rocks   or 0)
+    n = n + 1
+  end
+  if n > 0 then
+    NEUTRAL.density = NEUTRAL.density / n
+    NEUTRAL.storm   = NEUTRAL.storm   / n
+    NEUTRAL.light   = NEUTRAL.light   / n
+    NEUTRAL.rocks   = NEUTRAL.rocks   / n
+  end
+end
 
 -- How sharply membership falls off with distance, in the smoothstep sense.
 -- 1 = a hard edge, larger = a broader transition. This is the "softness"
@@ -381,6 +421,85 @@ Region.weightsAt = weightsAt
 -- regions have equal membership.
 --
 -- Named `containing` rather than `at`, because `at` is a reserved word in Lua.
+--[[---------------------------------------------------------------------------
+  Region.field -- the ENVIRONMENTAL FIELD at a position.
+
+  This is the idea from 29a -- "a region is a FIELD VALUE, not an object in
+  a list" -- in the only form the current code can support. The regions are
+  PLACED and seeded (29a); the field is what they add up to.
+
+  A region owns a set of environmental parameters, taken from its archetype:
+  how much GAS is here (`density`), how STORMY it is (`storm`), how bright
+  the medium reads (`light`), how many ROCKS (`rocks`), and the palette
+  anchor (`hue`).
+
+  The field at a position is the WEIGHTED BLEND of the regions' parameters,
+  weighted by the same Apollonius membership the HUD and the map already use.
+
+  THAT is the whole of the soft boundary. Because the membership is
+  continuous -- it is a smoothstep of the distance to a region's centre --
+  the blend is continuous, so a parameter changes GRADUALLY across a
+  boundary instead of switching at it. There is no threshold anywhere in
+  this function and there must never be one: a threshold here is a visible
+  seam in the sky, and 29a exists to say there must not be one.
+
+  The consequence worth having is that SEVERAL CONSUMERS READ THE SAME
+  FUNCTION. The rocks, the gas and the lightning now all ask the same
+  question of the same place, so they cannot disagree about what kind of
+  place it is -- which is the correlation failure 29a names, where a rock
+  field lands in a clear void or a storm finds nothing to storm in, purely
+  by chance.
+---------------------------------------------------------------------------]]
+function Region.field (regions, x, y, z)
+  local w = weightsAt(regions, x, y, z)
+  if #w == 0 then
+    -- No region at all (past every reach). The field is empty, not zeroed
+    -- arbitrarily: the callers scale a BASE by the field, and an empty
+    -- field means "no character here", which is the honest answer.
+    return { density = 0, storm = 0, light = 0, rocks = 0, hue = 0.5,
+             region = nil, weights = w }
+  end
+
+  local density, storm, light, rocks = 0, 0, 0, 0
+  -- The hue blends as a VECTOR, not as a number. A hue is a position on a
+  -- wheel, so 0.95 and 0.05 are near each other, and averaging them as
+  -- numbers gives 0.5 -- a completely different colour, on the far side
+  -- of the wheel from both. The vector average takes the short way round.
+  local hx, hy = 0, 0
+  local best, bestW = nil, 0
+  for i = 1, #w do
+    local e = w[i]
+    local r = e.region
+    local a = r.archetype
+    density = density + (a and a.density or NEUTRAL.density) * e.w
+    storm   = storm   + (a and a.storm   or NEUTRAL.storm)   * e.w
+    light   = light   + (a and a.light   or NEUTRAL.light)   * e.w
+    rocks   = rocks   + (a and a.rocks   or NEUTRAL.rocks)   * e.w
+    local h = r.hue or 0
+    hx = hx + cos(h * 6.2831853) * e.w
+    hy = hy + sin(h * 6.2831853) * e.w
+    if e.w > bestW then best, bestW = r, e.w end
+  end
+
+  local hue = 0.5
+  if hx ~= 0 or hy ~= 0 then
+    hue = (math.atan2(hy, hx) / 6.2831853) % 1.0
+  end
+
+  return {
+    density = density,
+    storm   = storm,
+    light   = light,
+    rocks   = rocks,
+    hue     = hue,
+    -- The DOMINANT region: the one you are "in" for the HUD's purposes.
+    -- It is the same rule the map and the panel already use, so the field
+    -- and the label can never disagree.
+    region  = best,
+    weights = w,
+  }
+end
+
 function Region.containing (regions, x, y, z)
   local w = weightsAt(regions, x, y, z)
   if #w == 0 then return nil, w end

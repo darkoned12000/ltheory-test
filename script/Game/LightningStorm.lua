@@ -200,6 +200,12 @@ function LightningStorm:update (dt, now, ctx)
       while self.tStorm >= self.nextBolt and self.strike < self.boltTotal do
         self.strike = self.strike + 1
         local rate = Settings.get('lightning.rate') or 1
+        -- The region's CHARACTER (13f): a "Solar Graveyard" storms and a
+        -- "Silent Deep" does not. The same field the gas and the rocks read,
+        -- so the lightning cannot find an empty sky to storm in.
+        if ctx and ctx.field then
+          rate = rate * (0.25 + ctx.field.storm * 1.75)
+        end
         self.nextBolt = self.nextBolt + (0.15 + hash32(0, 0, 0, self.stormSeed, 360 + self.strike) * 0.3) / rate
         local h = hash32(0, 0, 0, self.stormSeed, 400 + self.strike)
         -- Round-robin across nuclei, rotated by window: every window visits

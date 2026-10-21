@@ -80,10 +80,13 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
       deterministic environmental field that the nebula, the asteroids, the
       dust and the lightning all read, so a rock field can never land in a
       clear void by chance.
-    - **13f region personality** — the regions have IDENTITY (a name, an
-      exact boundary, a HUD readout, a map pin) and no APPEARANCE: their
-      six archetypes carry a density, a storm and a light that nothing reads.
-      Wiring them is what makes "Violet Veil" a place rather than a word.
+    - **13f region personality** — ✅ **done (first cut)**. The regions now
+      have a FIELD: the archetype's gas density, storminess, light and rock
+      count, blended across the boundary by the Apollonius membership (so
+      the transition is continuous and there is no seam), and read by the
+      asteroid field, the nebula and the lightning — so the three cannot
+      disagree about what kind of place they are in. The archetypes' numbers
+      are no longer dead. See `procedural-space-environment.md` §29k.
 
 ## Known polish / tech debt (small, unbundled)
 - **Audio polish**: Fixed `ThrustController.lua` thruster audio by correcting `set3DMinMaxDistance` attenuation parameters (`maxDist` fixed from `0` to `1000`) and adding Exponential Moving Average (EMA) volume smoothing to prevent zipper noise. Pre-load rapid SFX buffers once with `ClonePlayFree` for dogfight audio.

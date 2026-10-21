@@ -61,7 +61,18 @@ end
 
 -- Accepts an optional sectorHue [0..1] derived from the sector's skybox generator.
 -- If provided, local plume hues shift to match and complement the skybox palette.
-function NebulaVolumes.build (seed, pos, radius, sectorHue)
+-- `regions`, when given, is the sector's region list, and the anchors take
+-- their DENSITY from the environmental field (13f) at their own position:
+-- a "Violet Veil" region has dense gas and a "Silent Deep" has thin gas.
+--
+-- The density is sampled PER ANCHOR, not per build, and that matters: an
+-- anchor's density is then a pure function of where that anchor is, so
+-- rebuilding the list (which happens when the camera crosses a cell) gives
+-- every anchor the SAME density it had before. Sampling it once per build
+-- instead would make the whole visible sky change character in one step as
+-- the camera crossed a cell boundary -- a pop, in the one place the player
+-- is guaranteed to be looking.
+function NebulaVolumes.build (seed, pos, radius, sectorHue, regions)
   local s = foldSeed(seed)
   local cx = math.floor(pos.x / CELL)
   local cy = math.floor(pos.y / CELL)
@@ -114,6 +125,16 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue)
             if edgeDist <= radius then
 
             local density = (0.8 + hash32(icx, icy, icz, s, off + 5) * 2.2) * cover
+            -- The region's CHARACTER (13f): the gas density comes from the
+            -- same field the rocks and the lightning read, so the three
+            -- cannot disagree about what kind of place this is.
+            if regions and #regions > 0 then
+              local Sector = require('Game.Region')
+              local f = Sector.Region.field(regions, px, py, pz)
+              -- The archetype's `density` runs 0.18..0.85, so this is a
+              -- 0.55x..1.5x multiplier on the plume's own density.
+              density = density * (0.35 + f.density * 1.3)
+            end
             -- Noise frequency: kept coarse enough that the ~290-unit march
             -- step resolves it (finer scales aliased into speckle).
             local scale   = 0.0002 + hash32(icx, icy, icz, s, off + 6) * 0.0006

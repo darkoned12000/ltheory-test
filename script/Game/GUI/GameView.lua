@@ -856,7 +856,8 @@ function GameView:draw (focus, active)
         if self.volCellKey ~= volumeCellKey then
           self.volCellKey = volumeCellKey
           self.volumes = NebulaVolumes.build(self.ltheory.seed, self.camera.pos,
-            volumeRadius, neb.hue)
+            volumeRadius, neb.hue,
+            self.ltheory.system and self.ltheory.system.sectorRegions)
         end
         ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
         ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
@@ -1174,8 +1175,19 @@ function GameView:onUpdate (state)
       end
       if Settings.get('lightning.enable') then
         local tNow = (tonumber(Time.GetRaw()) or 0) * 0.001
+        -- The environmental field at the camera (13f): the storm rate reads
+        -- the region's character, so a stormy kind of place storms.
+        local stormField = nil
+        local sregions = self.ltheory.system and self.ltheory.system.sectorRegions
+        if sregions and #sregions > 0 then
+          local Sector = require('Game.Region')
+          stormField = Sector.Region.field(sregions, self.camera.pos.x,
+                                                   self.camera.pos.y,
+                                                   self.camera.pos.z)
+        end
         self.storm:update(state.dt, tNow, {
           volumes   = self.volumes,
+          field     = stormField,
           cameraPos = self.camera.pos,
           camDir    = self.camera.rot:getForward(),
           fovY      = Settings.get('render.fovY') or 70,

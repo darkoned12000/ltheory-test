@@ -1773,7 +1773,7 @@ proposal and most of it has since been built.
 | 13c | Procedural asteroid fields | **DONE.** The endless chunk-streamed field, with the boundary hidden by a fragment discard rather than by scaling a body (which reallocates collision shapes and locks the game up). |
 | 13d | Environmental motion | **PARTLY.** The nebula's drift and the cloud deck's wind are in; the asteroid field's rocks do not move. |
 | 13e | Environmental events | **PARTLY.** Lightning is in and fires; radiation events, debris events and the rarity tiers are not. |
-| 13f | Region transitions | **NOT DONE, and this is the one that hurts.** The regions have IDENTITY (a name, an exact Apollonius boundary, a HUD readout, a map pin) and no APPEARANCE. Their archetypes carry a density, a storm and a light that nothing reads. |
+| 13f | Region transitions | **DONE (first cut) -- see 29k.** The regions now have a FIELD: the archetype's density, storm, light and rock count, blended across the boundary by the Apollonius membership, and read by the rocks, the gas and the lightning. The archetypes' numbers are no longer dead. |
 | 13g | Streaming / LOD | **PARTLY.** Chunk streaming is in for the asteroid field; the near/mid/far representation tiers and the crossfade are not. |
 | 13h | Ship / environment interaction | **PARTLY.** The hull is lit by the nebula's irradiance; the cockpit, the camera-motion response and the dust streaking are not. |
 | 13i | Sectors, regions and places | **DONE for sectors and regions; PLACES ARE THE HOLE.** The named hierarchy, the pinned seeds, the map and the drill-in are all in. A "place" -- something you can go to and do things with -- is not: a sector has one planet, one station and one asteroid field, and its regions are areas of space. |
@@ -1834,6 +1834,91 @@ road network that goes nowhere. The switch is live, so they can be looked at
 at any time. The work that would make them worth having is content work --
 places in the regions, a region personality, and a ship that can cross a
 sector -- and that is a bigger thing than this document's remaining items.
+
+29k. 13f -- the region's field, and the first consumers of it
+------------------------------------------------------------
+
+**THE PROBLEM, PRECISELY.** A region had IDENTITY and no APPEARANCE. It had
+a name, an exact Apollonius boundary, a HUD readout and a map pin -- and
+its archetype carried a `density`, a `storm` and a `light` that **NOTHING
+READ**. The only consumer of the whole table was the archetype's NAME on
+the panel. So "Violet Veil" was a word on a panel: flying into it changed
+the text and nothing else, which is the exact opposite of what 6 asks for
+("the player should feel that they have entered a different environment,
+not simply crossed an invisible gameplay boundary").
+
+**THE FIELD.** `Region.field(regions, x, y, z)` returns the blended
+environmental parameters at a position: the gas density, the storminess,
+the light level, the rock density, and the palette hue. The blend is
+weighted by the Apollonius membership the HUD and the map already use --
+so the field is a convex combination of continuous functions, and it is
+CONTINUOUS by construction. There is no threshold anywhere in it and
+there must never be one: a threshold here is a visible seam in the sky,
+which is the thing 7 exists to prevent.
+
+Two details that are easy to get wrong, and were:
+
+* **A region with no archetype contributes the NEUTRAL value, not zero.**
+  The obvious choice -- zero -- is wrong in a way that is invisible in the
+  code and obvious in the world: an un-archetyped region would drag the
+  whole field down toward zero, and the size of that drag would depend on
+  how many of the sector's regions happen to lack a preset. Two sectors
+  with the same kind of place in them would read differently because of a
+  roll of the dice. The neutral value is the MEAN of the archetypes: a
+  plain place is an average place.
+* **The hue blends as a VECTOR, not as a number.** A hue is a position on
+  a wheel, so 0.95 and 0.05 are near each other, and averaging them as
+  numbers gives 0.5 -- a different colour, on the far side of the wheel
+  from both.
+
+**A CHANNEL THE TABLE WAS MISSING.** "Shattered Belt -- rock, debris, low
+gas" describes a place full of ROCKS, but there was no rock density to
+say so: `density` is the GAS density (Violet Veil is dense gas), so the
+belt was the LEAST dense place in the table and the most rock-like one,
+which is exactly backwards. The two are separate channels now.
+
+**THE CONSUMERS.** The point of one field is that several things read it,
+so they cannot disagree about what kind of place they are in -- which is
+the correlation failure 29a names, where a rock field lands in a clear
+void purely by chance.
+
+* **The rocks** (`AsteroidField`): a chunk's rock count is scaled by the
+  field's rock density at the chunk's centre, so a belt is about three
+  times rockier than a deep field. The scale is baked in when the chunk
+  is generated, which is safe because the regions do not change within a
+  sector.
+* **The gas** (`NebulaVolumes.build`): each anchor's density is scaled by
+  the field's gas density at the ANCHOR's own position. Per anchor, not
+  per build -- an anchor's density is then a pure function of where that
+  anchor is, so rebuilding the list (which happens when the camera
+  crosses a cell) gives every anchor the SAME density it had before.
+  Sampling it once per build instead would make the whole visible sky
+  change character in one step as the camera crossed a cell boundary: a
+  pop, in the one place the player is guaranteed to be looking.
+* **The lightning** (`LightningStorm`): the strike rate is scaled by the
+  field's storminess at the camera, so a stormy kind of place storms.
+
+**THE PANEL** names the transition, because the archetype's name on its
+own is the DOMINANT region's -- which is a lie exactly where it matters.
+Halfway between a "Solar Graveyard" and a "Silent Deep" the field is a
+blend of the two, and the player can see that they are in between:
+"Deep Field -> Solar Graveyard" appears once the blend has actually
+reached the second one.
+
+**MEASURED.** The field at a "Solar Graveyard" region's centre reads storm
+0.798 and light 0.699; at a "Deep Field" region's centre, storm 0.125 and
+light 0.277. The largest step between neighbouring samples along every
+line that crosses a boundary is 0.014 -- a gradient, not a jump (a
+switching field would step by the whole difference, tens of hundredths).
+`tools/validate_regions.lua` checks all of that offline: that every
+archetype carries every channel, that the field is continuous across
+every boundary, that the regions are measurably different from each
+other, and that a plain region does not drag the field to zero.
+
+**WHAT IS STILL MISSING.** The `light` channel has no consumer yet, and
+the region's HUE only reaches the map pin. Making the gas and the stars
+take the region's palette is the next step, and it is the step that makes
+the region archetype's name mean what it says.
 
 30. Visual "Wow Factor" Stack
 

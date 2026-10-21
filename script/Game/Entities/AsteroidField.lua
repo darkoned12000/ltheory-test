@@ -242,11 +242,31 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
   solids = solids or self:solids()
 
   local rocks = {}
+  -- The region's CHARACTER (13f): a "Shattered Belt" region is a rock field
+  -- and a "Deep Field" is not.
+  --
+  -- The density comes from the same field the gas and the lightning read, so
+  -- the three cannot disagree about what kind of place this is -- which is
+  -- the whole point of having one field (29a). It is sampled at the chunk's
+  -- CENTRE and baked in: the chunk is generated once and cached, so the
+  -- field must not change under it, and the regions do not change within a
+  -- sector.
+  local rockScale = 1
+  local regions = self.system and self.system.sectorRegions
+  if regions and #regions > 0 then
+    local Sector = require('Game.Region')
+    local f = Sector.Region.field(regions, ox + cs * 0.5, oy + cs * 0.5, oz + cs * 0.5)
+    -- The archetype's `rocks` runs 0.15..0.95, so this is a 0.55x..1.6x
+    -- multiplier: a belt is about three times rockier than a deep field.
+    rockScale = 0.35 + f.rocks * 1.3
+  end
+
   -- `perChunk` is a density control and the settings panel stores it as a
   -- float. Honour fractional values deterministically per chunk rather than
   -- silently truncating them in Lua's numeric for loop.
-  local rockCount = math.floor(self.perChunk)
-  if rng:getUniform() < self.perChunk - rockCount then
+  local perChunk = self.perChunk * rockScale
+  local rockCount = math.floor(perChunk)
+  if rng:getUniform() < perChunk - rockCount then
     rockCount = rockCount + 1
   end
   for i = 1, rockCount do

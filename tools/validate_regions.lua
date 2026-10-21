@@ -351,6 +351,126 @@ do
     string.format('%d regions were never the dominant one', emptyRegion))
 end
 
+-- ---------------------------------------------------------------------------
+-- 7. The environmental field (13f)
+-- ---------------------------------------------------------------------------
+-- A region's ARCHETYPE carries a density, a storminess, a lightness and a rock
+-- count. Those four numbers are the region's CHARACTER, and the field is the
+-- blend of them across a boundary. Three things have to hold, and none of
+-- them is visible in a screenshot:
+--
+--   a. EVERY archetype channel is present, and in range. A channel that
+--      nothing reads is the whole reason this section existed: the
+--      archetypes carried a density, a storm and a light for the whole life
+--      of the feature and NOTHING READ THEM.
+--   b. The field is CONTINUOUS. It is sampled along lines that cross
+--      boundaries, and the largest step between neighbouring samples is
+--      compared against the size of the difference being crossed. A field
+--      that switched would show as a seam in the sky, and a seam is exactly
+--      what "the identity is discrete, the appearance is continuous" exists
+--      to prevent.
+--   c. The regions are actually DIFFERENT from each other. A field where
+--      every region reads the same is a field that is not doing anything --
+--      the failure mode of a blend whose inputs are all neutral.
+do
+  -- One sector with several regions, so the blend has something to blend.
+  -- The seed is taken the same way the rest of this validator takes it, so
+  -- the field is checked against a REAL layout and not a synthetic one.
+  local regions
+  for g = 0, 19 do
+    local seed = RegionMod.seedFor(GALAXY + g * 7919, 0)
+    local r = RegionMod.regions(seed, ORIGIN, RADIUS)
+    if #r > 1 then regions = r break end
+  end
+
+  -- (a) the channels
+  local chans = { 'density', 'storm', 'light', 'rocks' }
+  local missing, outOfRange = {}, {}
+  for _, a in ipairs(Region.ARCHETYPES) do
+    for _, c in ipairs(chans) do
+      if type(a[c]) ~= 'number' then
+        missing[#missing + 1] = a.name .. '.' .. c
+      elseif a[c] < 0 or a[c] > 1 then
+        outOfRange[#outOfRange + 1] = string.format('%s.%s=%.3f', a.name, c, a[c])
+      end
+    end
+  end
+  check('every archetype carries every field channel, in 0..1',
+    #missing == 0 and #outOfRange == 0,
+    table.concat(missing, ', ') .. ' ' .. table.concat(outOfRange, ', '))
+
+  if not regions then
+    check('the field has a multi-region sector to be checked in', false,
+      'no multi-region sector was found in the sample')
+  else
+    -- (b) continuity, along every line that crosses a boundary
+    local worst, worstWhere = 0, ''
+    -- Fine sampling on purpose. A CONTINUOUS field's step between two
+    -- samples shrinks with the sample spacing, while a SWITCHING field's
+    -- step does not -- so the finer the sampling, the better the check
+    -- separates "a gradient" from "a jump". 200 steps over a 50 km line is
+    -- 250 units apart, which is a twentieth of a region.
+    local steps = 200
+    for i = 1, #regions do
+      for j = i + 1, #regions do
+        local a, b = regions[i], regions[j]
+        local prev
+        for k = 0, steps do
+          local t = k / steps
+          local x = a.center.x + (b.center.x - a.center.x) * t
+          local y = a.center.y + (b.center.y - a.center.y) * t
+          local z = a.center.z + (b.center.z - a.center.z) * t
+          local f = Region.field(regions, x, y, z)
+          if prev then
+            local step = math.max(math.abs(f.density - prev.density),
+                                  math.abs(f.storm - prev.storm),
+                                  math.abs(f.rocks - prev.rocks),
+                                  math.abs(f.light - prev.light))
+            if step > worst then
+              worst = step
+              worstWhere = string.format('%s -> %s at t=%.2f', a.name, b.name, t)
+            end
+          end
+          prev = f
+        end
+      end
+    end
+    -- The step between two samples a third of a boundary apart. A field
+    -- that SWITCHED would show a step the size of the whole difference
+    -- between the regions -- tens of hundredths. A smooth field moves by a
+    -- fraction of that.
+    check('the field is continuous across every boundary',
+      worst < 0.08,
+      string.format('largest step %.4f (%s)', worst, worstWhere))
+
+    -- (c) the regions differ
+    local lo, hi = 1, 0
+    for _, r in ipairs(regions) do
+      local f = Region.field(regions, r.center.x, r.center.y, r.center.z)
+      if f.storm < lo then lo = f.storm end
+      if f.storm > hi then hi = f.storm end
+    end
+    check('the regions are measurably different from each other',
+      (hi - lo) > 0.15,
+      string.format('the storm channel ranges %.3f..%.3f across the regions', lo, hi))
+
+    -- The blend must not depend on WHICH regions happen to lack an
+    -- archetype. An un-archetyped region contributes the NEUTRAL value, not
+    -- zero, or it would drag the whole field down by however many plain
+    -- regions the sector happens to have.
+    local plain = 0
+    for _, r in ipairs(regions) do if not r.archetype then plain = plain + 1 end end
+    if plain > 0 then
+      local f = Region.field(regions, regions[1].center.x, regions[1].center.y,
+                                            regions[1].center.z)
+      check('a plain region does not drag the field to zero',
+        f.density > 0.05 and f.storm > 0.02 and f.rocks > 0.05,
+        string.format('the field at a region centre reads density=%.3f storm=%.3f rocks=%.3f',
+          f.density, f.storm, f.rocks))
+    end
+  end
+end
+
 print(string.format('\n%d checks, %d failure(s)', checks, failures))
 if failures > 0 then os.exit(1) end
 os.exit(0)

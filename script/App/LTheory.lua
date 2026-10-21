@@ -266,7 +266,12 @@ function LTheory:buildGates ()
   -- The sector's own regions -- the lanes are built from them. (The lanes
   -- themselves are built by buildRails, which the debug window's switch can
   -- call on its own.)
-  local _, sectorName = Sector.Region.place(here.seed, here.center, here.radius)
+  local regions, sectorName = Sector.Region.place(here.seed, here.center, here.radius)
+
+  -- The sector's regions, for the ENVIRONMENTAL FIELD (13f): the asteroid
+  -- field, the nebula and the lightning all read the same function of a
+  -- position, so they cannot disagree about what kind of place they are in.
+  if self.system then self.system:setSectorRegions(regions) end
 
   -- The HUB: the sector's own centre, and the one place every lane starts
   -- from. It is where the player spawns, so the roads all lead back to

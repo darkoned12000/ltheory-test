@@ -546,7 +546,39 @@ function HUD:updateSectorInfo (shipPos)
   local info = self.sectorInfo or {}
   info.sectorLabel  = st.sectorName
   info.regionLabel  = region.name
-  info.archetypeLabel = region.archetype and region.archetype.name or ''
+
+  -- The region's CHARACTER, and the transition into the next one (13f).
+  --
+  -- The archetype name on its own is the DOMINANT region's, which is a lie
+  -- exactly where it matters: halfway between a "Solar Graveyard" and a
+  -- "Silent Deep" the field is a blend of the two, and the player should be
+  -- able to SEE that they are in between rather than being told they are
+  -- in one place or the other.
+  --
+  -- So the second archetype is named too, once the blend has actually
+  -- reached it -- the field is continuous, so the two names fade into each
+  -- other rather than switching.
+  local archLabel = ''
+  if region.archetype then
+    archLabel = region.archetype.name
+    local field = st.regions and Sector.Region.field(st.regions,
+                                                    shipPos.x, shipPos.y, shipPos.z)
+    if field and field.weights then
+      local second, secondW = nil, 0
+      for _, e in ipairs(field.weights) do
+        if e.region ~= region and e.region.archetype and e.w > secondW then
+          second, secondW = e.region.archetype, e.w
+        end
+      end
+      -- Only when the character actually CHANGES. Two neighbouring regions
+      -- can share an archetype (the field does not care), and naming the
+      -- same one twice would read as a bug.
+      if second and secondW > 0.2 and second.name ~= archLabel then
+        archLabel = archLabel .. ' -> ' .. second.name
+      end
+    end
+  end
+  info.archetypeLabel = archLabel
   info.bearingDir   = self.bearingDir
   info.bearingDist  = boundaryDist
   -- The map shows the region the PLAYER is in, so the two always agree.
