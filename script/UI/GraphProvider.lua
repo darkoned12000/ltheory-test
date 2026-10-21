@@ -241,11 +241,29 @@ function GraphProvider.system (opts)
       if sectors and #sectors > 0 then
         local SectorGraph_ = SectorGraph
         for _, g in ipairs(SectorGraph_.gates(sectors, P.sectorIndex or 0)) do
+          -- The far end of the gate, as a GHOST node placed in the
+          -- DIRECTION of the exit.
+          --
+          -- It used to be placed at the partner sector's own position --
+          -- which is a GALAXY-space coordinate, hundreds of thousands of
+          -- units away, and the map is a sector-local projection. So every
+          -- gate's link was drawn out towards the galaxy's centre, and the
+          -- map filled up with bright wedges all converging on one point
+          -- that meant nothing. The old Limit Theory had the same trick and
+          -- did it properly: its two wormhole endpoints were at fixed
+          -- world positions either side of the line between the two
+          -- systems, so on the map the link pointed at the exit and the far
+          -- end sat off the edge of the view.
+          --
+          -- One sector-radius out in the exit's direction does that here.
+          local dx, dz = g.other.x - g.self.x, g.other.z - g.self.z
+          local d = math.sqrt(dx * dx + dz * dz)
+          local k = (d > 1e-3) and (60000 / d) or 1
           out[#out + 1] = {
             id    = 'gatefar:' .. g.partner,
             major = false,
             cat   = 'gatefar',
-            x = g.other.x, y = g.other.z,
+            x = g.self.x + dx * k, y = g.self.z + dz * k,
             r = 300,
             label = g.otherName,
           }
@@ -331,9 +349,21 @@ function GraphProvider.system (opts)
 
     if ctx.hasEconomy and ctx:hasEconomy() then
       local eco = ctx:getEconomy()
+      -- CAPPED. Every mine job in the sector is an edge, and a sector with a
+      -- few thousand ore-bearing rocks has a few thousand of them -- drawn
+      -- as a starburst of overlapping lines from the station out to every
+      -- rock, which drowned the whole map in a white wedge and hid the
+      -- things the map is FOR (the region names, the places, the gates).
+      --
+      -- A hundred of them is plenty to say "this station is working this
+      -- field": the hundredth is not more informative than the tenth, and
+      -- the map is a picture, not a spreadsheet.
+      local drawn = 0
       for _, job in ipairs(eco.jobs or {}) do
+        if drawn >= 100 then break end
         if job.src and job.dst then
           link(job.src, job.dst, job.item and 'trade' or 'mine', job)
+          drawn = drawn + 1
         end
       end
     end

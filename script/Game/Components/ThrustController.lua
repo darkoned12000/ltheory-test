@@ -1,14 +1,47 @@
 local Entity     = require('Game.Entity')
 local SocketType = require('Game.SocketKind')
 
+-- The thrusters, and the SPEED they buy.
+--
+-- The top speed is not a cap: the ship is created with no friction, so the
+-- only thing limiting it is the ship's own linear damping (0.75/s, so 75% of
+-- the velocity is lost every second). The equilibrium is therefore
+-- thrust / (damping * mass), and the mass is a constant for a given ship --
+-- so the thrust IS the top speed, linearly.
+--
+-- 8e6 bought about 203 u/s in practice -- MEASURED, by holding full thrust
+-- and watching the speed settle, and it was NOT the 100 that
+-- `Ship:getTopSpeed` claimed. The two never agreed: the top speed is set by
+-- the thrust against the ship's linear damping, and the hardcoded 100 in
+-- getTopSpeed was a guess that the jobs' travel times were then based on.
+--
+-- The sector is 120 km across, so at 203 u/s crossing it took TEN MINUTES
+-- and the nearest region was four -- which is not a place you can play in,
+-- it is a map you can look at. The sector's size is a design decision and
+-- this is the other half of it: 2e7 buys 500 u/s (measured), so a region is
+-- a minute away and the sector is two.
+--
+-- The torques go up by 2x rather than 2.46x. The ship's turning circle is
+-- set by the ratio of its speed to its turn rate, so leaving the torques
+-- alone would have made the ship twice as sluggish to turn in absolute
+-- terms; doubling them keeps most of that, and the rest is a feel call
+-- the player is better placed to make.
+--
+-- The boost multiplies the thrust by 2 (it used to be 3), so 500 becomes
+-- 1000. The boost's energy cost is scaled to match, so its efficiency per
+-- unit of energy is unchanged.
 local thrustMult        = 1
-local thrustForwardMax  = 8e6 * thrustMult
-local thrustBackwardMax = 2e6 * thrustMult
-local thrustRightMax    = 8e6 * thrustMult
-local thrustUpMax       = 2e6 * thrustMult
-local thrustPitchMax    = 1e7 * thrustMult
-local thrustYawMax      = 1e7 * thrustMult
-local thrustRollMax     = 2e7 * thrustMult
+local thrustForwardMax  = 1.9e7 * thrustMult
+local thrustBackwardMax = 4.75e6 * thrustMult
+local thrustRightMax    = 1.9e7 * thrustMult
+local thrustUpMax       = 4.75e6 * thrustMult
+local thrustPitchMax    = 2e7 * thrustMult
+local thrustYawMax      = 2e7 * thrustMult
+local thrustRollMax     = 4e7 * thrustMult
+
+-- The thrust at full boost, as a MULTIPLE of the base thrust. 2 = the boost
+-- doubles the speed, so 500 becomes 1000.
+local boostMult = 2.0
 
 --------------------------------------------------------------------------------
 
@@ -44,7 +77,7 @@ function ThrustController:update (e, dt)
     boost = self.boost
   end
 
-  local mult = 1.0 + 2.0 * boost
+  local mult = 1.0 + (boostMult - 1.0) * boost
 
   if abs(self.forward) > 1e-6 then
     local maxThrust = (self.forward > 0) and thrustForwardMax or thrustBackwardMax

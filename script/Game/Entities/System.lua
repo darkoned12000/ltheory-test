@@ -464,7 +464,7 @@ function System:spawnAsteroidField (count, oreCount)
 
     -- Mark the last `oreCount` rocks as ore-bearing (mineable later)
     if i > (count - oreCount) then
-      asteroid:addYield(rng:choose(Item.T1), 1.0)
+      asteroid:addYield(Item.Ore, 1.0)
     end
 
     zone:add(asteroid)

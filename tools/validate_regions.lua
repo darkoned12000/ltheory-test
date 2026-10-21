@@ -383,11 +383,13 @@ do
     if #r > 1 then regions = r break end
   end
 
-  -- (a) the channels
-  local chans = { 'density', 'storm', 'light', 'rocks' }
+  -- (a) the channels. The ATMOSPHERE channels live on the archetypes and
+  -- the CONTENT channels on the kinds, because that is what each of them is:
+  -- a belt is a rock swarm with ore in it whatever the gas around it is
+  -- doing.
   local missing, outOfRange = {}, {}
   for _, a in ipairs(Region.ARCHETYPES) do
-    for _, c in ipairs(chans) do
+    for _, c in ipairs({ 'density', 'storm', 'light' }) do
       if type(a[c]) ~= 'number' then
         missing[#missing + 1] = a.name .. '.' .. c
       elseif a[c] < 0 or a[c] > 1 then
@@ -395,7 +397,19 @@ do
       end
     end
   end
-  check('every archetype carries every field channel, in 0..1',
+  for _, k in ipairs(Region.KINDS) do
+    for _, c in ipairs({ 'rocks', 'ore' }) do
+      if type(k[c]) ~= 'number' then
+        missing[#missing + 1] = k.name .. '.' .. c
+      elseif k[c] < 0 or k[c] > 1 then
+        outOfRange[#outOfRange + 1] = string.format('%s.%s=%.3f', k.name, c, k[c])
+      end
+    end
+    if type(k.archetypes) ~= 'table' or #k.archetypes == 0 then
+      missing[#missing + 1] = k.name .. '.archetypes'
+    end
+  end
+  check('every archetype and kind carries every field channel, in 0..1',
     #missing == 0 and #outOfRange == 0,
     table.concat(missing, ', ') .. ' ' .. table.concat(outOfRange, ', '))
 

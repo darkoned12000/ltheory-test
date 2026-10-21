@@ -252,6 +252,7 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
   -- field must not change under it, and the regions do not change within a
   -- sector.
   local rockScale = 1
+  local oreChance = 0
   local regions = self.system and self.system.sectorRegions
   if regions and #regions > 0 then
     local Sector = require('Game.Region')
@@ -259,6 +260,10 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
     -- The archetype's `rocks` runs 0.15..0.95, so this is a 0.55x..1.6x
     -- multiplier: a belt is about three times rockier than a deep field.
     rockScale = 0.35 + f.rocks * 1.3
+    -- The ORE, which is the whole reason a belt is worth riding a lane to.
+    -- It comes from the same field as the density, so the ore is IN the
+    -- belts and nowhere else, and the lanes lead to the belts.
+    oreChance = f.ore
   end
 
   -- `perChunk` is a density control and the settings panel stores it as a
@@ -343,6 +348,17 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
     local asteroid = Asteroid(rng:get31(), scale, { static = self.static })
     asteroid:setPos(Vec3f(x, y, z))
     asteroid:setRot(rng:getQuat())
+    -- The ORE: whether this rock is worth mining comes from the region's
+    -- character, so the ore is in the BELTS and the lanes are worth riding
+    -- to get to it. A belt region's rock is ore nine times in ten; a deep
+    -- field's is one time in ten.
+    --
+    -- The draw is from the chunk's own rng, so a chunk's ore is fixed once
+    -- it is generated and does not change under the player.
+    if oreChance > 0 and rng:getUniform() < oreChance then
+      local Item = require('Game.Item')
+      asteroid:addYield(Item.Ore, 1.0)
+    end
     -- Remember the generating position (NOT the entity's live position) so
     -- clumping anchors stay put even if a rock is later destroyed.
     rocks[#rocks + 1] = { entity = asteroid, pos = Vec3f(x, y, z) }

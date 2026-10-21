@@ -229,7 +229,10 @@ Config.audio = {
 }
 
 Config.game = {
-  boostCost = 10,
+  -- The boost's energy cost per second. Scaled with the boost's strength
+  -- (it now doubles the thrust rather than tripling it), so the boost's
+  -- efficiency per unit of energy is unchanged.
+  boostCost = 6.7,
   rateOfFire = 10,
   autoTarget             = false,
   pulseDamage            = 40,
@@ -249,8 +252,14 @@ Config.game = {
   --
   -- To make collision harmless entirely (scenery you pass through), set
   -- rammingDamageScale = 0. To restore the old lethal curve, 2.0.
-  rammingMinSpeed     = 25.0,  -- below this, no damage at all
-  rammingDamageScale  = 0.35,  -- 100 HP ship survives a ~310 u/s hit
+  -- Both of these are relative to the SHIP'S TOP SPEED (500 u/s, see
+  -- Ship:getTopSpeed), because a collision's damage is the impact speed:
+  -- the old numbers (25 and 0.35) were tuned for a 100 u/s ship, and a
+  -- 500 u/s ship hitting a rock at 500 would take 166 damage against 100 HP
+  -- -- instant death, and "routine flight" in a sector with a rock field
+  -- would be lethal.
+  rammingMinSpeed     = 125.0, -- below this, no damage at all (a quarter of the top speed)
+  rammingDamageScale  = 0.07,  -- 100 HP ship survives a ~1550 u/s hit (3x the top speed)
 
   shipBuildTime          = 10,
   shipEnergy             = 100,

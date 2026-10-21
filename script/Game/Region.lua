@@ -62,19 +62,37 @@ local NameGen = require('Game.NameGen')
 -- `density` is the GAS density (Violet Veil is dense gas), so the belt was
 -- the LEAST dense place in the table and the most rock-like one, which is
 -- exactly backwards. The two are separate channels now: gas, and rock.
+--
+-- The archetype is the region's ATMOSPHERE: how much gas, how stormy, how
+-- bright, and the palette. The KIND (below) is its CONTENT -- what is
+-- physically here. The two compose: a belt inside a dense veil is still a
+-- belt.
 Region.ARCHETYPES = {
-  { name = 'Silent Deep',    hue = { 0.58, 0.68 }, density = 0.18, storm = 0.05, light = 0.30, rocks = 0.15,
+  { name = 'Silent Deep',    hue = { 0.58, 0.68 }, density = 0.18, storm = 0.05, light = 0.30,
     desc = 'clear sky, few stars lost' },
-  { name = 'Violet Veil',    hue = { 0.74, 0.82 }, density = 0.85, storm = 0.70, light = 0.55, rocks = 0.20,
+  { name = 'Violet Veil',    hue = { 0.74, 0.82 }, density = 0.85, storm = 0.70, light = 0.55,
     desc = 'dense gas, frequent lightning' },
-  { name = 'Shattered Belt', hue = { 0.05, 0.12 }, density = 0.30, storm = 0.20, light = 0.35, rocks = 0.95,
+  { name = 'Shattered Belt', hue = { 0.05, 0.12 }, density = 0.30, storm = 0.20, light = 0.35,
     desc = 'rock, debris, low gas' },
-  { name = 'Solar Graveyard',hue = { 0.02, 0.09 }, density = 0.55, storm = 0.80, light = 0.70, rocks = 0.45,
+  { name = 'Solar Graveyard',hue = { 0.02, 0.09 }, density = 0.55, storm = 0.80, light = 0.70,
     desc = 'hot haze, strong sun, storms' },
-  { name = 'Dust Expanse',   hue = { 0.10, 0.16 }, density = 0.62, storm = 0.15, light = 0.40, rocks = 0.40,
+  { name = 'Dust Expanse',   hue = { 0.10, 0.16 }, density = 0.62, storm = 0.15, light = 0.40,
     desc = 'thin dust, clear stars' },
-  { name = 'Deep Field',     hue = { 0.60, 0.72 }, density = 0.35, storm = 0.12, light = 0.25, rocks = 0.20,
+  { name = 'Deep Field',     hue = { 0.60, 0.72 }, density = 0.35, storm = 0.12, light = 0.25,
     desc = 'quiet, nothing much here' },
+}
+
+-- The KINDS, and how likely each is.
+--
+-- The archetype is drawn FROM its kind's list rather than on its own, and
+-- the kind is drawn with a WEIGHT. That is what guarantees a sector has a
+-- MIX: drawing the archetype on its own gave a third of the sectors no belt
+-- at all -- a third of the sectors with nothing to mine and nothing to
+-- ride a lane to.
+Region.KINDS = {
+  { name = 'belt', weight = 25, rocks = 0.95, ore = 0.90, archetypes = { 'Shattered Belt' } },
+  { name = 'yard', weight = 25, rocks = 0.20, ore = 0.10, archetypes = { 'Silent Deep', 'Deep Field' } },
+  { name = 'veil', weight = 50, rocks = 0.25, ore = 0.05, archetypes = { 'Violet Veil', 'Dust Expanse', 'Solar Graveyard' } },
 }
 
 -- The NEUTRAL value of each channel: what a region with no archetype
@@ -92,21 +110,31 @@ Region.ARCHETYPES = {
 -- The neutral value is the MEAN of the archetypes: a plain place is an
 -- average place, and the field's scale then depends only on what the
 -- regions ARE, not on which ones were given a preset.
-local NEUTRAL = { density = 0, storm = 0, light = 0, rocks = 0 }
+local NEUTRAL = { density = 0, storm = 0, light = 0, rocks = 0, ore = 0 }
 do
   local n = 0
   for _, a in ipairs(Region.ARCHETYPES) do
     NEUTRAL.density = NEUTRAL.density + (a.density or 0)
     NEUTRAL.storm   = NEUTRAL.storm   + (a.storm   or 0)
     NEUTRAL.light   = NEUTRAL.light   + (a.light   or 0)
-    NEUTRAL.rocks   = NEUTRAL.rocks   + (a.rocks   or 0)
     n = n + 1
+  end
+  -- The CONTENT channels belong to the KIND, so their neutral is the mean
+  -- over the kinds.
+  local k = 0
+  for _, kind in ipairs(Region.KINDS) do
+    NEUTRAL.rocks = NEUTRAL.rocks + (kind.rocks or 0)
+    NEUTRAL.ore   = NEUTRAL.ore   + (kind.ore   or 0)
+    k = k + 1
   end
   if n > 0 then
     NEUTRAL.density = NEUTRAL.density / n
     NEUTRAL.storm   = NEUTRAL.storm   / n
     NEUTRAL.light   = NEUTRAL.light   / n
-    NEUTRAL.rocks   = NEUTRAL.rocks   / n
+  end
+  if k > 0 then
+    NEUTRAL.rocks = NEUTRAL.rocks / k
+    NEUTRAL.ore   = NEUTRAL.ore   / k
   end
 end
 
@@ -209,12 +237,47 @@ local function placeRegions (sectorSeed, origin, radius)
     local dx, dz = cos(theta), sin(theta)
     local dy = (h3 - 0.5) * 0.10
 
-    -- The archetype. Not every region needs one -- a sector can be a plain
-    -- belt -- so one region in a few is left unarchetyped.
+    -- The KIND, and then the archetype of that kind.
+    --
+    -- The kind is what the region CONTAINS (a belt of rock, a yard, a
+    -- veil of gas); the archetype is what it FEELS like, and there is one
+    -- per kind. Drawing the kind first is what makes a sector a MIX of
+    -- them -- a third of the sectors used to come out with no belt at all,
+    -- and a sector with no belt has nothing to mine and no reason to ride
+    -- a lane to.
+    --
+    -- The FIRST region is always a BELT and the SECOND always a YARD, so a
+    -- sector with more than one region always has somewhere to mine and
+    -- somewhere to sell -- and the rest are drawn. Drawn alone, a quarter
+    -- of the sectors came out with no belt at all: nothing to mine, and no
+    -- lane worth riding to anywhere.
+    --
+    -- A region may also come out PLAIN (no archetype), which is the
+    -- design's "a sector may have one region with no archetype at all" --
+    -- a plain place with a plain field. Only the drawn ones do, so the
+    -- guaranteed belt and yard always have their character.
     local archetype = nil
-    if SpaceField.hash32(i, 0, 0, s, 94) > 0.25 then
-      local ai = 1 + floor(SpaceField.hash32(i, 0, 0, s, 95) * #Region.ARCHETYPES)
-      archetype = Region.ARCHETYPES[min(ai, #Region.ARCHETYPES)]
+    local kind = nil
+    if i == 1 then
+      kind = Region.KINDS[1]
+    elseif i == 2 then
+      kind = Region.KINDS[2]
+    else
+      local total = 0
+      for _, k in ipairs(Region.KINDS) do total = total + (k.weight or 1) end
+      local roll = SpaceField.hash32(i, 0, 0, s, 95) * total
+      for _, k in ipairs(Region.KINDS) do
+        roll = roll - (k.weight or 1)
+        if roll <= 0 then kind = k break end
+      end
+      kind = kind or Region.KINDS[#Region.KINDS]
+    end
+    if kind and (i <= 2 or SpaceField.hash32(i, 0, 0, s, 94) > 0.25) then
+      local list = kind.archetypes
+      local pick = list[1 + floor(SpaceField.hash32(i, 0, 0, s, 96) * #list)]
+      for _, a in ipairs(Region.ARCHETYPES) do
+        if a.name == pick then archetype = a break end
+      end
     end
 
     -- The reach of this region's influence.
@@ -249,6 +312,8 @@ local function placeRegions (sectorSeed, origin, radius)
       seed     = s,
       name     = nil,             -- assigned below
       archetype= archetype,
+      kind    = kind and kind.name or nil,
+      kindData= kind,
       center   = {
         x = origin.x + dx * rr,
         y = origin.y + dy * radius,
@@ -456,11 +521,11 @@ function Region.field (regions, x, y, z)
     -- No region at all (past every reach). The field is empty, not zeroed
     -- arbitrarily: the callers scale a BASE by the field, and an empty
     -- field means "no character here", which is the honest answer.
-    return { density = 0, storm = 0, light = 0, rocks = 0, hue = 0.5,
-             region = nil, weights = w }
+    return { density = 0, storm = 0, light = 0, rocks = 0, ore = 0,
+             hue = 0.5, region = nil, weights = w }
   end
 
-  local density, storm, light, rocks = 0, 0, 0, 0
+  local density, storm, light, rocks, ore = 0, 0, 0, 0, 0
   -- The hue blends as a VECTOR, not as a number. A hue is a position on a
   -- wheel, so 0.95 and 0.05 are near each other, and averaging them as
   -- numbers gives 0.5 -- a completely different colour, on the far side
@@ -471,10 +536,17 @@ function Region.field (regions, x, y, z)
     local e = w[i]
     local r = e.region
     local a = r.archetype
+    -- The ATMOSPHERE comes from the archetype; the CONTENT (the rock
+    -- density and the ore) comes from the KIND, because that is what the
+    -- kind IS -- a belt is a rock swarm with ore in it whatever the gas
+    -- around it is doing, and a PLAIN belt must not lose its ore for
+    -- having no archetype.
+    local kd = r.kindData
     density = density + (a and a.density or NEUTRAL.density) * e.w
     storm   = storm   + (a and a.storm   or NEUTRAL.storm)   * e.w
     light   = light   + (a and a.light   or NEUTRAL.light)   * e.w
-    rocks   = rocks   + (a and a.rocks   or NEUTRAL.rocks)   * e.w
+    rocks   = rocks   + (kd and kd.rocks or NEUTRAL.rocks)   * e.w
+    ore     = ore     + (kd and kd.ore   or NEUTRAL.ore)     * e.w
     local h = r.hue or 0
     hx = hx + cos(h * 6.2831853) * e.w
     hy = hy + sin(h * 6.2831853) * e.w
@@ -491,6 +563,7 @@ function Region.field (regions, x, y, z)
     storm   = storm,
     light   = light,
     rocks   = rocks,
+    ore     = ore,
     hue     = hue,
     -- The DOMINANT region: the one you are "in" for the HUD's purposes.
     -- It is the same rule the map and the panel already use, so the field

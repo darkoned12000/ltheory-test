@@ -273,6 +273,25 @@ function LTheory:buildGates ()
   -- position, so they cannot disagree about what kind of place they are in.
   if self.system then self.system:setSectorRegions(regions) end
 
+  -- A PLACE in every region.
+  --
+  -- This is the answer to "what does a warp lane go to?" A lane that ends
+  -- in empty space is a lane nobody would use, and the old game's answer
+  -- was that its lanes ran between its POINTS OF INTEREST -- a planet, a
+  -- field, a station -- not between areas of nothing. So every region gets
+  -- one, and the lanes run to them.
+  --
+  -- What the place IS depends on the region's KIND (which is what the
+  -- archetype's kind field says): a belt gets a mining RIG, a yard gets a
+  -- YARD with a factory on it, a veil gets a RELAY (a beacon in the gas).
+  -- Every one of them has a market, so the ore you mine has somewhere to
+  -- go.
+  self.sectorPlaces = {}
+  for _, r in ipairs(regions) do
+    local place = self:buildPlace(r, sectorName)
+    if place then self.sectorPlaces[#self.sectorPlaces + 1] = place end
+  end
+
   -- The HUB: the sector's own centre, and the one place every lane starts
   -- from. It is where the player spawns, so the roads all lead back to
   -- where they started, and it is the middle of the star the lanes make.
@@ -401,6 +420,47 @@ end
 -- Start the hum on every gate. Called once the audio engine is up.
 function LTheory:startGateSounds ()
   for _, g in ipairs(self.gates or {}) do g:startSound() end
+end
+
+--[[---------------------------------------------------------------------------
+  buildPlace -- the PLACE in a region: the thing a warp lane goes to.
+
+  A station, scaled down to an outpost, named after its region, with a
+  market (so the ore has somewhere to go) and -- in a yard -- a factory
+  (so the place makes things as well as selling them).
+
+  The name is the region's name and a word for what the place is, because
+  the lane's destination is announced by name on the HUD and on the map:
+  "Nearest lane to Hogatuge Rig" is a place; "Nearest lane to Hogatuge" was
+  a direction.
+---------------------------------------------------------------------------]]
+function LTheory:buildPlace (region, sectorName)
+  local kind = region.kind or 'yard'
+  local suffix = kind == 'belt' and 'Rig' or kind == 'veil' and 'Relay' or 'Yard'
+  local name = format('%s %s', region.name, suffix)
+
+  local place = Entities.Station(Seed.rng('ltheory.place', region.index):managed():get31())
+  place:setName(name)
+  -- An outpost, not a station: the sector's one real station is the big
+  -- one near the planet.
+  place:setScale(45)
+  place:setPos(Vec3f(region.center.x, region.center.y, region.center.z))
+
+  -- The market. It BUYS ore, which is the demand that makes a belt worth
+  -- the trip.
+  local Item = require('Game.Item')
+  place:addMarket()
+  place.market:addBuy(place, Item.Ore, 100, 12)
+
+  -- A yard makes things.
+  if kind == 'yard' then
+    local Production = require('Game.Production')
+    place:addFactory()
+    place:addProduction(Production.All()[1])
+  end
+
+  self.system:addChild(place)
+  return place
 end
 
 --[[---------------------------------------------------------------------------

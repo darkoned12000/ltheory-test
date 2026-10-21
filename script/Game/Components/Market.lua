@@ -14,7 +14,11 @@ local OrderType = {
 }
 
 local function addOrder (type, self, actor, item, count, price)
-  local data = self.marketData
+  -- `data`, not `marketData`: the Market class initialises `self.data`
+  -- (and both `update` and the debug dump read `self.data`), so
+  -- `marketData` was a typo that had never been reached -- the market
+  -- component existed, and nothing had ever put an order in it.
+  local data = self.data
   if not data[item] then
     data[item] = {
       ordersBuy = {},
@@ -36,7 +40,9 @@ local function addOrder (type, self, actor, item, count, price)
 
   -- TODO : Remove credits / items, put in escrow
 
-  sort(orders, type.comparator)
+  -- `table.sort`, not a bare `sort`: there is no global `sort` in this
+  -- sandbox, and this line had never run.
+  table.sort(orders, type.comparator)
 end
 
 local Market = class(function (self)

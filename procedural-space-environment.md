@@ -1920,6 +1920,89 @@ the region's HUE only reaches the map pin. Making the gas and the stars
 take the region's palette is the next step, and it is the step that makes
 the region archetype's name mean what it says.
 
+29l. The places, the kinds, and the ship's speed
+----------------------------------------------------
+
+**THE QUESTION THIS ANSWERS.** A warp lane is only worth riding if it goes
+somewhere. The lanes had been right -- built, correct, and pointed at
+AREAS -- and a lane that ends in an area of nothing is a lane nobody would
+use. So the answer is not more lane engineering. It is that the regions
+need PLACES, and the old game's answer is the one to copy: its rails ran
+between its POINTS OF INTEREST.
+
+**EVERY REGION GETS A PLACE.** A station, scaled down to an outpost, at the
+region's centre, named after the region and for what it is:
+
+    a belt  ->  a mining RIG
+    a yard  ->  a YARD (with a factory on it)
+    a veil  ->  a RELAY (a beacon in the gas)
+
+Every one of them has a market, so the ore has somewhere to go. And the
+LANES now run to the places, because the lane's end is the region's
+centre, which is where the place is -- "Nearest lane to Hogatuge Rig 17 km"
+is a place; "Nearest lane to Hogatuge" was a direction.
+
+**THE KINDS, AND WHY THEY ARE NOT THE ARCHETYPES.** The archetype is the
+region's ATMOSPHERE (how much gas, how stormy, how bright, the palette).
+The KIND is its CONTENT -- what is physically here. They compose: a belt
+inside a dense veil is still a belt.
+
+    belt   rock and ore, a swarm of it
+    yard   open ground, a market and a factory
+    veil   gas you cannot see far through
+
+The content channels (the rock density and the ORE) live on the KIND, not
+on the archetype, for a reason that only shows up in play: a PLAIN belt --
+a belt with no archetype, which the design explicitly allows -- would have
+lost its ore for having no atmosphere to be atmospheric about.
+
+**A SECTOR IS GUARANTEED A MIX.** The first region is always a BELT and
+the second always a YARD; the rest are drawn. Drawn alone, a quarter of
+the sectors came out with no belt at all -- nothing to mine, and no lane
+worth riding to anywhere. A sector with a belt and a yard has an economy:
+mine there, sell here, and the lanes are the road between them.
+
+**THE ORE.** A rock in a belt is ore nine times in ten; a rock in a deep
+field is one time in ten. It comes from the same field as the density, so
+the ore is IN the belts and the lanes lead to the belts.
+
+(There was no ore before this, in any usable sense: the old static field
+marked its rocks with `rng:choose(Item.T1)` -- and there is no `Item.T1`,
+so every one of those rocks had been given a yield of NIL, which is a
+mining action that hands the player nothing. The item the game had been
+reaching for did not exist. It does now: `Item.Ore`.)
+
+**THE SHIP'S SPEED.** The sector is 120 km across and the ship's top speed
+was 203 u/s (MEASURED -- the hardcoded 100 in `Ship:getTopSpeed` had
+never matched the physics, and the jobs' travel times were based on the
+fiction). At 203 u/s crossing the sector took ten minutes and the nearest
+region four, which is not a place you can play in, it is a map you can
+look at. The thrust now buys **500 u/s** and the boost **1000**, so a
+region is a minute away and the sector is two.
+
+Three things had to move with it:
+
+* **The ramming damage**, which was tuned against a 100 u/s ship. At 500
+  u/s a rock would have been 166 damage against 100 HP -- instant death,
+  and "routine flight" in a sector with a rock field would be lethal. The
+  thresholds are now relative to the top speed.
+* **The chase camera**, which TRAILS a moving target (its position
+  converges with a time constant of a tenth of a second). At 500 u/s the
+  ship would have been 50 units ahead of the camera -- four ship radii --
+  and visibly off-centre. The camera now leads by exactly its own lag.
+* **The torques**, which go up by 2x rather than 2.46x. The turning circle
+  is the ratio of speed to turn rate, so leaving them alone would have
+  made the ship twice as sluggish to turn; doubling them keeps most of
+  that, and the rest is a feel call the player is better placed to make.
+
+**WHAT IS STILL MISSING.** The player can mine the ore and carry it, but
+there is no SELL: the market component exists, with buy and sell orders
+and a matching loop, and no user interface for it and no action. The
+market's matching is also cosmetic -- it moves order counts, not items
+and not credits (the escrow is a TODO). So the economy's last mile --
+dock at a rig, sell the ore, buy something with the credits -- is the
+next piece, and it is a piece of work rather than a piece of wiring.
+
 30. Visual "Wow Factor" Stack
 
 The desired experience should build in layers.

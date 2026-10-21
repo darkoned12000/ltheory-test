@@ -53,18 +53,25 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
 ## Content & gameplay
 7. **Procedural content expansion**: L-system stations, SDF planets with biome terrain, procedural nebulae, procedural sky/env cubemaps.
 8. **Game screens**: Main menu / settings screen app on `script/UI/`.
-15. **Places in the regions** — a sector currently has a planet, a station and
-   an asteroid field, and its regions are named AREAS with nothing in them. The
-   old game's points of interest were real objects (a planet, a field, a
-   station, a colony) and its warp rails ran between THOSE. Without this there
-   is nowhere to travel to, and the warp lanes have no purpose: they are
-   built and correct, and switched OFF in the debug window for exactly that
-   reason. See `procedural-space-environment.md` §29j.
-16. **The ship's speed vs the sector's scale** — the sector is 120 km across
-   and `Ship:getTopSpeed` is a hardcoded 100 u/s, so crossing a sector takes
-   twenty minutes of flight. The two scales disagree by two orders of
-   magnitude. Either the ship gets faster or the sector gets smaller; right
-   now the sector is 60,000 units and the ship is a 100 u/s scooter.
+15. **Places in the regions** — ✅ **done**. Every region now has a PLACE: a
+   station scaled down to an outpost, at the region's centre, named after the
+   region and for what it is — a mining RIG in a belt, a YARD with a factory,
+   a RELAY in a veil. Every one has a market. The lanes now run to the
+   places, which is what gives them a purpose: "Nearest lane to Hogatuge
+   Rig" is a place. Regions also have a KIND (belt/yard/veil) which decides
+   what is in them, and a sector is guaranteed a belt and a yard so it always
+   has something to mine and somewhere to sell. See
+   `procedural-space-environment.md` §29l.
+   - **Still missing: the SELL.** The ore can be mined and carried, and the
+     market component has orders and a matching loop, but there is no
+     interface for it and no action, and the matching moves order counts
+     rather than items and credits. The economy's last mile is the next
+     piece.
+16. **The ship's speed vs the sector's scale** — ✅ **done**: the thrust now
+   buys **500 u/s** and the boost **1000** (the real top speed was 203 u/s;
+   the hardcoded 100 in `Ship:getTopSpeed` had never matched the physics).
+   A region is a minute away and the sector is two. The ramming damage, the
+   chase camera's lead and the turning torques were all rescaled with it.
 17. **A save format** — there is none: no `saveGame`, no `loadGame`. The map
    holds the sector seeds in memory and that is the whole of "the sector
    remembers itself".

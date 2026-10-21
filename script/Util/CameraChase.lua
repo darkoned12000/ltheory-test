@@ -30,6 +30,16 @@ function CameraChase:onUpdate (dt)
     self.posT:iadd(tRight:scale(-4.0 * velA.y))
     self.posT:iadd(tUp:scale(4.0 * velA.x))
 
+    -- The camera's own smoothing makes it TRAIL a moving target: its
+    -- position converges with a time constant of 1/10 s (Camera:lerp), so a
+    -- ship doing 500 u/s ends up 50 units ahead of the camera -- four ship
+    -- radii, and the ship visibly slides off-centre the faster it goes.
+    --
+    -- The lead cancels it exactly: the camera is put where it would be if
+    -- it were not trailing. (The camera's AIM does not need the same
+    -- treatment: a straight flight does not turn the camera.)
+    self.posT:iadd(self.target:getVelocity():scale(0.1))
+
     local look = (self.target:toWorldScaled(self.lookAtRel) - self.posT):normalize()
     local up   = (tUp + tRight:scale(0.2 * velA.y)):normalize()
     up = up:reject(look):normalize()

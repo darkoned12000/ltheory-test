@@ -30,9 +30,15 @@ local Ship = subclass(Entity, function (self, proto)
   self:setMass(mass)
 end)
 
+-- The ship's top speed in units per second, under full thrust.
+--
 -- TODO : Calculate true top speed based on max thrust & drag factor
+--
+-- It is what the JOBS use to decide how long a trip takes (2x the distance
+-- over the top speed), so it has to agree with what the thrusters actually
+-- do -- see ThrustController's thrust constants, which are what set it.
 function Ship:getTopSpeed ()
-  return 100
+  return 500
 end
 
 return Ship

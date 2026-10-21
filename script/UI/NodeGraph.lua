@@ -1020,6 +1020,12 @@ function NodeGraph:onDraw (focus, active)
   -- map into an unreadable pile of "Body #123" over the asteroid field, and
   -- it buried the things that matter (the region names, the ship, the
   -- places). A label on every body is the same as a label on none.
+  -- The minor dots are CAPPED. A sector's asteroid field is a couple of
+  -- thousand rocks, each drawn as an ADDITIVE dot -- so at the sector level
+  -- they overlap into a solid glowing disc that hides the region names, the
+  -- places and the gates underneath it. A few hundred of them still read as
+  -- "there is a field here", which is the whole point of drawing them.
+  local minorsDrawn = 0
   for id, n in pairs(self.nodes) do
     if self:isHidden(n) then
       -- filtered out: skip draw entirely
@@ -1027,6 +1033,10 @@ function NodeGraph:onDraw (focus, active)
       local nx, ny = self:toScreenNode(n)
       local selected = self.focus == id
       if not n.major then
+        if not selected and minorsDrawn >= 400 then
+          -- Too many rocks to draw them all: the rest are not more
+          -- informative than the ones already down.
+        else
         -- Minor bodies: fixed-size dim points (reference dot clouds). Fanned
         -- dots get a thin leader back toward truth (length varies, capped).
         local tx0, ty0 = self:toScreen(n.x, n.y)
@@ -1036,6 +1046,7 @@ function NodeGraph:onDraw (focus, active)
           Draw.Line(tx0, ty0, nx, ny)
         end
         DrawEx.Point(nx, ny, 2.2, n.color or cMinor)
+        minorsDrawn = minorsDrawn + 1
         if selected then
           -- The selected body earns its label -- and a reticle, so a
           -- selected dot reads as selected.
@@ -1052,6 +1063,7 @@ function NodeGraph:onDraw (focus, active)
           Draw.Line(nx + s - 5, ny + s, nx + s, ny + s)
           Draw.Line(nx + s, ny + s, nx + s, ny + s - 5)
         end
+        end -- the minor cap
       else
         local r = drawnRadius(n, self.zoom)
         local ring = selected and cSelected or (n.color or cNode)
