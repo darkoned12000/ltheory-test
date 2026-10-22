@@ -95,13 +95,20 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
       deterministic environmental field that the nebula, the asteroids, the
       dust and the lightning all read, so a rock field can never land in a
       clear void by chance.
-    - **13f region personality** — ✅ **done (first cut)**. The regions now
-      have a FIELD: the archetype's gas density, storminess, light and rock
-      count, blended across the boundary by the Apollonius membership (so
-      the transition is continuous and there is no seam), and read by the
-      asteroid field, the nebula and the lightning — so the three cannot
-      disagree about what kind of place they are in. The archetypes' numbers
-      are no longer dead. See `procedural-space-environment.md` §29k.
+    - **13f region personality** — ✅ **done**. The regions now have a FIELD:
+      the archetype's gas density, storminess, light, rock count and ore,
+      blended across the boundary by the Apollonius membership (so the
+      transition is continuous and there is no seam), and EVERY channel has
+      a consumer reading the SAME field — the gas takes the region's
+      density and leans 35% toward the region's hue, the asteroid field
+      takes the rock count and the ore, the lightning takes the
+      storminess, the god rays take the light. So they cannot disagree
+      about what kind of place they are in. The archetypes' numbers are no
+      longer dead. See `procedural-space-environment.md` §29k.
+      - **Still missing:** the skybox is one cube per sector, so the
+        region's colour only tints the plumes — a few per cent of the
+        frame rather than a change of place. Making the sky regional is a
+        cube per region, or a hue rotation of the skybox sample.
 
 ## Known polish / tech debt (small, unbundled)
 - **Audio polish**: Fixed `ThrustController.lua` thruster audio by correcting `set3DMinMaxDistance` attenuation parameters (`maxDist` fixed from `0` to `1000`) and adding Exponential Moving Average (EMA) volume smoothing to prevent zipper noise. Pre-load rapid SFX buffers once with `ClonePlayFree` for dogfight audio.

@@ -1915,10 +1915,44 @@ archetype carries every channel, that the field is continuous across
 every boundary, that the regions are measurably different from each
 other, and that a plain region does not drag the field to zero.
 
-**WHAT IS STILL MISSING.** The `light` channel has no consumer yet, and
-the region's HUE only reaches the map pin. Making the gas and the stars
-take the region's palette is the next step, and it is the step that makes
-the region archetype's name mean what it says.
+**AND THEN THE REGION'S CHARACTER REACHED THE SKY.** Every archetype
+channel now has a consumer, and they all read the SAME field:
+
+| channel | reaches | how |
+|---|---|---|
+| `density` | the gas | each plume's density, scaled by the field at the plume's own position |
+| `hue` | the gas | each plume's hue leans 35% toward the region's hue |
+| `rocks` | the rock field | the chunk's rock count, scaled by the field at the chunk's centre |
+| `ore` | the rock field | the chance a rock is worth mining |
+| `storm` | the lightning | the strike rate |
+| `light` | the god rays | the shafts' strength, so "strong sun" is strong sun |
+
+The region's PALETTE is a partial blend on purpose. The Palette Coupling
+centres the plumes on the skybox's hue so the gas and the sky match;
+replacing that outright would break it, so the region's hue TINTS the
+sky's rather than replacing it -- a region is a place inside the sector,
+not a different sector. And the hue is mixed the SHORT way round the
+wheel, because a hue is a position on a circle: 0.95 and 0.05 are near
+each other, and averaging them as numbers gives 0.5, a different colour
+altogether.
+
+Measured, at the regions' centres: "Pale Wilds" (a Shattered Belt) reads
+hue 0.089, gas 0.380, rocks 0.743, ore 0.654; "Violet Reach" (a Deep
+Field) reads hue 0.621, gas 0.345, rocks 0.274, ore 0.179.
+
+**WHAT IS STILL MISSING.** The SKYBOX is one cube per sector, so the
+region's colour only tints the plumes -- which are a thin veil over a
+large sky -- and the visible difference between two regions is a few per
+cent of the frame rather than a change of place. Making the sky itself
+regional means either a cube per region (six skyboxes' worth of
+generation and memory) or a hue rotation of the skybox sample in the
+shader. The first is expensive and the second is a real piece of work.
+
+And the field's LIGHT still has only one consumer (the shafts). The
+archetypes' `light` reads as "how lit is this place", and the honest
+place for that is the sun -- which is global -- so the field's version of
+it is the sky's contribution rather than the sun's.
+
 
 29l. The places, the kinds, and the ship's speed
 ----------------------------------------------------

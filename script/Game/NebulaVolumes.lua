@@ -31,6 +31,17 @@ local function foldSeed (seed)
   return (lo ~ hi) & 0xFFFFFFFF
 end
 
+-- Mix two hues the SHORT way round the wheel.
+--
+-- A hue is a position on a circle, so 0.95 and 0.05 are near each other --
+-- and averaging them as numbers gives 0.5, a completely different colour,
+-- on the far side of the wheel from both.
+local function mixHue (a, b, t)
+  local d = (b - a) % 1
+  if d > 0.5 then d = d - 1 end
+  return (a + d * t) % 1
+end
+
 local function hsl2rgb (h, s, l)
   local c = (1 - math.abs(2 * l - 1)) * s
   local hp = (h % 1.0) * 6
@@ -125,15 +136,17 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue, regions)
             if edgeDist <= radius then
 
             local density = (0.8 + hash32(icx, icy, icz, s, off + 5) * 2.2) * cover
-            -- The region's CHARACTER (13f): the gas density comes from the
-            -- same field the rocks and the lightning read, so the three
-            -- cannot disagree about what kind of place this is.
+            -- The region's CHARACTER (13f): the gas density and the gas's
+            -- COLOUR come from the same field the rocks and the lightning
+            -- read, so they cannot disagree about what kind of place this
+            -- is.
+            local field
             if regions and #regions > 0 then
               local Sector = require('Game.Region')
-              local f = Sector.Region.field(regions, px, py, pz)
+              field = Sector.Region.field(regions, px, py, pz)
               -- The archetype's `density` runs 0.18..0.85, so this is a
               -- 0.55x..1.5x multiplier on the plume's own density.
-              density = density * (0.35 + f.density * 1.3)
+              density = density * (0.35 + field.density * 1.3)
             end
             -- Noise frequency: kept coarse enough that the ~290-unit march
             -- step resolves it (finer scales aliased into speckle).
@@ -147,6 +160,19 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue, regions)
               baseHue = (sectorHue + (hash32(icx, icy, icz, s, off + 8) * 0.16 - 0.08)) % 1.0
             else
               baseHue = 0.02 + hash32(icx, icy, icz, s, off + 8) * 0.95
+            end
+
+            -- The region's PALETTE (13f): the plume's hue leans toward the
+            -- region's own hue, so a "Violet Veil" region is actually
+            -- violet and a "Dust Expanse" is actually brown.
+            --
+            -- The blend is PARTIAL on purpose. The Palette Coupling above
+            -- centres the plumes on the skybox's hue so the gas and the sky
+            -- match; replacing that outright would break it, so the
+            -- region's hue TINTS the sky's rather than replacing it. The
+            -- region is a place inside the sector, not a different sector.
+            if field then
+              baseHue = mixHue(baseHue, field.hue, 0.35)
             end
 
             local rimHue = (baseHue + 0.12 + hash32(icx, icy, icz, s, off + 9) * 0.15) % 1.0

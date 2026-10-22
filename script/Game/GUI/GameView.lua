@@ -911,12 +911,25 @@ function GameView:draw (focus, active)
         if sunFade > 1e-3 or godDbg > 0 then
           ShaderVar.PushMatrix('mViewInv', self.camera.mViewInv)
           ShaderVar.PushMatrix('mProjInv', self.camera.mProjInv)
+          -- The region's LIGHT (13f): the archetype's `light` is how lit
+          -- the place is -- "Solar Graveyard: hot haze, strong sun" against
+          -- "Deep Field: quiet, nothing much here". The god rays are the
+          -- sun's shafts, so they are the thing that reads it, and the
+          -- shafts strengthen as you fly into a brighter region.
+          --
+          -- The archetype's `light` runs 0.25..0.70, so this is a
+          -- 0.7x..1.5x multiplier on the player's own strength setting.
+          local strength = Settings.get('postfx.godrays.strength') or 1
+          if self.sectorField then
+            strength = strength * (0.3 + self.sectorField.light * 1.7)
+          end
           self.renderer:godrays({
             starDir  = neb.starDir,
             sunColor = sunCol,
             sunUv    = sunUv,
             sunFade  = sunFade,
             anchors  = self.volumes,
+            strength = strength,
           })
           ShaderVar.Pop('mProjInv')
           ShaderVar.Pop('mViewInv')
@@ -1173,18 +1186,25 @@ function GameView:onUpdate (state)
       if not self.storm then
         self.storm = LightningStorm.new(self.ltheory.seed)
       end
+      -- The environmental field at the camera (13f).
+      --
+      -- Computed ONCE per frame and kept, because two different passes want
+      -- it: the lightning reads the region's storminess, and the god rays
+      -- read the region's light. And it is computed whether or not the
+      -- lightning is on -- a field that only exists when one of its
+      -- consumers happens to be switched on is not a field.
+      local stormField = nil
+      local sregions = self.ltheory.system and self.ltheory.system.sectorRegions
+      if sregions and #sregions > 0 then
+        local Sector = require('Game.Region')
+        stormField = Sector.Region.field(sregions, self.camera.pos.x,
+                                                 self.camera.pos.y,
+                                                 self.camera.pos.z)
+      end
+      self.sectorField = stormField
+
       if Settings.get('lightning.enable') then
         local tNow = (tonumber(Time.GetRaw()) or 0) * 0.001
-        -- The environmental field at the camera (13f): the storm rate reads
-        -- the region's character, so a stormy kind of place storms.
-        local stormField = nil
-        local sregions = self.ltheory.system and self.ltheory.system.sectorRegions
-        if sregions and #sregions > 0 then
-          local Sector = require('Game.Region')
-          stormField = Sector.Region.field(sregions, self.camera.pos.x,
-                                                   self.camera.pos.y,
-                                                   self.camera.pos.z)
-        end
         self.storm:update(state.dt, tNow, {
           volumes   = self.volumes,
           field     = stormField,

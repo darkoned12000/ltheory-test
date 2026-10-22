@@ -1293,7 +1293,9 @@ local volCount = med.anchors and #med.anchors or 0
   -- Must not bind a nil texture (and the shader must skip the anchor loop).
   if not self.texAnchors then volCount = 0 end
   local godA = Settings.get('postfx.godrays.g') or 0.92
-  local strength = Settings.get('postfx.godrays.strength') or 1
+  -- The strength may be OVERRIDDEN by the caller, which is how the
+  -- environmental field scales the shafts by the region's light (13f).
+  local strength = med.strength or (Settings.get('postfx.godrays.strength') or 1)
   local godMode = (Settings.get('postfx.godrays.debug') or 1) - 1
 
   Profiler.Begin('Render.GodRays')
