@@ -2070,6 +2070,79 @@ anywhere. And the market's NPC-to-NPC matching is still cosmetic: the
 traders move order counts, not goods.
 
 
+29m. 13a -- ONE field, and the last subsystem on it
+--------------------------------------------------------
+
+**THE SPACEFIELD MODULE ALREADY EXISTED.** It was written for exactly
+this (commit f8760dc, "the SpaceField -- one shared description of what
+kind of place this is"), with the shared integer hash, a CONTINUOUS
+multi-scale value-noise field, and its own offline validator. What was
+missing was that there were **two fields** that did not know about each
+other:
+
+  * the ARCHETYPE field (13f) -- the region's character, blended across
+    the boundary by the Apollonius membership;
+  * the SPACEFIELD (13a) -- the medium's own texture, at three scales.
+
+So the archetype field said what kind of place a region was, and the
+SpaceField said nothing to anybody. A region was a FLAT TINT: "Violet
+Veil" was one colour and one density everywhere inside it, which is a
+region LIST rather than a field, and the meso scale -- the stuff, the
+variation inside a place -- was in the module and unused.
+
+**THEY ARE NOW ONE FIELD.** The archetype is the MACRO and the
+SpaceField's noise is the MESO, and the field at a position is the
+archetype's value MODULATED by the medium's own texture:
+
+    density x (0.6 + nebulaDensity   x 0.8)
+    rocks   x (0.6 + asteroidDensity x 0.8)
+    ore     x (0.6 + asteroidDensity x 0.8)
+    storm   x (0.5 + stormPotential  x 1.0)
+
+The archetype says what kind of place this is; the noise says how much
+of it there is here. The field is still a PURE FUNCTION of a position
+and the sector -- never of what you did last -- so two visits to the
+same place give the same place (29a: POIs stay put, look-and-feel does
+not change).
+
+**ONE ENTRY POINT.** `System:fieldAt(x, y, z)` is the only way anything
+asks "what kind of place is this", so the subsystems cannot disagree
+about the answer by accident. It is what the rocks, the gas, the dust,
+the lightning and the shafts all go through.
+
+**THE DUST WAS THE LAST ONE.** It is the fourth of the four subsystems
+the SpaceField's own header named as having a private hash scheme of its
+own, and it was the most obviously wrong for it: the same dust, at the
+same density, in every sector, whatever kind of place the player was
+in. The dust now takes the field's dust channel as its amount -- so a
+"Dust Expanse" region is dusty and the clear ones are not.
+
+**MEASURED.** The field is continuous across every boundary (largest
+step 0.0169 between neighbouring samples on a 200-step walk) AND it
+varies inside a region: the rock density ranges 0.226..1.045 over 78
+samples taken inside the regions themselves. That second check is the
+one that distinguishes a field from a region list, and
+`tools/validate_regions.lua` now makes it (17 checks).
+
+**WHAT IS STILL MISSING.** Three of the SpaceField's channels have no
+consumer yet, and they are the ones that need a game system rather
+than a shader:
+
+  * `starVisibility` -- how much of the star field the medium hides. The
+    skybox is ONE cube per sector (which is right: a sector should not
+    change its sky), so this can only be read by the MEDIUM, as an
+    extra extinction on the stars behind the gas.
+  * `turbulence` -- how stirred the medium is. It would drive the
+    plumes' warp, which is a per-anchor uniform the medium already
+    carries.
+  * `radiation` -- there is no radiation mechanic to read it, yet. It is
+    the natural home for a region's hazard: a "Solar Graveyard" that
+    cooks your shields as you cross it.
+
+These are content jobs, not architecture jobs. The ARCHITECTURE is
+done: one field, one entry point, and every subsystem that has
+something to say about a place reading it.
+
 30. Visual "Wow Factor" Stack
 
 The desired experience should build in layers.

@@ -271,7 +271,7 @@ function LTheory:buildGates ()
   -- The sector's regions, for the ENVIRONMENTAL FIELD (13f): the asteroid
   -- field, the nebula and the lightning all read the same function of a
   -- position, so they cannot disagree about what kind of place they are in.
-  if self.system then self.system:setSectorRegions(regions) end
+  if self.system then self.system:setSectorRegions(regions, here.seed) end
 
   -- A PLACE in every region.
   --

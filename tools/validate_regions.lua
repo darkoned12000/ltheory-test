@@ -419,6 +419,11 @@ do
   else
     -- (b) continuity, along every line that crosses a boundary
     local worst, worstWhere = 0, ''
+    -- The seed brings in the MESO half of the field (the shared
+    -- SpaceField's noise), so this checks the field the game actually
+    -- uses: the region's archetype blended across the boundary, times
+    -- the medium's own texture.
+    local seedForField = RegionMod.seedFor(GALAXY, 0)
     -- Fine sampling on purpose. A CONTINUOUS field's step between two
     -- samples shrinks with the sample spacing, while a SWITCHING field's
     -- step does not -- so the finer the sampling, the better the check
@@ -434,7 +439,7 @@ do
           local x = a.center.x + (b.center.x - a.center.x) * t
           local y = a.center.y + (b.center.y - a.center.y) * t
           local z = a.center.z + (b.center.z - a.center.z) * t
-          local f = Region.field(regions, x, y, z)
+          local f = Region.field(regions, x, y, z, seedForField)
           if prev then
             local step = math.max(math.abs(f.density - prev.density),
                                   math.abs(f.storm - prev.storm),
@@ -456,6 +461,31 @@ do
     check('the field is continuous across every boundary',
       worst < 0.08,
       string.format('largest step %.4f (%s)', worst, worstWhere))
+
+    -- (b2) the field VARIES INSIDE a region.
+    --
+    -- The archetype is the MACRO -- what kind of place this is -- and the
+    -- shared SpaceField's noise is the MESO -- how much of it there is
+    -- here. Without the meso a region is a flat tint, and the whole
+    -- difference between a field and a region list is gone.
+    local seed2 = RegionMod.seedFor(GALAXY, 0)
+    local lo2, hi2, samples = 1, 0, 0
+    for _, r in ipairs(regions) do
+      for k = 0, 12 do
+        local a = k * 0.4
+        local f = Region.field(regions,
+          r.center.x + math.cos(a) * 3000, r.center.y, r.center.z + math.sin(a) * 3000,
+          seed2)
+        if f.rocks < lo2 then lo2 = f.rocks end
+        if f.rocks > hi2 then hi2 = f.rocks end
+        samples = samples + 1
+      end
+    end
+    check('the field varies INSIDE a region, not just between them',
+      (hi2 - lo2) > 0.05,
+      string.format('the rock density ranges %.3f..%.3f over %d samples inside the regions',
+        lo2, hi2, samples))
+
 
     -- (c) the regions differ
     local lo, hi = 1, 0

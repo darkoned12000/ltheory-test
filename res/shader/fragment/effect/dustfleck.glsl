@@ -8,6 +8,9 @@ layout(location = 0) out vec4 fragColor;
 
 uniform float speed; // Ship speed in m/s from C++/Lua emitter
 
+// How much dust there is HERE (13a) -- the field's dust density.
+uniform float dustAmount;
+
 void main() {
   float dist = length(pos - eye);
 
@@ -32,5 +35,5 @@ void main() {
   c = c / lC;
   c *= sqrt(c);
 
-  fragColor = vec4(c * alpha, 1.0);
+  fragColor = vec4(c * alpha * dustAmount, 1.0);
 }

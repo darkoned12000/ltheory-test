@@ -1193,14 +1193,10 @@ function GameView:onUpdate (state)
       -- read the region's light. And it is computed whether or not the
       -- lightning is on -- a field that only exists when one of its
       -- consumers happens to be switched on is not a field.
-      local stormField = nil
-      local sregions = self.ltheory.system and self.ltheory.system.sectorRegions
-      if sregions and #sregions > 0 then
-        local Sector = require('Game.Region')
-        stormField = Sector.Region.field(sregions, self.camera.pos.x,
-                                                 self.camera.pos.y,
-                                                 self.camera.pos.z)
-      end
+      local stormField = self.ltheory.system
+                          and self.ltheory.system:fieldAt(self.camera.pos.x,
+                                                          self.camera.pos.y,
+                                                          self.camera.pos.z)
       self.sectorField = stormField
 
       if Settings.get('lightning.enable') then

@@ -515,17 +515,17 @@ Region.weightsAt = weightsAt
   field lands in a clear void or a storm finds nothing to storm in, purely
   by chance.
 ---------------------------------------------------------------------------]]
-function Region.field (regions, x, y, z)
+function Region.field (regions, x, y, z, seed)
   local w = weightsAt(regions, x, y, z)
   if #w == 0 then
     -- No region at all (past every reach). The field is empty, not zeroed
     -- arbitrarily: the callers scale a BASE by the field, and an empty
     -- field means "no character here", which is the honest answer.
     return { density = 0, storm = 0, light = 0, rocks = 0, ore = 0,
-             hue = 0.5, region = nil, weights = w }
+             dust = 0.5, hue = 0.5, region = nil, weights = w }
   end
 
-  local density, storm, light, rocks, ore = 0, 0, 0, 0, 0
+  local density, storm, light, rocks, ore, dust = 0, 0, 0, 0, 0, 0.5
   -- The hue blends as a VECTOR, not as a number. A hue is a position on a
   -- wheel, so 0.95 and 0.05 are near each other, and averaging them as
   -- numbers gives 0.5 -- a completely different colour, on the far side
@@ -558,12 +558,41 @@ function Region.field (regions, x, y, z)
     hue = (math.atan2(hy, hx) / 6.2831853) % 1.0
   end
 
+  -- The MESO detail (13a).
+  --
+  -- Above is the MACRO: the region's archetype, blended across the
+  -- boundary. This is the detail inside it, and it comes from the shared
+  -- SpaceField -- the one deterministic field every subsystem reads.
+  --
+  -- Without it a region is a FLAT TINT: "Violet Veil" is one colour, one
+  -- density, everywhere inside it, which is a region LIST rather than a
+  -- field. With it, a region has character AND variety -- a belt whose
+  -- rockiness swells and fades as you cross it, rather than a flat
+  -- multiplier over the whole sector.
+  --
+  -- The noise is a MODULATION around the macro, not a replacement for it:
+  -- the archetype says what kind of place this is, and the noise says how
+  -- much of it there is here.
+  if seed then
+    local SpaceField = require('Game.SpaceField')
+    local m = SpaceField.sample(x, y, z, seed)
+    density = density * (0.6 + m.nebulaDensity   * 0.8)
+    rocks   = rocks   * (0.6 + m.asteroidDensity * 0.8)
+    ore     = ore     * (0.6 + m.asteroidDensity * 0.8)
+    storm   = storm   * (0.5 + m.stormPotential  * 1.0)
+    -- The DUST is the one channel with no archetype behind it: it is purely
+    -- the medium's own texture, so it takes the SpaceField's dust channel
+    -- directly.
+    dust    = m.dustDensity
+  end
+
   return {
     density = density,
     storm   = storm,
     light   = light,
     rocks   = rocks,
     ore     = ore,
+    dust    = dust,
     hue     = hue,
     -- The DOMINANT region: the one you are "in" for the HUD's purposes.
     -- It is the same rule the map and the panel already use, so the field

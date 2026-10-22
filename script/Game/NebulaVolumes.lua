@@ -143,7 +143,7 @@ function NebulaVolumes.build (seed, pos, radius, sectorHue, regions)
             local field
             if regions and #regions > 0 then
               local Sector = require('Game.Region')
-              field = Sector.Region.field(regions, px, py, pz)
+              field = Sector.Region.field(regions, px, py, pz, seed)
               -- The archetype's `density` runs 0.18..0.85, so this is a
               -- 0.55x..1.5x multiplier on the plume's own density.
               density = density * (0.35 + field.density * 1.3)

@@ -13,6 +13,10 @@ layout(location = 0) out vec4 fragColor;
 uniform sampler2D texDepth;
 uniform vec3 sunColor;
 
+// How much dust there is HERE (13a). The field's dust density, so a dusty
+// region is dusty and a clear one is not.
+uniform float dustAmount;
+
 // Henyey-Greenstein phase function for forward star scattering
 float hgPhase(float cosTheta, float g) {
   float g2 = g * g;
@@ -53,6 +57,6 @@ void main() {
     a *= depthFade;
   }
 
-  fragColor = vec4(linear(c), a);
+  fragColor = vec4(linear(c), a * dustAmount);
   FRAGMENT_CORRECT_DEPTH;
 }

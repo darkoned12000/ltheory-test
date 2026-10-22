@@ -90,11 +90,18 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
 
 ## Vastness & atmosphere systems
 13. **Procedural streaming + LOD crossfade for endless sectors (atmosphere / vastness)** — Endless sector streaming with frustum + distance culling, LOD crossfading (`VisibleLodMesh`), and horizon fading. (The "distance haze pass" this used to name was REMOVED — it hazed by depth alone, modelling an unbounded exponential atmosphere, so it applied ~50% of haze to a planet 137k away across ~120k of vacuum and halved the planet's local contrast. The volumetric pass already scatters correctly, over the medium that actually exists. See `ltheory-planets.md` §11.6.) The asteroid field already streams per chunk with a fragment-discard curtain; what is left is the near/mid/far representation tiers and the crossfade.
-    - **13a the shared SpaceField** — the load-bearing idea of
-      `procedural-space-environment.md` and the biggest open item in it: one
-      deterministic environmental field that the nebula, the asteroids, the
-      dust and the lightning all read, so a rock field can never land in a
-      clear void by chance.
+    - **13a the shared SpaceField** — ✅ **done**. The `SpaceField` module
+      (the shared hash, a continuous multi-scale value-noise field) was
+      written for this and existed; what was missing was that there were TWO
+      fields that did not know about each other. They are now ONE: the
+      archetype is the MACRO and the SpaceField's noise is the MESO, so a
+      region has character *and* variety inside it, and `System:fieldAt` is
+      the only way anything asks "what kind of place is this" — the gas,
+      the rocks, the dust, the lightning and the shafts all go through it.
+      Three channels still have no consumer, and they need a game system
+      rather than a shader: `starVisibility` (the medium's extinction of
+      the stars), `turbulence` (the plumes' warp) and `radiation` (a
+      region's hazard).
     - **13f region personality** — ✅ **done**. The regions now have a FIELD:
       the archetype's gas density, storminess, light, rock count and ore,
       blended across the boundary by the Apollonius membership (so the

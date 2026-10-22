@@ -22,12 +22,15 @@ local System = subclass(Entity, function (self, seed)
   local starAngle = self.rng:getDir2()
   self.starDir = Vec3f(starAngle.x, 0, starAngle.y)
   self.nebula = Nebula(self.rng:get64(), self.starDir)
-  self.dust = Dust()
+  -- The dust asks the SYSTEM for the field (13a): it is the last of the
+  -- four subsystems that had a private stream of its own.
+  self.dust = Dust(self)
 
   self.players = {}
   self.zones = {}
 
-  -- The current sector's REGIONS, for the environmental field (13f).
+  -- The current sector's REGIONS and SEED, for the environmental field
+  -- (13a/13f).
   --
   -- The field is a function of a position and the regions, so anything that
   -- wants to know "what kind of place is this" needs the regions. They are
@@ -35,6 +38,7 @@ local System = subclass(Entity, function (self, seed)
   -- sector's lifetime -- which is what lets the asteroid field bake a
   -- chunk's density in at generation time and never revisit it.
   self.sectorRegions = nil
+  self.sectorSeed = nil
 
   -- Keep local-light discovery proportional to the number of lights, not the
   -- total number of System children (which includes thousands of asteroids).
@@ -271,10 +275,27 @@ end
   never touched and the world stays reproducible. See the module header for why
   the old clump-from-`rng:choose(children)` approach could not be streamed.
 ]]
--- The sector's regions, for the environmental field (13f). The app calls
--- this when the sector changes.
-function System:setSectorRegions (regions)
+-- The sector's regions and seed, for the environmental field (13a). The app
+-- calls this when the sector changes.
+function System:setSectorRegions (regions, seed)
   self.sectorRegions = regions
+  self.sectorSeed = seed
+end
+
+-- THE FIELD (13a).
+--
+-- One entry point, so that every subsystem that asks "what kind of place is
+-- this" gets the SAME answer: the rocks, the gas, the dust, the lightning
+-- and the shafts all come through here.
+--
+-- The field is a function of a position and the sector -- never of what
+-- you did last, or of how you got here -- so two visits to the same place
+-- give the same place (29a: POIs stay put, look-and-feel does not
+-- change).
+function System:fieldAt (x, y, z)
+  if not self.sectorRegions or #self.sectorRegions == 0 then return nil end
+  local Region = require('Game.Region')
+  return Region.Region.field(self.sectorRegions, x, y, z, self.sectorSeed)
 end
 
 function System:streamAsteroidField (ship)

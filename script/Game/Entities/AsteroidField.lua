@@ -253,10 +253,10 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
   -- sector.
   local rockScale = 1
   local oreChance = 0
-  local regions = self.system and self.system.sectorRegions
-  if regions and #regions > 0 then
-    local Sector = require('Game.Region')
-    local f = Sector.Region.field(regions, ox + cs * 0.5, oy + cs * 0.5, oz + cs * 0.5)
+  -- THE FIELD (13a): one entry point, so the rocks cannot disagree with
+  -- the gas or the lightning about what kind of place this is.
+  local f = self.system and self.system:fieldAt(ox + cs * 0.5, oy + cs * 0.5, oz + cs * 0.5)
+  if f then
     -- The archetype's `rocks` runs 0.15..0.95, so this is a 0.55x..1.6x
     -- multiplier: a belt is about three times rockier than a deep field.
     rockScale = 0.35 + f.rocks * 1.3

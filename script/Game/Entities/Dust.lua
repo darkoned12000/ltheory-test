@@ -2,7 +2,10 @@ local Seed = require('Game.Seed')
 
 local kFleckDistance = 1024
 
-local Dust = class(function (self) end)
+-- The SYSTEM, so the dust can ask it for the environmental field (13a).
+local Dust = class(function (self, system)
+  self.system = system
+end)
 
 function Dust:forceLoad ()
   if self.clouds then return end
@@ -41,6 +44,24 @@ end
 
 local mIdentity = Matrix.Identity()
 
+-- How much dust there is HERE (13a).
+--
+-- The dust is the last of the four subsystems that had a private stream of
+-- its own (the nebula, the rocks and the lightning now all read the shared
+-- field), and it is the one that was most obviously wrong for it: the same
+-- dust in every sector, at the same density, whatever kind of place the
+-- player was in.
+--
+-- The field's dust channel is the medium's own texture, so a "Dust Expanse"
+-- region is dusty and the clear ones are not.
+function Dust:amountAt (x, y, z)
+  local system = self.system
+  if not (system and system.fieldAt) then return 1 end
+  local f = system:fieldAt(x, y, z)
+  if not f then return 1 end
+  return 0.25 + (f.dust or 0.5) * 1.5
+end
+
 function Dust:render (state)
   self:forceLoad()
   if state.mode == BlendMode.Alpha then
@@ -51,6 +72,7 @@ function Dust:render (state)
     shader:start()
     Shader.SetFloat3('axis', up.x, up.y, up.z)
     Shader.SetFloat2('size', 64, 64)
+    Shader.SetFloat('dustAmount', self:amountAt(cam.pos.x, cam.pos.y, cam.pos.z))
     Shader.SetMatrix('mWorld', mIdentity)
     self.clouds:draw()
     shader:stop()
@@ -69,6 +91,10 @@ function Dust:render (state)
       Shader.SetFloat2('size', 2.0, 0.1 * min(1000.0, vl))
       Shader.SetFloat3('axis', vn.x, vn.y, vn.z)
       Shader.SetFloat('speed', vl)
+      -- The flecks branch has no `cam` local of its own, so ask the camera
+      -- directly.
+      local cam2 = Camera.get()
+      Shader.SetFloat('dustAmount', self:amountAt(cam2.pos.x, cam2.pos.y, cam2.pos.z))
       self.flecks:draw()
       shader:stop()
     end
