@@ -341,6 +341,24 @@ end
 function HUD:controlThrust (e)
   if not e:hasThrustController() then return end
   local c = e:getThrustController()
+
+  -- A SCREEN TAKES THE SHIP WITH IT.
+  --
+  -- The UI's input is captured by a modal screen (the canvas's modalFocus
+  -- gives it the mouse and the keyboard), but the ship's thrust is read
+  -- straight from the key bindings here -- it is not part of the UI input
+  -- tree -- so without this the ship would fly on under the menu.
+  --
+  -- This is the one place that check lives, so every screen gets it.
+  local blocked = self.ltheory and self.ltheory.anyScreenOpen
+                 and self.ltheory:anyScreenOpen()
+  if blocked then
+    c:setThrust(0, 0, 0, 0, 0, 0, 0)
+    self.aimX = 0
+    self.aimY = 0
+    return
+  end
+
   c:setThrust(
     ShipBindings.ThrustZ:get(),
     ShipBindings.ThrustX:get(),
@@ -361,7 +379,10 @@ function HUD:controlTurrets (e)
     targetVel = target:getVelocity()
   end
 
-  local firing   = ShipBindings.Fire:get() > 0 and 1 or 0
+  -- The turrets are the ship's too: a screen takes them with it.
+  local screenUp = self.ltheory and self.ltheory.anyScreenOpen
+                    and self.ltheory:anyScreenOpen()
+  local firing   = (not screenUp) and ShipBindings.Fire:get() > 0 and 1 or 0
   local camera   = self.gameView.camera
   -- Reticle/turret parity: mouse aims via cursor (turrets along mouseToRay),
   -- controller has no cursor so aims via stick NDC (turrets along ndcToRay).

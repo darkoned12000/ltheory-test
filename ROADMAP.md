@@ -63,6 +63,25 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
      "complete working example" called a `UI.Column` widget that does not
      exist, built sliders with the wrong signature, and drew circles with a
      `Draw.Circle` the engine does not have.
+   - **The MAIN MENU is done (branch `startui`).** It is a full-screen UI
+     layer over the live world -- the world behind it is dimmed and drifts
+     slowly, and the menu is its own page: while it is up the world is not
+     updated, the ship is not flown (the HUD feeds it zeros), and the
+     game's own HUD and panels are hidden. ESC opens and closes it.
+     - The **frame** is `script/Game/GUI/Screen.lua`: a screen is a PAGE.
+       It takes the input (the framework's modal focus, which nothing was
+       using until now), it dims the world, and it fades. ESC closes it for
+       free, because the canvas routes Cancel to the modal screen.
+     - The menu itself (`Game/GUI/MainMenu.lua`) is the old game's splash
+       shape: a title band, a row of entries, and the world behind.
+       NEW GAME rolls a new seed and regenerates the world; CUSTOM GAME
+       takes a seed in hex so a world can be shared; LOAD and SAVE are
+       shown but dimmed, because the save format does not exist yet.
+     - INFO and HELP are popups in their own right (`MenuPanelScreen.lua`)
+       -- the release milestones and how to play.
+     - **The version is the commit count.** `tools/gen_version.py` writes
+       it at build time, so it can never go stale and nobody has to
+       remember to bump it.
    - **There is now a working demo app: `script/App/UI_Demo.lua`**
      (`./run.sh UI_Demo`) — a radar, a reticle with target brackets, ship
      status, flight controls, an inventory and a sector map, built from the

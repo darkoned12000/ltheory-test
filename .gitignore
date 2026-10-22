@@ -44,3 +44,6 @@ screenshot/
 
 # Screenshots the app saves during a session.
 /script/Screenshot_*.png
+
+# The generated version (the commit count) -- written by the build.
+script/Generated/

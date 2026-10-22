@@ -821,9 +821,19 @@ function GameView:draw (focus, active)
   ClipRect.PushTransform(0, 0, uiKx, uiKy)
   local uiScale = Matrix.Scaling(uiKx, uiKy, 1)
   ShaderVar.PushMatrix('mViewUI', uiScale)
-  for i = 1, #self.children do self.children[i]:draw(focus, active) end
-  self:drawLightningUI()   -- same widget-space transform as the HUD
-  self:drawSunMarker()     -- where the scene light actually comes from
+  -- A MENU HIDES THE GAME'S OWN UI.
+  --
+  -- The world is still rendered behind it -- the old game's splash had the
+  -- nebula behind it, and a menu over a black frame looks like a bug --
+  -- but the HUD, the panels and the markers are the GAME's, and the menu
+  -- is the screen the player is looking at.
+  local menuUp = self.ltheory and self.ltheory.anyScreenOpen
+                 and self.ltheory:anyScreenOpen()
+  if not menuUp then
+    for i = 1, #self.children do self.children[i]:draw(focus, active) end
+    self:drawLightningUI()   -- same widget-space transform as the HUD
+    self:drawSunMarker()     -- where the scene light actually comes from
+  end
   ShaderVar.Pop('mViewUI')
   uiScale:free()
   ClipRect.PopTransform()
@@ -1181,6 +1191,22 @@ end
 function GameView:onUpdate (state)
   self.camera:onUpdate(state.dt)
 
+  -- THE MENU CAMERA.
+  --
+  -- While a screen is up the camera drifts, so the world behind the menu
+  -- moves -- the old game's splash had the nebula behind it, and a nebula
+  -- that does not move looks like a photograph. When the screen closes the
+  -- offsets are cleared, so the camera goes back to the ship.
+  local screenUp = self.ltheory and self.ltheory.anyScreenOpen
+                   and self.ltheory:anyScreenOpen()
+  if screenUp then
+    self:updateMenuCamera(state.dt)
+  elseif self.menuT then
+    self.menuT = nil
+    self.camera.posOffset = Vec3f()
+    self.camera.rotOffset = Quat.Identity()
+  end
+
   do -- Lightning storm schedule (vapor-gated, off = no-op)
     if self.ltheory then
       if not self.storm then
@@ -1261,6 +1287,27 @@ function GameView:onUpdate (state)
   end
 
   self.camera:pop()
+end
+
+--[[ The menu camera.
+
+  A menu over a still frame looks like a still frame. The old game's splash
+  had the nebula behind it, and the nebula moved.
+
+  The chase camera owns the frame's pose -- `pos = posOffset + posT` and
+  `rot = rotOffset * rotT` -- and the controllers do not own the OFFSET
+  terms, so the drift goes there: a slow orbit around the ship and a slow
+  yaw, which moves the medium's structure across the frame.
+]]
+function GameView:updateMenuCamera (dt)
+  self.menuT = (self.menuT or 0) + dt
+  local t = self.menuT
+  local a = t * 0.05
+  self.camera.posOffset = Vec3f(math.cos(a) * 260,
+                                120 + math.sin(a * 0.6) * 70,
+                                math.sin(a) * 260)
+  self.camera.rotOffset = Quat.FromAxisAngle(Vec3f(0, 1, 0),
+                                              math.sin(t * 0.04) * 0.10)
 end
 
 function GameView:onUpdateChildren (state)

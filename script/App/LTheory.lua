@@ -6,6 +6,29 @@ local SectorGraph = require('Game.SectorGraph')
 
 local LTheory = Application()
 
+-- A seed is a 64-bit number, and it is entered in hex.
+--
+-- It cannot be parsed with `tonumber(hex, 16)`: that returns a DOUBLE, and
+-- a double holds 53 bits, so the low eleven bits of the seed would be
+-- rounding noise and the same seed would not always make the same world.
+-- It cannot be parsed with `ffi.cast('uint64_t', '0x...')` either -- the
+-- FFI's constant parser mangles a 64-bit hex literal. So it is built from
+-- two halves, each of which fits in a double exactly.
+local function seedFromHex (hex)
+  hex = hex:gsub('%s', ''):upper()
+  if #hex < 1 or #hex > 16 then return nil end
+  if hex:match('[^0-9A-F]') then return nil end
+  local hi = #hex > 8 and tonumber(hex:sub(1, #hex - 8), 16) or 0
+  local lo = tonumber(hex:sub(-8), 16)
+  return ffi.cast('uint64_t', hi) * 0x100000000ULL + lo
+end
+
+-- The seed as hex, for showing it.
+local function seedToHex (seed)
+  if seed == nil then return '' end
+  return string.format('%016X', seed)
+end
+
 function LTheory:generate ()
   -- Resolve the world seed FIRST and publish it: everything created below --
   -- and later, by entities -- derives its randomness from it, so this boot's
@@ -171,6 +194,15 @@ end
 function LTheory:onInit ()
   self.player = Entities.Player()
 
+  -- THE VERSION IS THE COMMIT COUNT.
+  --
+  -- The build writes it (tools/gen_version.py); the file is generated, so
+  -- a checkout that has not been built falls back to a placeholder rather
+  -- than failing to start.
+  local okVer, Version = pcall(require, 'Generated.Version')
+  self.version = (okVer and Version.version) or 'v0.dev'
+  self.commitCount = (okVer and Version.count) or 0
+
   do
     local w = self.window:getSize()
     local fontScale = Math.Clamp(w.y / 900, 0.7, 1.8)
@@ -202,6 +234,107 @@ function LTheory:onInit ()
   self.gameView.debugWindow = self.debugWindow
   self.gameView:add(self.debugWindow:setStretch(0, 1), Config.debug.window)
 
+  -- The screens: full-screen UI layers over the world (see
+  -- script/Game/GUI/Screen.lua). The main menu is the first one, and it
+  -- is the front door -- the old game opened on its splash too.
+  --
+  -- It is NOT opened in a capture: a capture wants the scene, and the
+  -- menu would sit over every captured frame.
+  self.screens = {}
+  if not os.getenv('PHX_FIXED_VIEW') then
+    -- The main menu, and the three popups it opens. They are all screens
+    -- in their own right -- separate pages that take the input -- and all
+    -- of them are added to the CANVAS, not to the game view: the canvas
+    -- draws its children in the order they were added, so a screen added
+    -- after the game view draws over it.
+    self.menu = GUI.MainMenu.Create({
+      version      = self.version,
+      onClose      = function () end,
+      onNewGame    = function () self:newGame() end,
+      onCustomGame = function () self:openPopup(self.customGamePopup) end,
+      onInfo       = function () self:openPopup(self.infoPopup) end,
+      onHelp       = function () self:openPopup(self.helpPopup) end,
+      onExit       = function () self:quit() end,
+    })
+    self.canvas:add(self.menu)
+    self.screens[#self.screens + 1] = self.menu
+
+    -- INFO: the release milestones.
+    self.infoPopup = GUI.MenuPanelScreen.Create({
+      title   = 'RELEASE MILESTONES',
+      onClose = function () self:openMenu() end,
+    })
+    self.infoPopup:addLine('LIMIT THEORY REBOOT -- where the game has got to',
+      Color(0.62, 0.72, 0.86, 1.0))
+    self.infoPopup:addLine('')
+    self.infoPopup:addLine('REACHED', Color(0.45, 0.80, 1.0, 1.0))
+    self.infoPopup:addLine('  sectors      a named, seeded place, and a map that knows where you are')
+    self.infoPopup:addLine('  regions      named volumes with exact boundaries, and a field that')
+    self.infoPopup:addLine('               decides what each place feels like')
+    self.infoPopup:addLine('  jumpgates    travel between sectors; the sector rebuilds from its seed')
+    self.infoPopup:addLine('  warp lanes   the fast way to the places')
+    self.infoPopup:addLine('  the market   mine the belts, sell at the rig, buy what you need')
+    self.infoPopup:addLine('  the ship     500 u/s, 1000 boosting')
+    self.infoPopup:addLine('')
+    self.infoPopup:addLine('NEXT', Color(0.45, 0.80, 1.0, 1.0))
+    self.infoPopup:addLine('  the station screen -- a real interface at the dock')
+    self.infoPopup:addLine('  save and load')
+    self.infoPopup:addLine('  settings, and the rest of the game screens')
+    self.infoPopup:addLine('  more of the universe')
+    self.infoPopup:addCloseButton()
+    self.canvas:add(self.infoPopup, false)
+    self.screens[#self.screens + 1] = self.infoPopup
+
+    -- HELP: how to play.
+    self.helpPopup = GUI.MenuPanelScreen.Create({
+      title   = 'HOW TO PLAY',
+      onClose = function () self:openMenu() end,
+    })
+    self.helpPopup:addLine('W A S D     thrust and steer', Color(0.62, 0.72, 0.86, 1.0))
+    self.helpPopup:addLine('SHIFT       boost')
+    self.helpPopup:addLine('SPACE+MOUSE aim')
+    self.helpPopup:addLine('F           dock at a station')
+    self.helpPopup:addLine('R / T       sell / buy at the market')
+    self.helpPopup:addLine('T / G       lock / clear a target')
+    self.helpPopup:addLine('F10         the map')
+    self.helpPopup:addLine('F9          the settings panel')
+    self.helpPopup:addLine('ESC         this menu')
+    self.helpPopup:addLine('')
+    self.helpPopup:addLine('Fly out through a jumpgate, or ride a warp lane to the nearest')
+    self.helpPopup:addLine('place. Mine the belts, sell at the rig, and buy what you need.')
+    self.helpPopup:addCloseButton()
+    self.canvas:add(self.helpPopup, false)
+    self.screens[#self.screens + 1] = self.helpPopup
+
+    -- CUSTOM GAME: a seed you type, so a world can be shared.
+    self.customGamePopup = GUI.MenuPanelScreen.Create({
+      title   = 'CUSTOM GAME',
+      onClose = function () self:openMenu() end,
+    })
+    self.customGamePopup:addLine('Type a seed in hex -- sixteen digits, and the same seed',
+      Color(0.62, 0.72, 0.86, 1.0))
+    self.customGamePopup:addLine('always makes the same galaxy, the same sectors and the')
+    self.customGamePopup:addLine('same places.')
+    self.seedField = UI.TextInput.Create(16, seedToHex(self.seed))
+    self.seedField.onSubmit = function (text)
+      self:newGame(text)
+    end
+    self.customGamePopup.content:add(self.seedField)
+    local startRow = UI.Grid():setCols(1):setAlign(0.5, 0)
+    startRow:setStretch(0, 0)
+    startRow:add(UI.MenuButton.Create('START', function ()
+      self:newGame(self.seedField:getText())
+    end))
+    self.customGamePopup.content:add(startRow)
+    self.customGamePopup:addCloseButton()
+    self.canvas:add(self.customGamePopup, false)
+    self.screens[#self.screens + 1] = self.customGamePopup
+
+    self.menu:open()
+    self.screenWasOpen = true
+
+  end
+
   -- Node-graph overlay (§13): hidden until F10. Phase 2 seeds live system
   -- data (replaces the old demo scaffold); focusEntity marks the player's
   -- ship as the white node.
@@ -222,6 +355,80 @@ end
 
 function LTheory:onInput ()
   self.canvas:input()
+
+  -- ESC TOGGLES THE MENU.
+  --
+  -- The canvas routes Cancel (ESC, right-click) to the modal screen, so a
+  -- screen that is up closes itself -- that happens in the canvas:input
+  -- above, before this line. So the question here is not "is a screen
+  -- open?" but "was one open when this frame's ESC arrived?", and the
+  -- answer is the state captured at the end of the last frame. Asking now
+  -- would always say no (the canvas has just closed it) and the menu
+  -- would open on the very key that closed it.
+  if Input.GetPressed(Button.Keyboard.Escape) and not self.screenWasOpen then
+    self:openMenu()
+  end
+end
+
+-- Open the main menu. The world keeps running behind it -- dimmed and
+-- drifting -- so the menu has the game behind it rather than a black
+-- frame.
+function LTheory:openMenu ()
+  if self.menu and not self.menu:isOpen() then
+    self.menu:open()
+  end
+end
+
+-- Open one of the menu's popups. It is a screen in its own right, so it
+-- takes the input; when it closes, the menu takes it back.
+function LTheory:openPopup (popup)
+  if popup and not popup:isOpen() then
+    popup:open()
+  end
+end
+
+--[[ NEW GAME -- a new seed, and a new world from it.
+
+  `generate()` is the world's constructor: it deletes the old system, makes
+  a new one, spawns a ship, lays out the galaxy and builds the gates. The
+  seed comes from Config.gen.seedGlobal when one is pinned, and from the
+  clock otherwise -- so a NEW GAME clears the pinned seed and takes a new
+  one, which is the whole point of the entry.
+
+  Everything that was built FROM the old world has to be rebuilt: the
+  sector's planet and sky, and the map's reference to the system.
+]]
+function LTheory:newGame (seedHex)
+  -- A new seed. The pinned one is the debug panel's, not the player's --
+  -- unless the player typed one, in which case it is theirs and it is
+  -- kept: the same seed must always make the same galaxy.
+  local seed = seedHex and #seedHex > 0 and seedFromHex(seedHex) or nil
+  if seed then
+    Config.gen.seedGlobal = seed
+  else
+    Config.gen.seedGlobal = nil
+  end
+  self:generate()
+  self:regenerateSectorContent(0)
+
+  if self.nodeGraph then
+    self.nodeGraph.system = self.system
+    self.nodeGraph.focusEntity = self.player and self.player:getControlling()
+  end
+
+  -- The menu goes away and the game starts: the world behind it is the
+  -- world they are about to fly into.
+  if self.menu then self.menu:close() end
+end
+
+-- Is a screen up? The ship's controls are read straight from the key
+-- bindings (not through the UI input tree), so a screen has to ask for
+-- them to be ignored -- and that check lives in one place, the HUD.
+function LTheory:anyScreenOpen ()
+  for _, screen in ipairs(self.screens or {}) do
+    if screen:isOpen() then return true end
+  end
+  return false
 end
 
 --[[---------------------------------------------------------------------------
@@ -547,6 +754,23 @@ function LTheory:enterSector (index, ship)
 end
 
 function LTheory:onUpdate (dt)
+  -- The state the ESC toggle reads next frame (see LTheory:onInput).
+  self.screenWasOpen = self:anyScreenOpen()
+
+  -- THE MOUSE BELONGS TO THE APP WHILE A SCREEN IS UP.
+  --
+  -- Not to a screen: a popup closing would otherwise hide the cursor
+  -- while the menu behind it was still there, and the player would have to
+  -- move the mouse to get it back.
+  local screenUp = self:anyScreenOpen()
+  if screenUp and not self.__mouseUp then
+    self.__mouseUp = true
+    Input.SetMouseVisible(true)
+  elseif not screenUp and self.__mouseUp then
+    self.__mouseUp = false
+    Input.SetMouseVisible(false)
+  end
+
   -- TEMP: headless settings snapshot.
   if os.getenv('PHX_DUMP_SETTINGS') and not self.__dumped then
     self.__dumped = true
@@ -554,8 +778,16 @@ function LTheory:onUpdate (dt)
   end
   -- getRoot() is nil with no controlling ship, and a DESTROYED ship detaches
   -- from the tree (no `update`). Guard so a bad spawn can't kill the process.
+  -- THE GAME IS PAUSED BEHIND A MENU.
+  --
+  -- A menu is its own page: the world does not run while it is up. The
+  -- ship does not fly (the HUD feeds it zeros), and nothing else moves
+  -- either -- the rocks, the market, the gates. What still runs is the
+  -- camera drift, which is the camera's, not the world's: the menu has to
+  -- have something alive behind it.
+  local paused = self:anyScreenOpen()
   local root = self.player and self.player:getRoot()
-  if root and root.update then root:update(dt) end
+  if not paused and root and root.update then root:update(dt) end
   -- Atmosphere bubble: push the ship back out of planet atmospheres before it
   -- can grind the surface (see System:handleAtmosphere).
   local ship = self.player and self.player:getControlling()

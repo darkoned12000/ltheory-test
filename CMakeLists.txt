@@ -26,6 +26,24 @@ target_include_directories (lt PRIVATE ${CMAKE_SOURCE_DIR}/libphx/include)
 target_compile_definitions (lt PRIVATE DEBUG=0)
 target_link_libraries (lt phx)
 
+# --- The version: the number of commits -------------------------------------
+# The version IS the commit count. The project has no release numbering, and
+# a version number is one more thing somebody has to remember to bump; a
+# number that changes every time something is committed cannot go stale.
+#
+# It is written into a generated Lua module the app reads at boot. The file
+# is generated, not committed -- the app falls back to "v0.dev" if it is
+# missing, so a checkout without a build still runs.
+set (PHX_VERSION_FILE "${CMAKE_SOURCE_DIR}/script/Generated/Version.lua")
+add_custom_command(
+  OUTPUT "${PHX_VERSION_FILE}"
+  COMMAND "${PHX_VALIDATOR_PY}" "${CMAKE_SOURCE_DIR}/tools/gen_version.py" "${PHX_VERSION_FILE}"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Writing the version (the commit count)"
+  VERBATIM)
+add_custom_target(phx_version DEPENDS "${PHX_VERSION_FILE}")
+add_dependencies(lt phx_version)
+
 # --- Build-time shader validation gate --------------------------------------
 add_custom_target (phx_validate_glsl
   COMMAND "${PHX_VALIDATOR_PY}" tools/validate_glsl.py 460
