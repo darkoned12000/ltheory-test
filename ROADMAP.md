@@ -55,6 +55,23 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
 ## Content & gameplay
 7. **Procedural content expansion**: L-system stations, SDF planets with biome terrain, procedural nebulae, procedural sky/env cubemaps.
 8. **Game screens**: Main menu / settings screen app on `script/UI/`.
+   - **The design note is `docs/ltheory-ui-gui-research.md`** — the map of the
+     three GUI systems (HmGui, the engine's own ImGui, and `script/UI/`), the
+     guide to which to use, and the widget API. It was corrected against the
+     code in 2026-10-22: it had claimed the game does not use the UI
+     framework at all (it does — `GameView` extends `UI.Container`), and its
+     "complete working example" called a `UI.Column` widget that does not
+     exist, built sliders with the wrong signature, and drew circles with a
+     `Draw.Circle` the engine does not have.
+   - **There is now a working demo app: `script/App/UI_Demo.lua`**
+     (`./run.sh UI_Demo`) — a radar, a reticle with target brackets, ship
+     status, flight controls, an inventory and a sector map, built from the
+     framework's own widgets over a simulated ship. It is the reference the
+     main menu and the settings screen should be built from, and it is where
+     the layout idiom is written down: a container does not flow its children
+     (use a one-column Grid), a widget that sizes to its content needs
+     `setStretch(0, 0)`, and the canvas places children by `setAlign`
+     fraction.
 15. **Places in the regions** — ✅ **done**. Every region now has a PLACE: a
    station scaled down to an outpost, at the region's centre, named after the
    region and for what it is — a mining RIG in a belt, a YARD with a factory,

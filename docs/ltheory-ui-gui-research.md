@@ -1,4 +1,37 @@
-# LTheory UI/GUI Systems Research Document
+# LTheory UI/GUI Systems — a REFERENCE, not a plan
+
+> **STATUS: OPEN DESIGN NOTE (2026-10-22).** This is the map of the UI stack
+> and the guide to which system to use — not a record of finished work, and
+> not a task list. The work it describes is **ROADMAP item 8 (game screens)**,
+> which is still open: there is no main menu, no settings screen, no radar or
+> inventory in the game yet, only the debug panel.
+>
+> **The example app in this document now exists and runs:**
+> `script/App/UI_Demo.lua` (`./run.sh UI_Demo`) — a radar, a reticle with
+> target brackets, ship status, an inventory and a sector map, built from the
+> framework's own widgets. It is the corrected, working version of the sketch
+> that used to live in §3, and it is what §3 and §4 now point at.
+>
+> **What was wrong with the old version of this document** (it is worth
+> knowing, because every one of these is a trap the framework actually has):
+>
+> | it said | the truth |
+> |---|---|
+> | "the game app does not use any of these GUI systems" | the game **is** a `script/UI` app: `GameView` extends `UI.Container`, and the HUD, the sector readout, the market panel and the map are all framework widgets |
+> | `UI.Container.Create()` | **`Container` has no `Create`** — `Container.__call` forwards to `t.Create`, so a plain container cannot be made that way. Use `UI.Panel('')` |
+> | `UI.Column()` | there is no `Column` widget. To stack things vertically, use a **Grid with one column** |
+> | `UI.Slider(0, 5)` | the signature is `Slider.Create(getFn, setFn, minValue, maxValue)` — the first argument is the *getter* |
+> | `UI.Window(…):setTitle(…)` | there is no `setTitle`; `Window` has a `.title` field |
+> | `UI.Slider .setFormatter(fmt)` | no such method; `Label` has `setFormat` |
+> | `Draw.Circle`, `Draw.CircleOutline` | the engine's `Draw` API is **Line/Rect/Tri only**. The circle helpers are `UI.DrawEx.Ring`, `.Point`, `.Wedge`, `.Cross` |
+> | `RenderState.PopAllDefaults()` | no such call |
+> | `self:super.onDraw(…)` | `super` is not a pattern here; call the parent's method explicitly: `UI.Window.onDraw(self, focus, active)` |
+> | `state.dt` inside `onDraw(focus, active)` | `onDraw` gets no state — `dt` arrives in `onUpdate(state)` |
+> | `canvas:input(state)` / `canvas:update({dt = dt})` | `Canvas:input()` takes no arguments and `Canvas:update(dt)` takes a number |
+> | the OptionSlider is given a string | it works in **INDICES**: `elems[value]`. A string there is a type error in `onUpdate` — the same trap `Settings.addEnum` fell into |
+>
+> Sections below are corrected where they were wrong, and left alone where
+> they were right.
 
 ## Executive Summary
 
@@ -8,7 +41,12 @@ The LTheory engine provides **three distinct GUI/UI systems**:
 2. **ImGui** — Homegrown immediate-mode GUI (engine core) used by `TestImGui.lua` and `RenderTest.lua`
 3. **script/UI/** — Lua-based retained-mode widget framework (the primary game UI system, used by `DebugWindow.lua`)
 
-The main LTheory game app (`LTheory.lua`) does **NOT** use any of these GUI systems directly — it only uses the camera chase/orbit view. The Debug window is a separate entity opened with F9.
+The main LTheory game app **does** use the third one. `GameView` extends
+`UI.Container`, and the HUD, the sector/region readout, the market panel at
+the dock and the sector map are all framework widgets (see
+`script/Game/GUI/GameView.lua`, `script/Game/Controls/HUD.lua`,
+`script/Game/Controls/DockControl.lua`, `script/UI/SectorPanel.lua`). The
+Debug window (F9) is a `UI.Window`. The first two systems are test-only.
 
 ---
 
@@ -77,13 +115,15 @@ self.style->colorText      = Vec4f_Create(1, 1, 1, 1);        // white text
 | `HmGui_Begin(sx, sy)` | Begin a new frame (resets state) |
 | `HmGui_End()` | End frame: layout + compute focus |
 | `HmGui_Draw()` | Render all accumulated widgets |
-| `HmGui_BeginGroup(layout)` | Create a group (stack/vertical/horizontal) |
+| `HmGui_BeginGroupX()` / `BeginGroupY()` / `BeginGroupStack()` | Create a group (horizontal / vertical / stack) — there is **no** `BeginGroup(layout)` |
 | `HmGui_EndGroup()` | Close the current group |
 | `HmGui_Button(label)` | Create a button, returns true if clicked |
 | `HmGui_Checkbox(label, value)` | Toggle checkbox |
 | `HmGui_Slider(lower, upper, value)` | Slider (currently unused in test) |
-| `HmGui_SetStretch(x, y)` | Stretch factor for children |
-| `Hmgui_PushFont(font)` / `PopStyle(depth)` | Style stack management |
+| `HmGui_SetStretch(x, y)` | Stretch factor for the next children — a plain call, **not** a method on the widget |
+| `HmGui_SetAlign(x, y)` | Alignment for the next children |
+| `HmGui_SetPadding(l, r, t, b)` | Padding for the next children |
+| `HmGui_PushFont(font)` / `PushTextColor(r,g,b,a)` / `PopStyle(depth)` | Style stack management |
 | `HmGui_Image(tex2d*)` | Add a texture image |
 
 ### Layout System
@@ -93,12 +133,12 @@ self.style->colorText      = Vec4f_Create(1, 1, 1, 1);        // white text
 - **Layout_Horizontal**: Children stack horizontally with spacing; vertical stretch applies
 
 ```lua
-HmGui.BeginGroup(Layout_Vertical)  -- equivalent to BeginGroupY()
-  HmGui.SetPadding(8, 4)           -- left/right, top/bottom
+HmGui.BeginGroupY()               -- there is no BeginGroup(layout)
+  HmGui.SetPadding(8, 4)          -- left/right, top/bottom
   HmGui.Text("Hello")
   HmGui.Button("Click me")
-    :SetStretch(1, 0)              -- stretch horizontally only
-Hmgui.EndGroup()
+  HmGui.SetStretch(1, 0)          -- stretch the NEXT children, horizontally only
+HmGui.EndGroup()
 ```
 
 ### Demo App: `TestHmGui.lua` — Full-featured reference
@@ -170,6 +210,13 @@ return Test
 
 ## 2. ImGui (Immediate Mode GUI)
 
+> **This is NOT dear imgui.** `libphx/src/ImGui.cpp` is the engine's own
+> ~40-function homegrown immediate-mode mini-GUI — a cursor stack, buttons,
+> windows, a style stack. It shares a name with the popular library and
+> nothing else. Swapping in dear imgui was assessed and is **not worth it**
+> (see §6): the shipped game UI belongs on `script/UI/`, and this one is
+> test-only.
+
 ### Location
 - C++ source: `libphx/src/ImGui.cpp` + `libphx/include/ImGui.h`
 - Lua bindings: `libphx/script/ffi/ImGui.lua`
@@ -226,9 +273,8 @@ ImGui uses memory pools (`MemPool`) for zero-allocation widget storage:
 | `ImGui_EndWindow()` | Close the current window |
 | `ImGui.Text(label)` / `.TextColored(r,g,b,a,label)` | Text output |
 | `ImGui.ButtonEx(label, width, height)` | Button, returns true if clicked |
-| `ImGui.Checkbox(value)` | Toggle checkbox |
-| `ImGui.Selectable(label)` | Selectable item (like radio button) |
-| `ImGui.Tex2D(tex2d*)` | Draw a texture |
+| `ImGui.Checkbox(value)` | Toggle checkbox — returns the NEW value |
+| `ImGui.Selectable(label)` | Selectable item (like radio button) — returns true when clicked |
 | `ImGui.BeginGroupX(sy)` / `BeginGroupY(sx)` | Begin horizontal/vertical group |
 | `ImGui.EndGroup()` | Close current group |
 | `ImGui.BeginPanel(sx, sy)` | Panel with beveled border (alternative to window) |
@@ -238,8 +284,13 @@ ImGui uses memory pools (`MemPool`) for zero-allocation widget storage:
 | `ImGui.Indent()` / `ImGui.Undent()` | Indent text cursor (nested layout) |
 | `ImGui.Divider()` | Horizontal/vertical divider line |
 | `ImGui_SetCursor(x, y)` | Set absolute cursor position |
-| `ImGui.PushStyleFont(font)*` | Push a custom font |
-| `ImGui.PopStyle(depth)` | Pop N styles from stack |
+| `ImGui.PushStyleFont(font)` | Push a custom font |
+| `ImGui.PopStyle(depth)` | Pop N styles from the stack |
+| `ImGui.SetFont(font)` | Set the font outright |
+
+**There is no `ImGui.Tex2D`** — the engine's ImGui has no texture widget.
+And a button does not take a callback: it **returns** whether it was
+clicked, so the pattern is `if ImGui.ButtonEx("Go", 120, 32) then ... end`.
 
 ### ImGui Demo: `TestImGui.lua` — Market Table Example
 This demonstrates the most useful patterns:
@@ -303,8 +354,9 @@ function Demo:onUpdate(dt)
     ImGui.Text("FPS: " .. string.format("%.1f", 1.0 / dt))
 
     ImGui.SetCursor(20, 40)
-    ImGui.ButtonEx("Start Game", 150, 30)
-      if ImGui.ButtonEx then printf("Button clicked!") end
+    if ImGui.ButtonEx("Start Game", 150, 30) then
+      printf("Button clicked!")
+    end
 
     ImGui.SetSpacing(10, 0)
     ImGui.TextColored("Controls:", 0.9, 0.9, 0.9, 1.0)
@@ -355,9 +407,11 @@ return Demo
 ## 3. The Lua UI Widget Framework (`script/UI/`)
 
 ### Location
-- Core: `script/UI/*.lua` (21 files in `script/UI/`)
+- Core: `script/UI/*.lua` (30 modules)
 - Main entry: `Namespace.Load('UI')` loads all widgets into a global table
-- Used by: `DebugWindow.lua`, `GameView.lua` (children)
+- Used by: `GameView.lua` (which extends `UI.Container`), `HUD.lua`,
+  `DockControl.lua`, `DebugWindow.lua`, and the map (`SectorPanel.lua`,
+  `NodeGraph.lua`)
 
 ### Architecture
 
@@ -393,27 +447,49 @@ All widgets inherit from `UI.Widget`:
 ```lua
 local Widget = require('UI.Widget')
 
--- Custom widget inherits from Container
+-- A custom widget inherits from Widget (leaf) or Container (with children)
 local MyWidget = {}
 MyWidget.__index = MyWidget
-setmetatable(MyWidget, UI.Container)  -- or setmetatable(MyWidget, UI.Widget)
-
-function MyWidget:onDraw(focus, active)
-  local x, y, sx, sy = self:getRectGlobal()
-  Draw.Color(1.0, 0, 0, 0.5)
-  Draw.Rect(x, y, sx, sy)
-end
+setmetatable(MyWidget, Widget)     -- or: setmetatable(MyWidget, UI.Container)
 
 MyWidget.name = 'My Widget'
+MyWidget.focusable = false
 
-function MyWidget.Create(data)
-  local self = setmetatable({}, MyWidget)
-  -- Initialize data here
+function MyWidget.Create (data)
+  local self = setmetatable({ data = data }, MyWidget)
+  self:setStretch(0, 0)           -- size to its content, not to the parent
+  self.desiredSX = 128
+  self.desiredSY = 64
   return self
+end
+
+function MyWidget:onDraw (focus, active)
+  local x, y, sx, sy = self:getRectGlobal()
+  -- DrawEx, NOT the raw Draw API. A raw `Draw.Rect` needs a shader and a
+  -- texture already bound; with none bound it calls Tex2D_GetHandle with a
+  -- null texture and takes the whole process down. DrawEx starts its own
+  -- shader and is always safe.
+  DrawEx.Panel(x, y, sx, sy, Color(1.0, 0.0, 0.0, 0.5), 0.5)
 end
 
 return MyWidget
 ```
+
+**The three layout rules.** These are the ones that actually bite, and the
+working demo (`script/App/UI_Demo.lua`) is built on them:
+
+1. **A container does not flow its children.** `Container:onLayoutPosChildren`
+   hands every child the *same* rect and lets each child's own `align`
+   decide where it lands. Two children that both want the top-left corner
+   land on top of each other. To stack things vertically, use a **Grid with
+   one column**.
+2. **A widget that should size to its content needs `setStretch(0, 0)`.** The
+   default stretch is 1, which means "fill the parent" — so a panel added to
+   the canvas fills the whole screen and the grid inside it spreads its
+   columns across the monitor.
+3. **The canvas is a layout parent.** Its children are placed with
+   `setAlign(ax, ay)` — a *fraction* of the canvas — so a panel sits in the
+   top-right corner at any window size with no pixel positions to maintain.
 
 #### The State Machine (`UI.State`)
 Every widget has an internal state machine for enable/disable transitions:
@@ -445,15 +521,28 @@ Frame Draw:
 
 | Module | Key Properties / Methods |
 |--------|-------------------------|
-| `UI.Widget` | `.name`, `.focusable`, `.draggable`, `.padUniform(x,y,z)` |
-| `UI.Container` | `.add(child, enabled)`, `.remove(child)`, `.isEnabled()` |
-| `UI.Window` | `.title`, `.closeBtn`, `.setModal(bool)`, `.setCloseButton(enabled)` |
-| `UI.Grid` | `.setCols(n)`, `.setRows(n)`, `.setPad(x,y)`, `.setPadCellX(width)` |
-| `UI.ScrollView` | `.setScrollable(h,v)`, `.setPadUniform(padding)` |
-| `UI.Slider` | `.setFormatter(fmt)`, `.getMin()`, `.setMax()` |
+| `UI.Widget` | `.name`, `.focusable`, `.draggable`, `.setPadUniform(x,y)`, `.setStretch(x,y)`, `.setAlign(x,y)`, `.setPos(x,y)`, `.setSize(sx,sy)`, `.setMinWidth(w)`, `.getRectGlobal()` |
+| `UI.Container` | `.add(child, enabled)`, `.remove(child)`, `.isEnabled()`. **No `Create`** — use `UI.Panel('')` for a plain container |
+| `UI.Panel` | `.Create(name, modal, onCancel)`, `.setModal(bool)`, `.setOnCancel(fn)`. Draws nothing by itself |
+| `UI.Window` | `.title` (a FIELD, not `setTitle`), `.closeBtn`, `.setCloseButton(enabled)`, `.setModal(bool)`, draggable |
+| `UI.Grid` | `.setCols(n)`, `.setRows(n)`, `.setPadCellX(width)`, `.setPadCellY(height)`. **One column is how you stack things vertically** — a container does not flow its children |
+| `UI.ScrollView` | `.setScrollable(h,v)`, `.setSize(sx,sy)` (it needs a fixed size when it scrolls) |
+| `UI.Slider` | `Slider.Create(getFn, setFn, minValue, maxValue)` — the first argument is the GETTER |
+| `UI.Checkbox` | `Checkbox.Create(getFn, setFn)` |
+| `UI.OptionSlider` | `OptionSlider.Create(getFn, setFn, elems, val)` — **the value is an INDEX into `elems`**, never the string |
+| `UI.Button` | `Button.Create(text, onClick)` — the callback takes the button |
+| `UI.Collapsible` | `Collapsible.Create(title, expanded)` |
 | `UI.Graph` | `.setMode('sweep'/'scroll')`, `.addRuler(value, label, color)` |
-| `UI.Label` | `.setText(text)`, `.setFormat(formatstring)`, `.setPollFn(fn)` |
+| `UI.Label` | `Label.Create(text)`, `.setText(text)`, `.setFormat(formatstring)`, `.setPollFn(fn)`, `.setFontColor(color)` |
+| `UI.IconButton` | `IconButton.Create(icon, onClick)` |
 | `UI.Bindings` | Maps key names to input actions (e.g. "W", "SPACE") |
+
+**The `__call` rule.** `Container`, `Panel`, `Widget` and `Window` define
+`__call`, which forwards to that class's own `Create` — so `UI.Label("x")`,
+`UI.Button("Go", fn)` and `UI.Grid()` all work. A widget that does **not**
+inherit from one of those is not callable: use `UI.Grid.Create()` and
+friends. (`Container` inherits `__call` but has no `Create`, so
+`UI.Container()` is an error — use `UI.Panel('')`.)
 
 #### Label with Live Updates
 ```lua
@@ -520,7 +609,7 @@ function SlotWidget:onDraw(focus, active)
 
   -- Icon (if item is equipped)
   if self.equipped then
-    local tex = Cache.Tex2D(self.item.icon)
+    local tex = Cache.Texture(self.item.icon)   -- Cache.Texture, not Cache.Tex2D
     Tex2D.Draw(tex, x + 4, y + 4, sx - 8, sy - 8)
   end
 end
@@ -531,8 +620,10 @@ function SlotWidget:onFindMouseFocus(mx, my, foci)
   end
 end
 
-function SlotWidget:click(state)
-  -- Handle item selection / use
+function SlotWidget:onClick(state)
+  -- Handle item selection / use.
+  -- `onClick`, not `click`: Widget:click is the dispatcher that calls
+  -- onClick, so overriding `click` quietly bypasses the base class.
   print("Selected " .. tostring(self.item.name))
 end
 
@@ -553,9 +644,8 @@ function Inventory:onLayoutSize()
   self.desiredSY = #self.children * self.slotHeight + 16  -- top/bottom padding
 end
 
-function Inventory.onCreateChild(child, index)
-  child.equipped = false  -- default state
-end
+-- NOTE: there is no `onCreateChild` hook. Initialise a child as you create
+-- it, or in the child's own `Create`.
 
 -- Usage: Create a grid of slots with items
 local inv = Inventory.Create()
@@ -577,324 +667,68 @@ win:add(inv)
 gameView:add(win)
 ```
 
-### Full Demo App: `DemoUI.lua` (complete working example)
+### The Demo App: `script/App/UI_Demo.lua` — this one runs
 
-Create this file at `/home/rhague/Documents/Code_Projects/ltheory-test/script/App/DemoUI.lua`:
-
-```lua
-local DemoUI = Application()
-local UI = require('UI')  -- Load the full UI framework
-
--- Simple color picker widget for demonstration
-local ColorPicker = {}
-ColorPicker.__index = ColorPicker
-setmetatable(ColorPicker, UI.Widget)
-
-ColorPicker.name = 'Color Picker'
-ColorPicker.focusable = true
-ColorPicker.draggable = false
-
-function ColorPicker:onDraw(focus, active)
-  local x, y, sx, sy = self:getRectGlobal()
-
-  -- Draw a small preview of the current color
-  Draw.Color(self.color.r, self.color.g, self.color.b, 0.6)
-  Draw.Rect(x + 4, y + 4, sx - 8, sy - 8)
-
-  -- Color bar (vertical gradient)
-  local gradHeight = sy - 12
-  for i = 0, gradHeight do
-    local t = i / gradHeight
-    local r = self.color.r * (1.0 - t)
-    local g = self.color.g * (1.0 - t)
-    local b = self.color.b * (1.0 - t)
-    Draw.Color(r, g, b, 0.5 + 0.5 * t)
-    Draw.Rect(x + 4, y + 6 + i, sx - 8, 2)
-  end
-
-  -- Label showing RGB values
-  local font = Config.ui.font.normal
-  local bound = font:getSize(string.format("%.1f %.1f %.1f", self.color.r, self.color.g, self.color.b))
-  font:draw(string.format("RGB (%.1f,%.1f,%.1f)", self.color.r, self.color.g, self.color.b),
-    x - bound.x + (sx - bound.z) / 2, y + sy - bound.y - 6,
-    Config.ui.color.textNormal.r, Config.ui.color.textNormal.g, 
-    Config.ui.color.textNormal.b, Config.ui.color.textNormal.a)
-end
-
-function ColorPicker:inputFocused(state)
-  -- On focus, cycle through predefined colors with keyboard
-  if Input.GetPressed('KEY_1') then self.color = {r=1.0,g=0.0,b=0.0} end
-  if Input.GetPressed('KEY_2') then self.color = {r=0.0,g=1.0,b=0.0} end
-  if Input.GetPressed('KEY_3') then self.color = {r=0.0,g=0.0,b=1.0} end
-  if Input.GetPressed('KEY_4') then self.color = {r=1.0,g=1.0,b=0.0} end
-end
-
--- Radar widget (simulated)
-local Radar = {}
-Radar.__index = Radar
-setmetatable(Radar, UI.Container)
-
-Radar.name = 'Radar'
-Radar.focusable = true
-Radar.draggable = false
-
-function Radar:onDraw(focus, active)
-  local x, y, sx, sy = self:getRectGlobal()
-
-  -- Dark background
-  Draw.Color(0.1, 0.15, 0.2, 0.95)
-  Draw.Rect(x, y, sx, sy)
-
-  -- Radar ring
-  Draw.Color(0.3, 0.4, 0.5, 0.6)
-  Draw.CircleOutline(x + sx/2, y + sy/2, sx*0.4)
-
-  -- Scan line animation (simulated with a rotating triangle)
-  local angle = self.scanAngle or 0
-  self.scanAngle = (self.scanAngle or 0) + state.dt * 3.14159 / 60  -- slow rotation
-  Draw.Color(0, 1.0, 0.5, 0.7)
-  -- You'd draw a rotated triangle/arc here using shader transforms
-
-  -- Sample targets (simulated entities outside radar range)
-  local targetColors = { {1,0.2,0.3}, {1,0.8,0.3}, {0.5,1,0.5} }
-  for i = 1, #targetColors do
-    Draw.Color(unpack(targetColors[i]))
-    Draw.Rect(x + sx*0.7 + (i-1)*20, y + sy*0.3, 8, 8)  -- simplified positioning
-  end
-
-  -- Label
-  local font = Config.ui.font.normal
-  local bound = font:getSize("Radar")
-  font:draw("Radar", x - bound.x + (sx-bound.z)/2, y+4, 
-    Config.ui.color.textNormal.r, Config.ui.color.textNormal.g,
-    Config.ui.color.textNormal.b, Config.ui.color.textNormal.a)
-end
-
--- Map widget
-local Map = {}
-Map.__index = Map
-setmetatable(Map, UI.Window)
-
-Map.name = 'Map'
-
-function Map:onDraw(focus, active)
-  self:super.onDraw(focus, active)
-
-  -- Simulated map background (a rectangle with grid lines)
-  local x, y, sx, sy = self:getRectPadGlobal()
-  Draw.Color(0.2, 0.25, 0.3, 1.0)
-  Draw.Rect(x, y, sx, sy)
-
-  -- Grid lines (simplified — in practice you'd draw a real map texture or generate it)
-  for i = 0, sx-8, 40 do
-    Draw.Color(0.25, 0.3, 0.4, 1.0)
-    Draw.Rect(x + i - 4, y - 2, 8, sy)
-    Draw.Rect(x - 2, y + i - 4, sx, 8)
-  end
-
-  -- Ship position indicator (centered for demo)
-  local center = x + sx/2, y + sy/2
-  Draw.Color(1.0, 1.0, 0.5, 0.9)
-  Draw.Circle(center.x, center.y, 6)
-end
-
-function Map:onInit() end
-
--- Main demo app
-local Demo = setmetatable({}, DemoUI)
-
-function Demo:onInit()
-  -- Load the UI framework namespace
-  Namespace.LoadInline('Util')
-  Namespace.Load      ('UI')
-
-  self.renderer = Renderer()
-  self.canvas   = nil  -- will be created on first draw
-end
-
-function Demo:onInput(state)
-  if not self.canvas then return end
-  self.canvas:input(state)
-end
-
-function Demo:onUpdate(dt)
-  if not self.canvas then return end
-  self.canvas:update({ dt = dt })
-end
-
--- Create the full UI tree
-local rootCanvas = nil
-local radar, mapWin, colorPicker, inventory
-
-function Demo:createUI()
-  -- The main container for all UI elements
-  local canvas = UI.Container.Create()
-  canvas.name = "Demo UI Root"
-  
-  -- A Grid layout to organize the demo widgets
-  local grid = UI.Grid():setCols(2):setPadCellX(16)
-
-  -- Left column: Windows and Panels
-  local leftCol = UI.Column():add(grid:setRows(4))
-  
-    -- Window with close button (simulates a modal dialog)
-    local win = UI.Window("System Alert")
-      :setTitle("⚠ System Warning")
-      :setCloseButton(true)
-    
-    win:add(UI.Label():setText("This window can be dragged."))
-    win:add(UI.Grid():setCols(2):setPadCellX(12):add(
-        UI.Button("Accept"):setOnClick(function() self:hideWindow(win) end)
-      ):add(UI.Button("Ignore")))
-    
-    leftCol:add(win)
-
-    -- Panel (beveled, non-windowed)
-    local panel = UI.Panel():setTitle("Settings")
-      :setPadUniform(6)
-    
-    panel:add(UI.Label("Debug Level")):add(UI.Slider(0, 5):setValue(2))
-    panel:add(UI.Checkbox(function() return true end, function(v) print("Checkbox:", v) end)
-    panel:add(UI.Label("Enable particles", true))
-
-    leftCol:add(panel)
-
-    -- Collapsible section
-    local collapsible = UI.Collapsible("Advanced Options")
-      :add(UI.Grid():setCols(2):setPadCellX(16):add(
-          UI.Label("Max Entities"):add(UI.Slider(0, 1000000):setValue(5000))
-        ):add(UI.Label("Max Particles"):add(UI.Slider(0, 100000):setValue(32768)))
-
-    leftCol:add(collapsible)
-
-    -- Color picker demo
-    colorPicker = ColorPicker.Create()
-    colorPicker.color = {r=0.95, g=0.4, b=0.3}  -- accent red
-    leftCol:add(colorPicker)
-
-    -- Radar demo widget (non-Window-based)
-    local radarPanel = UI.Panel():setTitle("Radar")
-      :setPadUniform(8):setMinSize(256, 192)
-    
-    radarPanel:add(radar = Radar.Create())
-    leftCol:add(radarPanel)
-
-    -- Map window
-    mapWin = Map.Create()
-    leftCol:add(mapWin)
-
-  -- Right column: Navigation and controls
-  local rightCol = UI.Column():add(grid:setCols(1):setPadCellX(0))
-
-    -- Navigation group (keyboard navigation demo)
-    local navGroup = UI.NavGroup()
-      :add(UI.Collapsible("Navigation Demo")
-        :add(UI.Grid():setCols(3):setPadCellX(8)
-          :add(UI.Button("Home"):setOnClick(function() print("Home") end))
-          :add(UI.Label("Current:")):add(UI.Label("None"))
-          :add(UI.Button("About"):setOnClick(function() print("About") end))
-        )
-      )
-
-    rightCol:add(navGroup)
-
-  grid:add(leftCol):add(rightCol)
-
-  -- Add to canvas
-  canvas:add(grid)
-  rootCanvas = canvas
-end
-
-function Demo:hideWindow(win)
-  win:remove()
-end
-
-function Demo:onDraw()
-  -- Create the UI tree on first frame (retained-mode benefit!)
-  if not self.canvas then self:createUI(); end
-
-  -- Push alpha blending for all UI
-  BlendMode.Push(BlendMode.Alpha)
-
-  -- Begin draw pass
-  local canvas = self.canvas
-  Viewport.Push(0, 0, self.resX, self.resY, true)
-  ClipRect.PushTransform(0, 0, self.resX / (self.uiScale or 1), self.resY / (self.uiScale or 1))
-
-  -- Apply scale transform for high-DPI support
-  local uiScale = self.uiScale or 1.0
-  ShaderVar.PushMatrix('mViewUI', Matrix.Scaling(uiScale, uiScale, 1))
-
-  -- Draw the UI tree
-  canvas:draw()
-
-  ShaderVar.Pop('mViewUI')
-  ClipRect.PopTransform()
-  Viewport.Pop()
-
-  RenderState.PopAllDefaults()
-  BlendMode.Pop()
-
-  -- Optional: Use HmGui as an overlay (can coexist with script/UI)
-  local hmguiRenderer = Renderer()
-  hmguiRenderer:start(self.resX, self.resY)
-  Viewport.Push(0, 0, self.resX, self.resY, true)
-  
-  -- Simple HmGui demo overlay (only shown when focused on this app)
-  if os.getenv('PHX_DEMO_HMGUI') == '1' then
-    local hmgui = require('ffi.HmGui').libphx or nil
-    if hmgui and not self.hmGuiInitialized then
-      -- Initialize HmGui once
-      if hmgui.Begin then
-        self.hmGuiInitialized = true
-        hmgui.Begin(self.resX, self.resY)
-          hmgui.Text("HmGui Overlay Demo")
-          hmgui.Button("Click to test!")
-            :SetOnClick(function() print("HmGui button clicked!") end)
-        hmgui.EndWindow()
-      end
-    end
-    if self.hmGuiInitialized then hmgui.Draw() end
-  end
-
-  Viewport.Pop()
-  hmguiRenderer:stop()
-  hmguiRenderer:present(self.resX, self.resY)
-
-  -- Also draw ImGui (immediate mode runs every frame)
-  local imgui = require('ffi.ImGui').libphx or nil
-  if imgui then
-    ImGui.Begin(self.resX, self.resY)
-      ImGui.Text("ImGui Overlay")
-      ImGui.ButtonEx("I am immediate-mode!", 160, 32)
-        :SetOnClick(function() print("ImGui clicked!") end)
-
-      ImGui.BeginScrollFrame(0, -50)
-        for i = 1, 100 do
-          ImGui.Text(string.format("Line %d", i))
-        end
-      ImGui.EndScrollFrame()
-    ImGui.End()
-
-    Viewport.Push(0, 0, self.resX, self.resY, true)
-    ImGui.Draw()
-    Viewport.Pop()
-  end
-end
-
-function Demo:run()
-  -- Set up config override for this demo
-  Config.window.width = 1280
-  Config.window.height = 720
-  Config.debug.windowSection = 'Navigation Demo'  -- open nav group by default
-
-  Application.run(self)
-end
-
-return Demo
+```bash
+./run.sh UI_Demo
 ```
 
----
+This is the corrected version of the sketch that used to be in this
+document. It shows a **radar**, a **reticle with target brackets**, **ship
+status**, a **flight-control panel**, an **inventory** and a **sector map** —
+the screens ROADMAP item 8 (game screens) still owes — built out of the
+framework's own widgets, with a simulated ship behind them so a screen can
+be judged without a live sector.
+
+**How an app drives a canvas.** This is the whole of the boilerplate (the
+same shape as `script/App/TestEcon.lua`):
+
+```lua
+local Canvas = require('UI.Canvas')
+
+local UIDemo = Application()
+
+function UIDemo:onInit ()
+  self.canvas = Canvas()
+  self:buildUI()               -- build the tree ONCE; it is retained mode
+end
+
+function UIDemo:onInput ()
+  self.canvas:input()          -- no arguments
+end
+
+function UIDemo:onUpdate (dt)
+  self.canvas:update(dt)       -- a number, not a table
+end
+
+function UIDemo:onDraw ()
+  self.canvas:draw(self.resX, self.resY)
+end
+
+return UIDemo
+```
+
+**What it demonstrates, and where to look:**
+
+| thing | where |
+|---|---|
+| a custom widget that draws itself (radar, brackets, map) | `Radar`, `TargetBrackets`, `SectorMap` — all extend `UI.Widget` and implement `onDraw` |
+| a custom widget that is FOCUSABLE (inventory slots) | `Slot` — it implements `onFindMouseFocus` and `onClick` |
+| labels that poll live state | every readout: `Label():setPollFn(function () return self.ship.hull end)` |
+| real controls | `Slider`, `Checkbox`, `OptionSlider` (in INDICES), `Button`, `Collapsible`, `ScrollView` |
+| the layout idiom | two one-column Grids (left and right), each placed with `setAlign` |
+
+**The two traps the demo had to be taught by:**
+
+* A custom widget that wants mouse clicks implements **`onClick(state)`**,
+  not `click(state)` — `Widget:click` is the dispatcher that calls `onClick`,
+  so overriding `click` quietly bypasses the base class.
+* An `OptionSlider`'s value is an **index** into its element list. Give it a
+  string and `onUpdate` compares a string with a number and throws.
+
+**What it does not do:** there is no main menu, no settings screen and no
+in-game inventory yet — those are ROADMAP item 8, and the demo is the
+reference they should be built from, not a substitute for them.
 
 ## 4. Creating a UI/GUI System for New Features
 
@@ -933,28 +767,32 @@ function HealthBar:onInit()
   self.health    = self.maxHealth
 end
 
-function HealthBar:update(dt, state)
-  local player = self.player or GameView and GameView.player
+-- NOTE: the framework calls `onUpdate(state)` -- the state carries `dt`.
+-- There is no `update(dt, state)` and no `onInit`; a custom widget is
+-- initialised in its own `Create`.
+function HealthBar:onUpdate(state)
+  local player = self.player
   if player then
-    self.health = Math.Clamp(self.health + (dt * config.game.shipHealthRegen), 0, self.maxHealth)
+    self.health = Math.Clamp(self.health + (state.dt * Config.game.shipHealthRegen), 0, self.maxHealth)
   end
 end
 
 function HealthBar:onDraw(focus, active)
   local x, y, sx, sy = self:getRectGlobal()
 
-  -- Background bar
-  Draw.Color(0.15, 0.15, 0.15, 0.9)
-  Draw.Rect(x, y, sx, sy)
+  -- Background bar.
+  -- DrawEx, not the raw Draw API: a raw `Draw.Rect` needs a shader and a
+  -- texture already bound, and with none bound it calls Tex2D_GetHandle
+  -- with a null texture and crashes the process.
+  DrawEx.Rect(x, y, sx, sy, Color(0.15, 0.15, 0.15, 0.9))
 
   -- Health fill (gradient from red to green)
   local pct = self.health / self.maxHealth
   if pct >= 0.6 then
-    Draw.Color(0.2 + 0.8 * pct, 1.0 - 0.4 * pct, 0.3, 0.9)
+    DrawEx.Rect(x + 2, y + 2, sx - 4, sy - 4, Color(0.2 + 0.8 * pct, 1.0 - 0.4 * pct, 0.3, 0.9))
   else
-    Draw.Color(1.0 - pct, 0.2, 0.1, 0.9)
+    DrawEx.Rect(x + 2, y + 2, sx - 4, sy - 4, Color(1.0 - pct, 0.2, 0.1, 0.9))
   end
-  Draw.Rect(x + 2, y + 2, sx - 4, sy - 4)
 
   -- Text label
   local font = Config.ui.font.normal
@@ -967,8 +805,7 @@ function HealthBar:onDraw(focus, active)
   -- Damage flash animation
   if self.flashTimer > 0 then
     local alpha = Math.Lerp(1.0, 0.0, self.flashTimer / self.flashDuration)
-    Draw.Color(1.0, 0.2, 0.1, alpha)
-    Draw.Rect(x + 3, y + 3, sx - 6, sy - 6)
+    DrawEx.Rect(x + 3, y + 3, sx - 6, sy - 6, Color(1.0, 0.2, 0.1, alpha))
     self.flashTimer = self.flashTimer - state.dt * 30  -- fade in ~5 seconds
   end
 end
@@ -985,7 +822,7 @@ end
 -- Usage in GameView
 function GameView.Create(player)
   -- ... existing code ...
-  
+
   self.healthBar = HealthBar.Create()
   self.healthBar.player = player
   self:add(self.healthBar)  -- add to canvas as a child
@@ -994,134 +831,85 @@ end
 
 ### Pattern: Radar / Sensor Display
 
+The working version of this is the `Radar` widget in
+`script/App/UI_Demo.lua`. It is the whole thing in about forty lines, and it
+shows the three shapes a radar needs — **there is no circle in the engine's
+`Draw` API**, so all of them come from `UI.DrawEx`:
+
 ```lua
-local RadarDisplay = {}
-RadarDisplay.__index = RadarDisplay
-setmetatable(RadarDisplay, UI.Container)
+local DrawEx = require('UI.DrawEx')
 
-RadarDisplay.name = 'RadarDisplay'
-RadarDisplay.focusable = false
-RadarDisplay.draggable = true  -- allow dragging around screen
+local Radar = {}
+Radar.__index = Radar
+setmetatable(Radar, Widget)
+Radar.name = 'Radar'
+Radar.focusable = false
 
-function RadarDisplay:onInit()
-  self.scanAngle = 0
-  self.targetList = {}  -- entities detected by sensors
+function Radar.Create (app)
+  local self = setmetatable({ app = app, sweep = 0 }, Radar)
+  self:setStretch(0, 0)
+  self.desiredSX = 240
+  self.desiredSY = 240
+  return self
 end
 
--- This would hook into a sensor system in your game loop:
-function RadarDisplay:update(dt, state)
-  -- Query your sensor/sonar subsystem for nearby entities
-  local myPos = self.player and self.player:getControlling() and 
-                self.player:getControlling():getPos() or Vec3f(0,0,0)
-
-  local detectionRange = Config.game.detectionRange or 5000
-  local sensorCone = math.pi / 4.0  -- 90 degree cone in front of ship
-
-  for _, entity in ipairs(self.system and self.system:iterChildren() or {}) do
-    if entity ~= self.player then
-      local pos = entity:getPos()
-      local dist = (myPos - pos):length()
-      local dirToEntity = (pos - myPos):normalize()
-      
-      -- Check if within detection range AND in front of ship
-      if dist <= detectionRange and 
-         dot(dirToEntity, self.player:controlling:getForward()) > math.cos(sensorCone) then
-        
-        table.insert(self.targetList, { entity = entity, dist = dist })
-      end
-    end
-  end
-
-  -- Sort by distance
-  table.sort(self.targetList, function(a,b) return a.dist < b.dist end)
+function Radar:onUpdate (state)
+  self.sweep = (self.sweep + state.dt * 0.5) % 1.0     -- `state.dt` lives HERE
 end
 
-function RadarDisplay:onDraw(focus, active)
+function Radar:onDraw (focus, active)
   local x, y, sx, sy = self:getRectGlobal()
+  local cx, cy = x + sx * 0.5, y + sy * 0.5
+  local r = math.min(sx, sy) * 0.44
 
-  -- Background with rounded corners (use DrawEx if available)
-  Draw.Color(0.12, 0.18, 0.25, 0.92)
-  Draw.Rect(x + 4, y + 4, sx - 8, sy - 8)
+  DrawEx.Panel(x, y, sx, sy, Color(0.02, 0.04, 0.07, 0.78), 0.55)
+  DrawEx.RectOutline(x, y, sx, sy, Color(0.30, 0.50, 0.70, 0.45))
 
-  -- Radar ring with sweep animation
-  local centerX = x + sx/2
-  local centerY = y + sy/2
-  local radius = sx * 0.35
+  -- The range rings: DrawEx.Ring, not Draw.CircleOutline (which does not exist).
+  DrawEx.Ring(cx, cy, r,        Color(0.30, 0.50, 0.70, 0.40))
+  DrawEx.Ring(cx, cy, r * 0.66, Color(0.30, 0.50, 0.70, 0.25))
+  DrawEx.Ring(cx, cy, r * 0.33, Color(0.30, 0.50, 0.70, 0.18))
 
-  -- Draw the scan arc
-  self.scanAngle = (self.scanAngle or 0) + state.dt * math.pi / 180
-  for angle = -math.pi, math.pi do
-    local progress = ((angle - self.scanAngle + math.pi) % (2*math.pi)) / (2*math.pi)
-    if progress <= 0.03 then
-      -- Draw scan line segments
-      local startAngle = angle - 0.015
-      local endAngle   = angle + 0.015
-      
-      local sx1 = centerX + radius * math.cos(startAngle)
-      local sy1 = centerY + radius * math.sin(startAngle)
-      local sx2 = centerX + radius * math.cos(endAngle)
-      local sy2 = centerY + radius * math.sin(endAngle)
+  DrawEx.Line(cx - r, cy, cx + r, cy, Color(0.30, 0.50, 0.70, 0.22))
+  DrawEx.Line(cx, cy - r, cx, cy + r, Color(0.30, 0.50, 0.70, 0.22))
 
-      Draw.Color(0.0, 1.0, 0.5, progress < 0.95 and 0.6 or 0.3)
-      Draw.Line(sx1, sy1, sx2, sy2)
-    end
+  -- The sweep. `to` is a FRACTION of a full turn; `tw` is its width.
+  DrawEx.Wedge(cx, cy, r * 0.15, r, self.sweep, 0.06, Color(0.35, 1.0, 0.65, 0.30), 1)
+
+  -- The contacts, at their bearing and range.
+  local range = self.app.ship.radarRange
+  for _, c in ipairs(self.app.contacts) do
+    local rr = r * math.min(1, c.dist / range)
+    local tx = cx + math.cos(c.angle) * rr
+    local ty = cy + math.sin(c.angle) * rr
+    local col = CONTACT_COLORS[c.kind] or CONTACT_COLORS.debris
+    DrawEx.Point(tx, ty, 3.5, col)                  -- a filled dot
+    DrawEx.Line(tx - 4, ty, tx + 4, ty, col)        -- and a tick
   end
 
-  -- Draw detected targets as colored dots
-  local targetColors = { {1,0.4,0.3}, {0.9,0.7,0.3}, {0.5,1.0,0.8} }
-  for i, target in ipairs(self.targetList) do
-    if i <= #targetColors then
-      local tColor = targetColors[i]
-      Draw.Color(tColor.r, tColor.g, tColor.b, 0.9)
-      
-      -- Position around the ring based on entity position relative to ship
-      local angleToTarget = math.atan2(target.entity:getPos().y - myPos.y, 
-                                       target.entity:getPos().x - myPos.x)
-      local tx = centerX + radius * math.cos(angleToTarget)
-      local ty = centerY + radius * math.sin(angleToTarget)
-
-      Draw.Circle(tx, ty, 4)
-      
-      -- Distance label
-      local font = Config.ui.font.normal
-      local bound = font:getSize(string.format("%.0fm", target.dist / 100))
-      font:draw(string.format("%.0fkm", target.dist),
-        tx - bound.x/2, ty + sy*0.3 + bound.y, 
-        0.7, 0.7, 0.7)
-    end
-  end
-
-  -- Range ring labels
-  local distances = { 1000, 2000, 5000 }
-  for _, d in ipairs(distances) do
-    Draw.Color(0.3, 0.4, 0.6, 0.7)
-    Draw.Circle(centerX, centerY, radius * (d / detectionRange))
-  end
-
-  -- Labels
-  local font = Config.ui.font.normal
-  font:draw("RADAR", centerX - font:getSize("RADAR").z/2, y + sy*0.05, 
-    Config.ui.color.textNormal.r, Config.ui.color.textNormal.g,
-    Config.ui.color.textNormal.b, Config.ui.color.textNormal.a)
-
-  -- Legend
-  local legendX = x + sx * 0.15
-  local legendY = y + sy * 0.38
-  font:draw("Enemy", legendX, legendY, 1.0, 0.4, 0.3)
-  Draw.Color(1.0, 0.4, 0.3, 0.7)
-  Draw.Circle(legendX + 20, legendY - 8, 5)
-
-  font:draw("Friendly", legendX, legendY + 26, 0.9, 0.7, 0.3)
-  Draw.Color(0.9, 0.7, 0.3, 0.7)
-  Draw.Circle(legendX + 20, legendY - 8 + 14, 5)
-
-  font:draw("Neutral", legendX, legendY + 52, 0.5, 1.0, 0.8)
-  Draw.Color(0.5, 1.0, 0.8, 0.7)
-  Draw.Circle(legendX + 20, legendY - 8 + 28, 5)
+  DrawEx.Cross(cx, cy, 6, Color(1, 1, 1, 0.95))     -- the ship, at the centre
 end
 ```
 
----
+**Where the data comes from.** In the demo it is simulated, so a screen can
+be judged without a live sector. In the game it would be the entity system,
+and the shape of the query is the same:
+
+```lua
+for _, entity in ipairs(self.system:iterChildren()) do
+  local pos = entity:getPos()
+  local dist = (myPos - pos):length()
+  local dirToEntity = (pos - myPos):normalize()
+  if dist <= detectionRange and
+     dirToEntity:dot(self.ship:getForward()) > math.cos(sensorCone) then
+    table.insert(self.targetList, { entity = entity, dist = dist })
+  end
+end
+table.sort(self.targetList, function (a, b) return a.dist < b.dist end)
+```
+
+(`table.sort` exists — it is a bare global `sort` that does not. The
+market's price walk uses `table.sort` for exactly this reason.)
 
 ## 5. Summary of All UI Systems
 
@@ -1170,9 +958,20 @@ script/UI/                   # Pure Lua widget framework (NO dependencies)
 ├── Slider.lua              | OptionSlider.lua      # Range inputs
 ├── Label.lua               # Text label with format strings + polling
 ├── Image.lua               # Texture sprite widget
+├── Icon.lua                # Icon sprite widget
 ├── Rect.lua                # Colored rectangle (used for panels)
+├── Hidden.lua              # A widget that draws nothing
 ├── Graph.lua               # Real-time data graphing widget
-└── DrawEx.lua              # Drawing helpers (triangles, arrows, etc.)
+├── GraphProvider.lua       # Feeds a Graph from a live source
+├── NodeGraph.lua           # The map: a custom widget with its own editor
+├── NodeGraphInspector.lua  # The map's property panel
+├── NodeGraphUtil.lua       # The map's shared helpers
+├── SectorPanel.lua         # The sector/region readout (a custom widget)
+└── DrawEx.lua              # Drawing helpers (rings, points, wedges, arrows)
+
+script/App/
+└── UI_Demo.lua             # THE DEMO APP -- radar, brackets, status,
+                            # flight controls, inventory, map. Runs.
 
 script/Game/GUI/
 ├── GameView.lua            # Main game view with UI composite pass
@@ -1191,17 +990,37 @@ script/Game/GUI/
 
 ---
 
-## 6. Practical Next Steps
+## 6. Where this goes next
 
-To create a demo with UI/GUI demonstrations showing how radar, sensors, reticle, ship info, inventory, map, and target objects could look:
+The UI work this document describes is **ROADMAP item 8 (game screens)**, and
+it is still open. What exists today:
 
-1. **Create** `/home/rhague/Documents/Code_Projects/ltheory-test/script/App/UI_Demo.lua` (use the full DemoUI.lua example above)
-2. **Run** with `./run.sh UI_Demo` to see all widget types
-3. **Extend** by adding:
-   - A real radar that queries your entity system for nearby ships/asteroids/stations
-   - A minimap using a low-res texture + dynamic marker sprites
-   - Ship info panel pulling from your ship's component data (mass, fuel, shields)
-   - Inventory grid with drag/drop between slots
-   - Map widget showing planet surface + detected entities
+| done | |
+|---|---|
+| ✅ | the widget framework itself (`script/UI/`, 30 modules) |
+| ✅ | the debug panel (`DebugWindow.lua`) — the richest UI in the game |
+| ✅ | the HUD, the sector/region readout, the market panel at the dock, the sector map |
+| ✅ | **the demo app** (`script/App/UI_Demo.lua`) — radar, target brackets, ship status, flight controls, inventory, sector map, and it runs |
 
-The `DebugWindow.lua` file is the closest existing example to a full-featured UI panel — study its use of `UI.Grid`, `UI.Collapsible`, and nested containers as a template.
+What is missing, and what the demo is the reference for:
+
+1. **A main menu** — a `UI.Window` over the canvas, with the options a new
+   player needs (new game, continue, settings, quit). The demo's flight panel
+   is the shape of it.
+2. **A settings screen** — the same frame, a column of controls: the sliders,
+   the checkbox and the option slider the demo already has, bound to
+   `Settings`. Note the index trap: an `OptionSlider` wants an index, and the
+   settings panel's enum values ARE indices (`Settings.addEnum` stores the
+   position, not the string).
+3. **The demo's screens, in the game** — the radar, the target brackets and
+   the inventory are currently a demo with a simulated ship behind it. Making
+   them real means pointing them at the entity system and the HUD's own state.
+4. **A pause screen** — the cheapest of the four, and the first thing a
+   player sees.
+
+**The deferred dear-imgui question** is answered here: it is not worth
+swapping. The *game* UI should stay on `script/UI/` — it is retained-mode,
+it is in Lua, it is themed by `Config.ui`, and the layout engine already
+works. dear imgui would buy immediate-mode convenience and cost a rewrite of
+the game UI; `HmGui` and the engine's own `ImGui` are both C++ test-only
+systems that no shipped screen uses.
