@@ -76,7 +76,13 @@ function CommandControl:onEnable ()
   self.camera:lerpFrom(pCamera.pos, pCamera.rot)
 end
 
+-- Give the camera back to the ship, the same way the dock control does.
+--
+-- This control also switches the game view to the orbit camera and
+-- detaches its target, and an empty onDisable meant the camera was never
+-- re-attached to the ship when the control closed.
 function CommandControl:onDisable ()
+  self.gameView:setOrbit(false)
 end
 
 function CommandControl:findSelection (sx, sy, ssx, ssy)

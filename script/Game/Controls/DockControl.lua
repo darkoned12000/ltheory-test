@@ -74,6 +74,16 @@ function DockControl:buyOne ()
   end
 end
 
+-- Give the camera back to the ship.
+--
+-- Docking took the camera over: the game view switched to the orbit camera
+-- and this control re-targeted it at the STATION. Nothing gave it back --
+-- there was no onDisable at all -- so undocking left the camera orbiting
+-- the station for good, and the ship was never followed again.
+function DockControl:onDisable ()
+  self.gameView:setOrbit(false)
+end
+
 function DockControl:onInput (state)
   if ShipBindings.Dock:get() > 0 then
     self.player:getControlling():pushAction(Actions.Undock())
