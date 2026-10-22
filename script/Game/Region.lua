@@ -577,7 +577,7 @@ function Region.field (regions, x, y, z, seed)
     local SpaceField = require('Game.SpaceField')
     local m = SpaceField.sample(x, y, z, seed)
     density = density * (0.6 + m.nebulaDensity   * 0.8)
-    rocks   = rocks   * (0.6 + m.asteroidDensity * 0.8)
+    rocks   = rocks   * (0.85 + m.asteroidDensity * 0.3)
     ore     = ore     * (0.6 + m.asteroidDensity * 0.8)
     storm   = storm   * (0.5 + m.stormPotential  * 1.0)
     -- The DUST is the one channel with no archetype behind it: it is purely

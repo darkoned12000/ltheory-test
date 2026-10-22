@@ -257,9 +257,17 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
   -- the gas or the lightning about what kind of place this is.
   local f = self.system and self.system:fieldAt(ox + cs * 0.5, oy + cs * 0.5, oz + cs * 0.5)
   if f then
-    -- The archetype's `rocks` runs 0.15..0.95, so this is a 0.55x..1.6x
-    -- multiplier: a belt is about three times rockier than a deep field.
-    rockScale = 0.35 + f.rocks * 1.3
+    -- The archetype's `rocks` runs 0.15..0.95, so this is a 0.75x..1.3x
+    -- multiplier: a belt is noticeably rockier than a deep field.
+    --
+    -- The range is DELIBERATELY NARROW. It used to be 0.55x..1.6x, and
+    -- because the field's meso multiplies on top, a belt could carry 2.4
+    -- times the entities of a deep field -- 17,195 against 7,030 -- and the
+    -- frame time went with it. The ROCK COUNT is not what makes a belt a
+    -- belt; the ORE is. A belt is a place where the rocks are worth mining,
+    -- and that is the `ore` channel, which costs nothing: it is the same
+    -- rocks either way.
+    rockScale = 0.75 + f.rocks * 0.6
     -- The ORE, which is the whole reason a belt is worth riding a lane to.
     -- It comes from the same field as the density, so the ore is IN the
     -- belts and nowhere else, and the lanes lead to the belts.
