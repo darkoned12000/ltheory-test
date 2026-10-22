@@ -20,7 +20,7 @@
 
   A shared field fixes that: every subsystem reads the SAME function, so
   they cannot disagree about what kind of place they are in. This is
-  procedural-space-environment.md §2, and the reasoning behind §29a.
+  docs/procedural-space-environment.md §2, and the reasoning behind §29a.
 
   WHY A FIELD AND NOT A REGION LIST
   =================================

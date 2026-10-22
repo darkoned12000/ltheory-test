@@ -2,7 +2,7 @@
 
   THE RELATIONSHIP TO THE FIELD
   ============================
-  procedural-space-environment.md §29a records the decision this implements:
+  docs/procedural-space-environment.md §29a records the decision this implements:
 
     * A region is a FIELD VALUE, not an object in a list. "Violet Veil" is a
       place where the field's palette happens to sit at violet and its

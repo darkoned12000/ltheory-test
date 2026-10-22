@@ -59,7 +59,7 @@ vec3 getFog(vec3 ro, vec3 rd, float depth, float occlusion) {
  *
  * Its only caller in the tree was a commented-out line in starbg.glsl, and the
  * only code that ever uploaded a `fogDensity` uniform was the depth-haze post
- * pass (Renderer:fog / filter/fogw), which is itself gone -- see ltheory-planets.md
+ * pass (Renderer:fog / filter/fogw), which is itself gone -- see docs/ltheory-planets.md
  * 11.5. Nothing set it here, so the function would have returned ~0 for the whole
  * of history anyway. Its comment did carry hard-won tuning advice about the falloff
  * power, which is preserved here only as a warning about what it got wrong: it

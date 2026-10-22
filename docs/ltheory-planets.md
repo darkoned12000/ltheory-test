@@ -1,5 +1,21 @@
 # Planets — Master Doc (generation, rendering, moons, types, open work)
 
+> **STATUS: COMPLETE (2026-10-21) — this document is a RECORD, not a plan.**
+>
+> The ordered list (W1–W8) is fully landed and signed off; the shipped default
+> is the player's own tuned snapshot (§11.20). The doc has moved to `docs/`
+> because that is where the finished records live, next to the other
+> implementation notes.
+>
+> **Everything still open has been moved to [ROADMAP.md](../ROADMAP.md)** so it
+> is not buried in a 165 KB file: gas giants (W7d), atmosphere entry (W7e),
+> the `.glsl` dead-code review (§11.8 E), the two look decisions that need a
+> human (§11.5), the two §11.1a refactors (one shared CPU/GPU hash; one seed
+> field for the skybox, the anchors and the medium), and the FPS-under-load
+> re-measure (§11.0 W6). Sections below are left exactly as they were written
+> — they are the history of how it was built, and they are still the right
+> place to look up *why* something is the way it is.
+
 **This is the single master doc** for planet work. It merges the former
 `ltheory-planet-research.md` (whose "not supported" claims are now stale — moons,
 rotation, visible mountains/craters, valleys and cracks all exist) and the
@@ -2648,7 +2664,7 @@ wanted**. So the scope of "done" for this doc is now:
 **Note the dependency this keeps:** W7c (biomes) is listed as depending on W7a,
 and W7d depended on W7c — deferring W7d means W7c is now the **last** item in
 scope rather than a stepping stone, so its continuity work (§7 of
-`procedural-space-environment.md`) is worth doing properly rather than as a
+`docs/procedural-space-environment.md`) is worth doing properly rather than as a
 stepping stone to something bigger.
 
 ---

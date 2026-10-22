@@ -1,6 +1,6 @@
 -- CaptureHarness -- makes a headless look/perf capture reproducible.
 --
--- WHY THIS EXISTS. Every visual A/B in ltheory-planets.md was taken under a
+-- WHY THIS EXISTS. Every visual A/B in docs/ltheory-planets.md was taken under a
 -- camera that moved and a window that changed size between runs, and the
 -- measurements were wrong more than once:
 --

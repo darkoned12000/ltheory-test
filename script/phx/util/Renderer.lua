@@ -1352,7 +1352,7 @@ local volCount = med.anchors and #med.anchors or 0
   Profiler.End()
 end
 
--- REMOVED: Renderer:fog (filter/fogw, postfx.fog.*). See ltheory-planets.md §11.5.
+-- REMOVED: Renderer:fog (filter/fogw, postfx.fog.*). See docs/ltheory-planets.md §11.5.
 -- The pass modelled aerial perspective as an UNBOUNDED exponential atmosphere:
 -- it hazed any pixel by 1-exp(-density*dist) regardless of whether there was
 -- actually any medium along that ray. In this world the medium is a bounded union

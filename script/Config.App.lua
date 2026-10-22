@@ -471,7 +471,7 @@ Config.gpu = {
   -- NOTE (W5, 2026-10-12): these shipped defaults were NOT re-tuned -- the
   -- calibration in script/Config.Local.lua was measured at nebulaQuality 'High',
   -- and these run 'Low', where the march (and so the veil) differs. Re-tune
-  -- with a fixed-camera harness before changing them; see ltheory-planets.md 11.0
+  -- with a fixed-camera harness before changing them; see docs/ltheory-planets.md 11.0
   -- W5 for why frame-timing drift makes the naive sweep untrustworthy.
   nebulaDensity  = 2.495,        --   medium master gain (0..4)
   nebulaAmbient  = 1.002,        --   irMap ambient scale in the inscatter (0 = sun-term only)
@@ -491,7 +491,7 @@ Config.gpu = {
                           --     emission from per-blob colour/density plus
                           --     extinction passes and has no such uniform --
                           --     setting one ABORTS via Shader_GetVariable (see
-                          --     ltheory-planets.md 12), which crashed boot for
+                          --     docs/ltheory-planets.md 12), which crashed boot for
                           --     any seed taking that path until 2026-10-15.
   nebulaTint     = 0.0,       --   inscatter tint mix (0..1)
   nebulaTintR    = 1.0,          --     1 = warm (1, .6, .2)

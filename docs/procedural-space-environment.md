@@ -1,3 +1,23 @@
+> **STATUS: COMPLETE (2026-10-21) — this document is a RECORD, not a plan.**
+>
+> The architecture it argues for is built: a sector is a named, seeded place; a
+> region is a named volume inside it with an exact Apollonius boundary; the map
+> is ONE node graph; jumpgates travel between sectors and the warp lanes lead
+> to the places; and the environment is ONE shared field (`System:fieldAt`) that
+> the gas, the rocks, the dust, the lightning and the shafts all read, so they
+> cannot disagree about what kind of place they are in (§29m). The doc has moved
+> to `docs/`, next to the other finished implementation notes.
+>
+> **Everything still open has been moved to [ROADMAP.md](../ROADMAP.md)** so it
+> is not buried in an 83 KB file: the three SpaceField channels with no
+> consumer yet (`starVisibility`, `turbulence`, `radiation`), the market's
+> escrow, the energy cells' use, and the skybox-per-region idea (declined —
+> a sector should not change its sky). The body below is left exactly as it was
+> written; it is still the right place to look up *why* the environment is
+> built the way it is.
+>
+---
+
 Absolutely. I’d save this as a companion design note next to the fog-nebula plan—something like docs/procedural-space-environment.md. I’ve turned the feedback into a repo-ready document and kept the implementation principles explicit so it can serve as a future roadmap rather than just notes.
 Procedural Space Environment — Visual Direction & Architecture
 

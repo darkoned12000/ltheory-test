@@ -305,7 +305,7 @@ function Application:run ()
     -- The debug panel shows the same numbers, but only while a human is watching
     -- (and its text is unreadable in a PHX_DEBUG_DUMP capture), whereas this is
     -- what an unattended perf run needs: ema/min/p95/max over a window, so a
-    -- single spike cannot masquerade as a result. See ltheory-planets.md 11.0 W6.
+    -- single spike cannot masquerade as a result. See docs/ltheory-planets.md 11.0 W6.
     perfN = perfN + 1
     -- PHX_SETTINGS=1 : print the live value of the settings that drive a look,
     -- once the Renderer has seeded them. A/B runs that write Config.gpu.* and

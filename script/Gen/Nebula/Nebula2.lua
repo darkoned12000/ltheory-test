@@ -28,7 +28,7 @@ local function generateNebulaLightTransport (rng, res, starDir)
       -- ss:setFloat3('starDir', starDir.x, starDir.y, starDir.z)
       -- `nebula.starGlow` is NOT set here, and setting it would ABORT the engine:
       -- gen/nebula_emit has no such uniform, and Shader_GetVariable aborts on a
-      -- missing variable (see the trap in ltheory-planets.md 12). This aborted the
+      -- missing variable (see the trap in docs/ltheory-planets.md 12). This aborted the
       -- process at boot for any seed that selects the Nebula2 generator -- caught
       -- by S1 on seed 14112139399293175324.
       --

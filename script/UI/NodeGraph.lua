@@ -2,7 +2,7 @@
 -- Interactive canvas only (pan/zoom/drag/select); live game-data seeding lands
 -- in Phase 2, which merges into the same id-keyed node table built here.
 -- Mirrors SystemMap (framework use, math, focus-on-click); visual language
--- follows ltheory-node-ui.md §12 (rings, straight solid/dotted edges, overlay).
+-- follows docs/ltheory-node-ui.md §12 (rings, straight solid/dotted edges, overlay).
 
 local DrawEx = require('UI.DrawEx')
 local Container = require('UI.Container')
@@ -30,7 +30,7 @@ local kZoomSpeed = 0.1
 local kLabelFont = 'Share'
 local kLabelSize = 14
 
--- Reference blues (ltheory-node-ui.md §12); Config wiring is Phase 5.
+-- Reference blues (docs/ltheory-node-ui.md §12); Config wiring is Phase 5.
 local cNode      = { r = 0.25, g = 0.60, b = 1.00, a = 0.90 }
 local cCore      = { r = 0.70, g = 0.90, b = 1.00, a = 1.00 }
 -- The minor dots are DIM on purpose. A field is two thousand asteroids and

@@ -2,7 +2,7 @@
 
   A SECTOR is a named volume of space with its own seed, its own regions, and
   its own WORMHOLES to the other sectors. The graph is a FULLY-CONNECTED MESH
-  (procedural-space-environment.md §29b): every sector can be reached from
+  (docs/procedural-space-environment.md §29b): every sector can be reached from
   every other, so the player is never stranded.
 
   PORTED FROM THE ORIGINAL LIMIT THEORY

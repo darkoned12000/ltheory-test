@@ -3,7 +3,7 @@
   Anything that used to seed itself from the clock (RNG_FromTime) seeds from
   here instead, so pinning `Config.gen.seedGlobal` reproduces the WHOLE boot --
   dust, particle bursts, ship/thruster meshes, NPC AI -- and not just the
-  sector, nebula and planets. See ltheory-planets.md 11.0 W2.
+  sector, nebula and planets. See docs/ltheory-planets.md 11.0 W2.
 
   Rules:
     * The app calls Seed.setWorld(seed) as the first thing it does, so anything

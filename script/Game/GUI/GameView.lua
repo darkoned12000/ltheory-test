@@ -475,7 +475,7 @@ function GameView:draw (focus, active)
   -- rotT`, so writing posOffset/rotOffset discards the chase camera's
   -- contribution and pins the result. Without this the chase camera keeps
   -- drifting between runs and pixel comparisons are meaningless (see
-  -- ltheory-planets.md 11.3's dt-drift trap and 11.8).
+  -- docs/ltheory-planets.md 11.3's dt-drift trap and 11.8).
   CaptureHarness.freezeCamera(self.camera, self.__harnessFrame)
   self.__harnessFrame = (self.__harnessFrame or 0) + 1
   self.camera:beginDraw()

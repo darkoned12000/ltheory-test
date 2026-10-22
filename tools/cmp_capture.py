@@ -6,7 +6,7 @@ The point is the gate, not the metrics. Captures taken without
 `PHX_FIXED_DT` + `PHX_FIXED_VIEW` + `PHX_FIXED_SIZE` have, repeatedly, turned
 out to be non-comparable for reasons that were invisible at the time:
 
-  * the chase camera drifted between runs (ltheory-planets.md 11.3, W5's dt trap),
+  * the chase camera drifted between runs (docs/ltheory-planets.md 11.3, W5's dt trap),
   * the window was resized by the compositor, so the dumps came out at
     936x969 / 1691x1232 / 1891x969 while both runs logged
     `Resolution: 1280x720` (the boot-time print is a one-shot that goes stale),
