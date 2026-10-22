@@ -547,7 +547,6 @@ function LTheory:enterSector (index, ship)
 end
 
 function LTheory:onUpdate (dt)
-  end
   -- TEMP: headless settings snapshot.
   if os.getenv('PHX_DUMP_SETTINGS') and not self.__dumped then
     self.__dumped = true

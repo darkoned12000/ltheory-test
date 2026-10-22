@@ -37,5 +37,10 @@ screenshot/
 # and the universe generator were ported. Not part of the build.
 /UniverseGen/
 
+# The old Limit Theory's market UI and the full old source tree, dropped in
+# for reference while the market was rebuilt. Not part of the build.
+/Market/
+/liblt/
+
 # Screenshots the app saves during a session.
 /script/Screenshot_*.png

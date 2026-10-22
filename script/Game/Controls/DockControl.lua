@@ -126,12 +126,22 @@ function DockControl:onDraw (focus, active)
     put('Holding: ' .. table.concat(holding, ', '), 0.7, 0.9, 1.0)
   end
 
+  -- The old Limit Theory's market panel (Market/MidPanel.lts) had the same
+  -- columns: the item, the price you would BUY at, the price you would
+  -- SELL at, the SUPPLY against the DEMAND, and how much of it you are
+  -- holding. The supply and demand are the market's DEPTH -- how much there
+  -- is to trade, and at what -- which is what tells the player whether a
+  -- price is real or thin.
   put(' ', 0, 0, 0)
-  put(format('%-22s %8s %8s', 'COMMODITY', 'BUY AT', 'SELL AT'), 0.7, 0.7, 0.8)
+  put(format('%-20s %7s %7s %9s %6s', 'COMMODITY', 'BUY AT', 'SELL AT',
+    'SUP/DEM', 'HELD'), 0.7, 0.7, 0.8)
   for _, q in ipairs(self.market:quotes()) do
-    put(format('%-22s %8s %8s', q.item:getName(),
+    local d = self.market:depth(q.item) or {}
+    put(format('%-20s %7s %7s %9s %6s', q.item:getName(),
+      q.ask and tostring(q.ask) or '-',
       q.bid and tostring(q.bid) or '-',
-      q.ask and tostring(q.ask) or '-'), 1, 1, 1)
+      format('%s/%s', tostring(d.supply or 0), tostring(d.demand or 0)),
+      tostring(ship:getItemCount(q.item))), 1, 1, 1)
   end
 
   put(' ', 0, 0, 0)
