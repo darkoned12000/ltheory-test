@@ -30,15 +30,21 @@ function CameraChase:onUpdate (dt)
     self.posT:iadd(tRight:scale(-4.0 * velA.y))
     self.posT:iadd(tUp:scale(4.0 * velA.x))
 
-    -- The camera's own smoothing makes it TRAIL a moving target: its
-    -- position converges with a time constant of 1/10 s (Camera:lerp), so a
-    -- ship doing 500 u/s ends up 50 units ahead of the camera -- four ship
-    -- radii, and the ship visibly slides off-centre the faster it goes.
+    -- NO LEAD. There is no translation lag to compensate for: the camera's
+    -- world position is `posOffset + posT` (Camera:refreshMatrices) and
+    -- `posT` is recomputed from the ship every frame, so the camera follows
+    -- the ship exactly.
     --
-    -- The lead cancels it exactly: the camera is put where it would be if
-    -- it were not trailing. (The camera's AIM does not need the same
-    -- treatment: a straight flight does not turn the camera.)
-    self.posT:iadd(self.target:getVelocity():scale(0.1))
+    -- A lead was added here on the theory that the smoothing lagged the ship
+    -- -- and it broke the framing completely. The camera sits about 32 units
+    -- behind the ship; a lead of velocity*0.1 is 50 units FORWARD at 500 u/s,
+    -- so the camera ended up 18 units in FRONT of the ship, which is inside
+    -- its own radius.
+    --
+    -- The old Limit Theory's camera (liblt/Game/Camera.cpp) has the same
+    -- property and solves it the honest way: it advances its world position
+    -- by the target's velocity every frame, and smooths only the RELATIVE
+    -- offset.
 
     local look = (self.target:toWorldScaled(self.lookAtRel) - self.posT):normalize()
     local up   = (tUp + tRight:scale(0.2 * velA.y)):normalize()

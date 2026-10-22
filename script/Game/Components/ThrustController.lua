@@ -18,14 +18,14 @@ local SocketType = require('Game.SocketKind')
 -- The sector is 120 km across, so at 203 u/s crossing it took TEN MINUTES
 -- and the nearest region was four -- which is not a place you can play in,
 -- it is a map you can look at. The sector's size is a design decision and
--- this is the other half of it: 2e7 buys 500 u/s (measured), so a region is
+-- this is the other half of it: 1.9e7 buys 500 u/s (measured), so a region is
 -- a minute away and the sector is two.
 --
--- The torques go up by 2x rather than 2.46x. The ship's turning circle is
--- set by the ratio of its speed to its turn rate, so leaving the torques
--- alone would have made the ship twice as sluggish to turn in absolute
--- terms; doubling them keeps most of that, and the rest is a feel call
--- the player is better placed to make.
+-- The torques go up by the same factor as the thrust, 2.46x. The ship's
+-- turning circle is v/omega, so scaling the speed and the turn
+-- acceleration together keeps the circle the same size in ship-lengths:
+-- a 500 u/s ship that turns like the old 203 u/s one, rather than one
+-- that takes two and a half times as much room to turn.
 --
 -- The boost multiplies the thrust by 2 (it used to be 3), so 500 becomes
 -- 1000. The boost's energy cost is scaled to match, so its efficiency per
@@ -35,9 +35,9 @@ local thrustForwardMax  = 1.9e7 * thrustMult
 local thrustBackwardMax = 4.75e6 * thrustMult
 local thrustRightMax    = 1.9e7 * thrustMult
 local thrustUpMax       = 4.75e6 * thrustMult
-local thrustPitchMax    = 2e7 * thrustMult
-local thrustYawMax      = 2e7 * thrustMult
-local thrustRollMax     = 4e7 * thrustMult
+local thrustPitchMax    = 2.46e7 * thrustMult
+local thrustYawMax      = 2.46e7 * thrustMult
+local thrustRollMax     = 4.92e7 * thrustMult
 
 -- The thrust at full boost, as a MULTIPLE of the base thrust. 2 = the boost
 -- doubles the speed, so 500 becomes 1000.

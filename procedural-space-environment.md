@@ -1986,14 +1986,20 @@ Three things had to move with it:
   u/s a rock would have been 166 damage against 100 HP -- instant death,
   and "routine flight" in a sector with a rock field would be lethal. The
   thresholds are now relative to the top speed.
-* **The chase camera**, which TRAILS a moving target (its position
-  converges with a time constant of a tenth of a second). At 500 u/s the
-  ship would have been 50 units ahead of the camera -- four ship radii --
-  and visibly off-centre. The camera now leads by exactly its own lag.
-* **The torques**, which go up by 2x rather than 2.46x. The turning circle
-  is the ratio of speed to turn rate, so leaving them alone would have
-  made the ship twice as sluggish to turn; doubling them keeps most of
-  that, and the rest is a feel call the player is better placed to make.
+* **The chase camera**, which was given a "lead" to cancel a translation
+  lag that does not exist -- the camera's world position is `posOffset +
+  posT` and `posT` is recomputed from the ship every frame, so it follows
+  the ship exactly. The lead was v*0.1s, which is 50 units FORWARD at
+  500 u/s, while the camera only sits 27 units behind the ship: it
+  ended up 23 units in FRONT of the ship, inside its own radius, and the
+  framing fell apart. The old Limit Theory's camera (liblt/Game/Camera.cpp)
+  has the same property and solves it the honest way -- it advances its
+  world position by the target's velocity every frame, and smooths only
+  the RELATIVE offset.
+* **The torques**, which go up by the same 2.46x as the thrust. The
+  turning circle is v/omega, so scaling the speed and the turn
+  acceleration together keeps the circle the same size in ship-lengths:
+  a 500 u/s ship that turns like the old 203 u/s one.
 
 **AND THE ECONOMY'S LAST MILE, WHICH IS NOW WALKED.**
 
