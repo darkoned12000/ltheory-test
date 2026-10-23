@@ -451,9 +451,13 @@ function LTheory:onInit ()
 
     self.loadGrid = nil
     self.loadTexs = {}
+    self.loadClose = nil
     local function refreshLoadList ()
       if self.loadScroll then
         self.loadPopup.content:remove(self.loadScroll)
+      end
+      if self.loadClose then
+        self.loadPopup.content:remove(self.loadClose)
       end
       -- The row textures (Tex2D_Load decodes a fresh one per refresh) are
       -- ours alone; free the previous list or a session of page-opens
@@ -520,8 +524,12 @@ function LTheory:onInit ()
       self.loadScroll.vScrollTarget = 0
       self.loadScroll.vScrollValue = 0
       self.loadPopup.content:add(self.loadScroll)
-      self.loadPopup.content:add(UI.MenuButton.Create('CLOSE',
-        function () self.loadPopup:close() end))
+      -- The CLOSE footer is SWAPPED WITH THE LIST, not just appended: an
+      -- untracked footer appended on every open stacked a new CLOSE button
+      -- per page-open and pushed the rows down out of scroll reach.
+      self.loadClose = UI.MenuButton.Create('CLOSE',
+        function () self.loadPopup:close() end)
+      self.loadPopup.content:add(self.loadClose)
     end
 
     self.canvas:add(self.loadPopup, false)
