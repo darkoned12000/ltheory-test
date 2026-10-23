@@ -408,6 +408,11 @@ function LTheory:onInit ()
       self.saveGrid = UI.Grid():setCols(1):setAlign(0.5, 0)
       self.saveGrid:setStretch(0, 0)
       self.saveGrid:add(saveLoc)
+      -- How full the list is -- the LOAD page shows every slot, but the
+      -- save side is where the player needs to know the cap is near.
+      self.saveGrid:add(UI.Label()
+        :setText(string.format('Slots used: %d / %d', SaveGame.Count(), SaveGame.MAX_SLOTS))
+        :setFontColor(Color(0.62, 0.72, 0.86, 1.0)))
       self.saveGrid:add(UI.MenuButton.Create('SAVE NEW SLOT', function ()
         local name, why = self:saveGameNow()
         if name then
@@ -602,11 +607,21 @@ end
 -- menu, and that frame shows the dimmed world behind the popup, not the
 -- game.
 function LTheory:openMenu ()
-  if self.menu and not self.menu:isOpen() then
-    if self.hasDrawn and not self.screenWasOpen then
-      SaveGame.CaptureWorkingShot(self.gameView and self.gameView.renderer)
+  if self.menu then
+    if not self.menu:isOpen() then
+      if self.hasDrawn and not self.screenWasOpen then
+        SaveGame.CaptureWorkingShot(self.gameView and self.gameView.renderer)
+      end
+      self.menu:open()
+    elseif self.canvas.state and self.canvas.state.modalFocus ~= self.menu then
+      -- A POPUP just closed back onto the still-open menu. The popup's
+      -- close set the modal focus to nil, and this branch is why the menu
+      -- never re-took it: "already open" skipped the whole re-open. The
+      -- menu stayed VISIBLE but inputless -- ESC routed Cancel to no
+      -- modal at all, and the player was stuck on the menu with only
+      -- LOAD/EXIT. Re-assert the input grab.
+      self.menu:setModal(true)
     end
-    self.menu:open()
   end
 end
 
@@ -1155,7 +1170,8 @@ function LTheory:onUpdate (dt)
           tostring(File.Exists('./saves/_latest.png')))
         local name, why = self:saveGameNow(saveSlot)
         printf('[SAVE TEST] wrote %s thumb=%s (%s)', tostring(name),
-          tostring(SaveGame.ThumbnailPath(tostring(name))), tostring(why))        s:setPos(s:getPos() + Vec3f(50000, 0, 0))
+          tostring(SaveGame.ThumbnailPath(tostring(name))), tostring(why))
+        s:setPos(s:getPos() + Vec3f(50000, 0, 0))
         local p2 = s:getPos()
         printf('[SAVE TEST] moved to  (%.1f, %.1f, %.1f)', p2.x, p2.y, p2.z)
         local ok, lwhy = self:loadGame(saveSlot)

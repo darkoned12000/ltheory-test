@@ -200,10 +200,13 @@ end
 -- is flying during it.
 -- ---------------------------------------------------------------------------
 
--- Average the source image down to dw x dh. Keeps the row order of the
--- source (whatever glGetTexImage produced -- both uploads and the PNG
--- writer see the same order, so orientation stays consistent end to end).
-local function downscaleRGBA (src, sw, sh, dw, dh)
+-- Average the source image down to dw x dh, FLIPPING while it goes: a GL
+-- texture's data rows run bottom-up (FBO origin), so passing the readback
+-- straight through produced upside-down thumbnails (the user's report:
+-- the HUD's top-left sector readout appeared bottom-left). With flip on,
+-- output row y is built from source row sh-1-y, so the output runs
+-- top-down like the image it represents.
+local function downscaleRGBA (src, sw, sh, dw, dh, flip)
   local out = ffi.new('uint8_t[?]', dw * dh * 4)
   local fx, fy = sw / dw, sh / dh
   local floor = math.floor
@@ -215,7 +218,7 @@ local function downscaleRGBA (src, sw, sh, dw, dh)
       local x1 = math.max(x0 + 1, floor((ox + 1) * fx))
       local r, g, b, a, n = 0, 0, 0, 0, 0
       for y = y0, y1 - 1 do
-        local row = y * sw
+        local row = (flip and (sh - 1 - y) or y) * sw
         for x = x0, x1 - 1 do
           local i = (row + x) * 4
           r, g, b, a, n = r + src[i], g + src[i + 1], b + src[i + 2], a + src[i + 3], n + 1
@@ -245,8 +248,10 @@ function SaveGame.CaptureWorkingShot (renderer)
     local dw = THUMB_W
     local dh = math.max(1, math.floor(size.y * dw / size.x + 0.5))
     local src = big:getDataBytes(PixelFormat.RGBA, DataFormat.U8)
-    -- getData() is a void*; the filter needs byte-sized indexing.
-    local small = downscaleRGBA(ffi.cast('uint8_t*', src:getData()), size.x, size.y, dw, dh)
+    -- getData() is a void*; the filter needs byte-sized indexing. The
+    -- readback runs bottom-up, so the filter flips (see downscaleRGBA).
+    local small = downscaleRGBA(ffi.cast('uint8_t*', src:getData()),
+      size.x, size.y, dw, dh, true)
     src:free()
     local tex = Tex2D.Create(dw, dh, TexFormat.RGBA8)
     local bytes = Bytes.Create(dw * dh * 4)
@@ -328,8 +333,18 @@ end
 
 -- THE QUICKSAVE RULE, kept from the old layer: every save accumulates
 -- into its own timestamped slot instead of overwriting the previous one.
+-- TWO SAVES IN THE SAME SECOND would have collided on the same name and
+-- silently overwritten (a fast double-click on SAVE NEW SLOT looked
+-- exactly like "the game only keeps one save"): -2, -3, ... disambiguate.
 function SaveGame.DefaultSlotName ()
-  return 'save-' .. os.date('%Y%m%d-%H%M%S')
+  local base = 'save-' .. os.date('%Y%m%d-%H%M%S')
+  local name = base
+  local n = 2
+  while File.Exists(slotPath(name)) and n < 100 do
+    name = base .. '-' .. n
+    n = n + 1
+  end
+  return name
 end
 
 -- ---------------------------------------------------------------------------
