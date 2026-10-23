@@ -286,6 +286,39 @@ function SaveGame.ThumbnailPath (slotName)
   return File.Exists(path) and path or nil
 end
 
+-- THE TOAST ROWS for a slot's data: the old game's quicksave
+-- notification fields (the user's mock: date, player, position,
+-- credits, inventory, seed) plus the sector/region line. Shared by the
+-- save and load toasts, so the two sides of a slot say the same things.
+function SaveGame.ToastRows (data, note)
+  local rows = {
+    { label = 'Date',   value = data.dateCreated or '?' },
+    { label = 'Player', value = data.playerName or 'Player' },
+  }
+  local pos = data.playerPos
+  if pos then
+    rows[#rows + 1] = { label = 'Position',
+      value = string.format('%.0f, %.0f, %.0f', pos.x, pos.y, pos.z) }
+  end
+  rows[#rows + 1] = { label = 'Credits', value = tostring(data.playerCredits or 0) }
+  local inv = {}
+  if data.items then
+    for _, it in ipairs(data.items) do
+      inv[#inv + 1] = string.format('%s x%d', it.item, it.count)
+    end
+  end
+  rows[#rows + 1] = { label = 'Inventory',
+    value = #inv > 0 and table.concat(inv, ', ') or '(empty)' }
+  rows[#rows + 1] = { label = 'Seed', value = data.seedHex or '?' }
+  if (data.systemName or '') ~= '' then
+    rows[#rows + 1] = { label = 'Place',
+      value = data.systemName ..
+        ((data.regionName or '') ~= '' and (' · ' .. data.regionName) or '') }
+  end
+  if note then rows[#rows + 1] = { note = note } end
+  return rows
+end
+
 -- ---------------------------------------------------------------------------
 -- Reading and writing
 -- ---------------------------------------------------------------------------

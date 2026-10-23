@@ -10,6 +10,7 @@ local NebulaVolumes = require('Game.NebulaVolumes')
 local LightningStorm = require('Game.LightningStorm')
 local CaptureHarness = require('phx.util.CaptureHarness')
 local Frustum = require('Game.Frustum')
+local Toast = require('Game.GUI.Toast')
 
 -- PHX_DEBUG_DUMP=<frame> : save pipeline checkpoints to PNGs once, at that frame.
 -- Set PHX_DEBUG_DUMP=120 to snapshot ~2s after boot.
@@ -833,6 +834,8 @@ function GameView:draw (focus, active)
     for i = 1, #self.children do self.children[i]:draw(focus, active) end
     self:drawLightningUI()   -- same widget-space transform as the HUD
     self:drawSunMarker()     -- where the scene light actually comes from
+    -- The toasts ride LAST: on top of the HUD, never under a marker.
+    Toast.Draw(x, y, sx, sy)
   end
   ShaderVar.Pop('mViewUI')
   uiScale:free()

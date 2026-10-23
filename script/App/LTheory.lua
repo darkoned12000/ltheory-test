@@ -8,6 +8,7 @@ local File = require('ffi.File')
 -- GlobalRestrict the frame after CUSTOM GAME closed every screen (the
 -- quicksave's first live-play frame).
 local Bindings = require('phx.util.ApplicationBindings')
+local Toast = require('Game.GUI.Toast')
 local DebugControl = require('Game.Controls.DebugControl')
 local Sector = require('Game.Region')
 local SectorGraph = require('Game.SectorGraph')
@@ -612,9 +613,13 @@ function LTheory:onInput ()
       local latest = SaveGame.ReadLatest()
       if latest then
         local ok, why = self:loadGame(latest.slotName)
-        if not ok then Log.Warning('QUICKLOAD: %s', tostring(why)) end
+        if not ok then
+          Log.Warning('QUICKLOAD: %s', tostring(why))
+          Toast.Show('LOAD FAILED', { tostring(why) })
+        end
       else
         Log.Warning('QUICKLOAD: no saves yet')
+        Toast.Show('NOTHING TO LOAD', { 'Press F6 in flight to save first.' })
       end
     end
   end
@@ -706,6 +711,9 @@ end
 -- method, because nothing here knows the difference -- the cameras re-seat,
 -- the node graph follows the new ship, and the screens all close silently.
 function LTheory:settleAfterGenerate ()
+  -- The world is being REPLACED: no toast may outlive it (a stale "saved"
+  -- must never describe the new universe).
+  Toast.Clear()
   if self.nodeGraph then
     self.nodeGraph.system = self.system
     self.nodeGraph.focusEntity = self.player and self.player:getControlling()
@@ -749,9 +757,14 @@ end
 -- The SAVE page's "where am I" line: the sector name, the dominant region
 -- at the ship (the same rule the HUD uses) and the credits -- the same
 -- facts a LOAD row shows, so the two pages cannot disagree about a save.
-function LTheory:currentLocationText ()
+-- WHERE AM I, in parts: (sectorName, regionName, credits). The dominant
+-- region at the ship -- the same rule the HUD uses -- and the ship can be
+-- between regions, where there is no name. Shared by the SAVE page's
+-- location line, the LOAD rows' facts and the save/load toasts, so no two
+-- of them can disagree about a place.
+function LTheory:locationParts ()
   local ship = self.player and self.player:getControlling()
-  if ship == nil then return 'No ship.' end
+  if ship == nil then return nil, nil, 0 end
   local pos = ship:getPos()
   local state = self.sectorState
   if state == nil and self.seed then
@@ -764,10 +777,15 @@ function LTheory:currentLocationText ()
   local regions = state and state.regions
   local region = regions
     and Sector.Region.containing(regions, pos.x, pos.y, pos.z) or nil
-  return string.format('Sector: %s · Region: %s · %d credits',
-    (state and state.sectorName) or '?',
-    region and region.name or 'Deep space',
-    ship:getCredits())
+  return (state and state.sectorName) or '?',
+         region and region.name or 'Deep space',
+         ship:getCredits()
+end
+
+function LTheory:currentLocationText ()
+  local sector, region, credits = self:locationParts()
+  if not sector then return 'No ship.' end
+  return string.format('Sector: %s · Region: %s · %d credits', sector, region, credits)
 end
 
 -- Capture + write in one call, from the live ship. `slotName` is optional:
@@ -798,6 +816,10 @@ function LTheory:saveGameNow (slotName)
   local name, why = SaveGame.Write(slotName or SaveGame.DefaultSlotName(), data)
   if name then
     SaveGame.SaveThumbnail(name)
+    -- THE TOAST: the old game's GAME SAVED plate, with this save's rows.
+    -- F6 in flight shows it now; a menu save shows it when they return.
+    Toast.Show('GAME SAVED', SaveGame.ToastRows(data,
+      'F7 quick-loads your newest save at any time.'))
     printf('[SAVE] wrote %s (seed %s, credits %d)', name,
       tostring(data.seedHex), data.playerCredits or 0)
   else
@@ -823,6 +845,11 @@ function LTheory:loadGame (slotName)
   SaveGame.Restore(self.player and self.player:getControlling(), data)
   self:regenerateSectorContent(0)
   self:settleAfterGenerate()
+  -- THE TOAST: the old game's GAME LOADED plate (queued while the menu is
+  -- still up; it shows the moment the world returns). settleAfterGenerate
+  -- cleared any stale toasts first, so the rows describe THIS world.
+  Toast.Show('GAME LOADED', SaveGame.ToastRows(data,
+    'The world was replaced; unsaved progress is lost.'))
   printf("[LOAD] '%s': seed %s, ship restored (%d credits)", tostring(slotName),
     tostring(data.seedHex), data.playerCredits or 0)
   return true
@@ -1266,6 +1293,10 @@ function LTheory:onUpdate (dt)
   -- camera drift, which is the camera's, not the world's: the menu has to
   -- have something alive behind it.
   local paused = self:anyScreenOpen()
+  -- Toasts age only in live play (see Toast.lua's clock rule): a toast
+  -- queued from a menu action survives, full alpha, until the menu is
+  -- gone and the game is back.
+  Toast.Update(paused and 0 or dt)
   local root = self.player and self.player:getRoot()
   if not paused and root and root.update then root:update(dt) end
   -- Atmosphere bubble: push the ship back out of planet atmospheres before it
