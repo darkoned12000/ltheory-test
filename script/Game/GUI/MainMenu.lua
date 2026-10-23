@@ -20,16 +20,14 @@
 
   WHAT IS AND IS NOT HERE
   =======================
-  NEW GAME, CUSTOM GAME, INFO, HELP and EXIT work. LOAD and SAVE are
-  "coming soon" -- the save format does not exist yet (ROADMAP item 17) --
-  and they are SHOWN, dimmed, because a menu with visible gaps tells the
-  player what the game is going to have, and a smaller menu just looks
-  unfinished.
+  NEW GAME, CUSTOM GAME, INFO, HELP and EXIT work. LOAD and SAVE open a
+  "coming soon" popup of their own -- the save format does not exist yet
+  (ROADMAP item 17) -- rather than sitting dimmed: a dimmed entry with no
+  explanation reads as a bug, and a popup explains itself.
 ]]
 
 local Screen     = require('Game.GUI.Screen')
 local Grid       = require('UI.Grid')
-local Label      = require('UI.Label')
 local MenuButton = require('UI.MenuButton')
 
 local MainMenu = {}
@@ -44,20 +42,27 @@ function MainMenu.Create (opts)
 
   self.version = opts.version or ''
 
-  Screen.init(self, {
-    title    = opts.title or 'LIMIT THEORY REBOOT',
-    subtitle = opts.subtitle or 'WORK IN PROGRESS',
-    onClose  = opts.onClose,
-    bandAtTop = false,
-    -- NOT opaque: the world is behind this, dimmed. An opaque backdrop
-    -- would make the menu a black frame with a menu on it.
-    backdrop = opts.backdrop or Color(0.01, 0.02, 0.04, 0.72),
-  })
+  -- SCREEN.INIT COPIES EVERY OPTION IT IS GIVEN onto the screen, so the
+  -- callers' callbacks (onNewGame, onCustomGame, onInfo...) survive. That
+  -- copy is useless if this constructor builds a SEPARATE table with only
+  -- the fields it knows -- the first version did exactly that, and every
+  -- entry the app wired was a silent no-op. So the caller's opts travel
+  -- through with the defaults layered on top.
+  local o = {}
+  for k, v in pairs(opts) do o[k] = v end
+  o.title     = o.title or 'LIMIT THEORY REBOOT'
+  o.subtitle  = o.subtitle or 'WORK-IN-PROGRESS'
+  o.bandAtTop = false
+  -- NOT opaque: the world is behind this, dimmed. An opaque backdrop
+  -- would make the menu a black frame with a menu on it.
+  o.backdrop  = o.backdrop or Color(0.01, 0.02, 0.04, 0.72)
 
-  -- The entries, in a row, the way the old game's were. A Grid with seven
-  -- columns fills row by row, so seven entries in one row is one grid
-  -- with seven columns.
-  local row = Grid():setCols(7):setPadCellX(8):setAlign(0.5, 0)
+  Screen.init(self, o)
+
+  -- The entries, in a row, the way the old game's were. A Grid with eight
+  -- columns fills row by row, so eight entries in one row is one grid
+  -- with eight columns.
+  local row = Grid():setCols(8):setPadCellX(8):setAlign(0.5, 0)
   row:setStretch(0, 0)
 
   local function entry (label, onClick, disabled)
@@ -73,27 +78,26 @@ function MainMenu.Create (opts)
   entry('CUSTOM GAME', function ()
     if self.onCustomGame then self.onCustomGame() end
   end)
-  entry('LOAD', nil, true)
-  entry('SAVE', nil, true)
+  entry('LOAD', function ()
+    if self.onLoad then self.onLoad() end
+  end)
+  entry('SAVE', function ()
+    if self.onSave then self.onSave() end
+  end)
   entry('INFO', function ()
     if self.onInfo then self.onInfo() end
   end)
   entry('HELP', function ()
     if self.onHelp then self.onHelp() end
   end)
+  entry('SETTINGS', function ()
+    if self.onSettings then self.onSettings() end
+  end)
   entry('EXIT', function ()
     if self.onExit then self.onExit() end
   end)
 
   self.content:add(row)
-
-  -- The "coming soon" note, under the entries. LOAD and SAVE are dimmed
-  -- because they do not work yet, and a dimmed entry with no explanation
-  -- reads as a bug.
-  local note = Label():setText('load and save are coming soon')
-  note:setFontColor(Color(0.52, 0.58, 0.68, 0.85))
-  note:setAlign(0.5, 0)
-  self.content:add(note)
 
   return self
 end

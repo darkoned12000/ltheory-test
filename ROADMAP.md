@@ -75,8 +75,10 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
      - The menu itself (`Game/GUI/MainMenu.lua`) is the old game's splash
        shape: a title band, a row of entries, and the world behind.
        NEW GAME rolls a new seed and regenerates the world; CUSTOM GAME
-       takes a seed in hex so a world can be shared; LOAD and SAVE are
-       shown but dimmed, because the save format does not exist yet.
+       takes a seed in hex so a world can be shared; LOAD and SAVE open the
+       real save-slot pages (item 17); SETTINGS (window mode, resolution,
+       music/effects volume) is a live page that persists to
+       `script/Config.Settings.lua`.
      - INFO and HELP are popups in their own right (`MenuPanelScreen.lua`)
        -- the release milestones and how to play.
      - **The version is the commit count.** `tools/gen_version.py` writes
@@ -124,9 +126,29 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
    the hardcoded 100 in `Ship:getTopSpeed` had never matched the physics).
    A region is a minute away and the sector is two. The ramming damage, the
    chase camera's lead and the turning torques were all rescaled with it.
-17. **A save format** — there is none: no `saveGame`, no `loadGame`. The map
-   holds the sector seeds in memory and that is the whole of "the sector
-   remembers itself".
+17. **A save format** — ✅ **done (phase 1, 2026-10-23)**: save slots are
+   JSON files at `./saves/<slot>.json` (`script/Game/SaveGame.lua`), one
+   per save, **10 max**, sanitised names, timestamped slots (the old
+   quicksave rule), newest-first listing, delete. **F6/F7 quick
+   save/load** — the old game's keys — use one rolling `quicksave` slot
+   whose thumbnail is captured at the press (the live frame, no menu over
+   it). A save carries THE SEED (as an exact 16-hex string — never a JSON
+   number, a double would round 53 of the 64 bits) plus the player
+   snapshot: position, velocity, heading quaternion, hull, credits, cargo
+   (items by name), and the sector/region names for display. Every save
+   also carries a small PNG thumbnail (the post chain's final compose,
+   box-filtered to ~256 px). LOAD regenerates the world from the seed —
+   the same path NEW GAME runs — and puts the snapshot back into the
+   fresh ship, so nothing else can drift: station markets, belts and
+   sectors all come back from generation. The JSON codec
+   (`script/Game/Json.lua`) is a small hand-rolled pair whose errors are
+   values, so a corrupt save degrades to "unreadable" on the LOAD page
+   instead of breaking the boot. Verified end to end headlessly: save →
+   move ship → load restores position, credits and cargo; a second
+   process loading the file from disk; and real injected clicks through
+   the CUSTOM GAME → F6 → F7 flow. NOT in yet: market/belt state,
+   destroyed-asteroid memory, missions — those need universes whose state
+   deviates from the seed.
 18. **Gas giants (W7d)** — deferred 2026-10-14. A banded generator plus a
    no-solid-surface path. It was explicitly the expensive one, so it was
    held back until the FPS budget had been re-measured under load. The

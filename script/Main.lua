@@ -12,6 +12,12 @@ Env.Call(function ()
 
   dofile('./script/Config.App.lua')
   if io.exists ('./script/Config.Local.lua') then dofile('./script/Config.Local.lua') end
+  -- THE PLAYER'S SETTINGS SCREEN CHOICES, after the local overrides: the
+  -- settings screen (Game/GUI/SettingsScreen.lua) writes this file whenever
+  -- a setting on the menu's SETTINGS page changes, so what is on disk is
+  -- exactly what the player last picked. Missing file = boot defaults; a
+  -- local override the player then changes in-game also lands here.
+  if io.exists ('./script/Config.Settings.lua') then dofile('./script/Config.Settings.lua') end
 
   -- A GLOBAL mute, from the environment.
   --

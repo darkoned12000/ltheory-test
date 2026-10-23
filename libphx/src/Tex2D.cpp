@@ -60,6 +60,15 @@ Tex2D* Tex2D_ScreenCapture () {
   Tex2D* self = Tex2D_Create(size.x, size.y, TexFormat_RGBA8);
   uint32* buf = MemNewArray(uint32, size.x * size.y);
   Metric_Inc(Metric_Flush);
+  // The capture races nothing and reads the right surface: the READ buffer
+  // of the default framebuffer is chosen EXPLICITLY (a frame that ended
+  // inside a bound render target would otherwise read THAT), and the read
+  // is fenced behind everything already in flight. On Wayland (SDL3's
+  // native backend) the swap-to-compositor handoff is asynchronous, and an
+  // unfenced glReadPixels after a swap intermittently returned tiled /
+  // sheared surfaces -- the "vertical lines" seen in captures.
+  GLCALL(glReadBuffer(GL_BACK))
+  GLCALL(glFinish())
   GLCALL(glReadPixels(0, 0, size.x, size.y, GL_RGBA, GL_UNSIGNED_BYTE, buf))
   for (int y = 0; y < size.y / 2; ++y)
   for (int x = 0; x < size.x; ++x)

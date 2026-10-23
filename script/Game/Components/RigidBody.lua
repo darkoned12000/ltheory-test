@@ -216,6 +216,14 @@ function Entity:setVelocity (velocity)
   self.body:setLinearVelocity(velocity)
 end
 
+-- The SAVE system sets a restored ship's heading (SaveGame.Restore); the
+-- FFI's RigidBody has the call but no Entity wrapper exposed it until the
+-- save needed one.
+function Entity:setRot (rot)
+  assert(self.body)
+  self.body:setRot(rot)
+end
+
 --[[ getPreStepVelocity -- velocity as it was BEFORE the solver ran this step.
 
   Use this, not getVelocity, whenever you are measuring an IMPACT rather than

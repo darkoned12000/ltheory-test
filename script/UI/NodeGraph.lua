@@ -1366,12 +1366,13 @@ function NodeGraph:onInput (state)
   self.pos.y = self.pos.y + pan * (
     Input.GetValue(Button.Keyboard.Down) - Input.GetValue(Button.Keyboard.Up))
 
-  -- Category filters (F5 ships / F6 rocks / F7 places / F8 routes). F-keys are
-  -- otherwise unused (F9 debug, F10 map); N-keys drive ship groups, M mutes.
-  if Input.GetPressed(Button.Keyboard.F5) then self.filter.ships = not self.filter.ships end
-  if Input.GetPressed(Button.Keyboard.F6) then self.filter.rocks = not self.filter.rocks end
-  if Input.GetPressed(Button.Keyboard.F7) then self.filter.places = not self.filter.places end
-  if Input.GetPressed(Button.Keyboard.F8) then self.filter.routes = not self.filter.routes end
+  -- Category filters (F1 ships / F2 rocks / F3 places / F4 routes). The
+  -- plain F6/F7 belong to QUICKSAVE/QUICKLOAD (the old game's keys), so the
+  -- map's filters sit lower on the cluster; F5 is the engine Reload binding.
+  if Input.GetPressed(Button.Keyboard.F1) then self.filter.ships = not self.filter.ships end
+  if Input.GetPressed(Button.Keyboard.F2) then self.filter.rocks = not self.filter.rocks end
+  if Input.GetPressed(Button.Keyboard.F3) then self.filter.places = not self.filter.places end
+  if Input.GetPressed(Button.Keyboard.F4) then self.filter.routes = not self.filter.routes end
   -- Home = recentre on YOU; End = re-fit the whole level.
   if Input.GetPressed(Button.Keyboard.Home) then self:centerOnPlayer() end
   if Input.GetPressed(Button.Keyboard.End) then self:refit() end

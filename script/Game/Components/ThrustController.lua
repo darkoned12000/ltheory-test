@@ -119,7 +119,10 @@ function ThrustController:update (e, dt)
   end
 
   local active = max(abs(self.forward), max(abs(self.right), abs(self.up)))
-  local targetVol = self.engineSfxVolume * (0.45 + 0.45 * active + 0.35 * boost)
+  -- The SFX master gain is re-read every frame, so the engine loop follows
+  -- the SETTINGS screen's Effects slider live (see Config.audio.sfxVolume).
+  local targetVol = self.engineSfxVolume * (Config.audio.sfxVolume or 1)
+                    * (0.45 + 0.45 * active + 0.35 * boost)
 
   -- Smooth volume transitions using an Exponential Moving Average (EMA) to eliminate zipper noise
   self.currentVol = self.currentVol and (self.currentVol + (targetVol - self.currentVol) * math.min(1.0, dt * 15.0)) or targetVol

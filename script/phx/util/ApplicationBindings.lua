@@ -1,5 +1,7 @@
 local self = {
   Reload           = Button.Keyboard.F5,
+  QuickSave        = Button.Keyboard.F6,
+  QuickLoad        = Button.Keyboard.F7,
   ToggleWireframe  = Button.Keyboard.Tab,
   ProfilerToggle   = Button.Keyboard.F10,
   ToggleFullscreen = Button.Keyboard.F11,

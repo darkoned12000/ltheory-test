@@ -1,5 +1,6 @@
 local Bindings = require('phx.util.ApplicationBindings')
 local CaptureHarness = require('phx.util.CaptureHarness')
+local Displays = require('phx.util.Displays')
 
 -- Gamepad mapping DB is version-stamped in its filename; hoisted here so a
 -- future bump doesn't require hunting through run() for a bare string.
@@ -10,6 +11,24 @@ local Application = class(function (self) end)
 -- Virtual ---------------------------------------------------------------------
 
 function Application:getDefaultSize ()
+  -- CAPTURE FIRST. A fixed-size run must open at its fixed size: the
+  -- harness adopts `resX/resY` from here, and a window created at the
+  -- monitor's size while the harness pins 1024x768 produced mismatched
+  -- captures (a correctly-laid-out frame cropped to the window's top-left).
+  local fw, fh = CaptureHarness.fixedW, CaptureHarness.fixedH
+  if fw then return fw, fh end
+
+  -- AUTOSIZE (the default): open at the monitor's own resolution. A game
+  -- window smaller than the desktop was the complaint -- "the game launches
+  -- at menu resolution, when it should be a lot bigger" -- and the monitor's
+  -- own size IS the honest default. `Config.window.autoSize = false` keeps
+  -- the explicit width/height (the SETTINGS screen writes it when the player
+  -- picks a specific resolution).
+  if Config.window.autoSize ~= false then
+    local w, h = Displays.Desktop()
+    if w and h then return w, h end
+  end
+
   return Config.window.width, Config.window.height
 end
 
@@ -228,8 +247,11 @@ function Application:run ()
       -- TODO : Remove this once bindings are fixed
       if Input.GetKeyboardCtrl() and Input.GetPressed(Button.Keyboard.W) then self:quit() end
       if Input.GetPressed(Bindings.Exit) then self:quit() end
-      -- Clean quit key for WM environments whose XWayland window has no
-      -- title-bar close button (e.g. Hyprland tiling). Default Escape.
+      -- Clean quit key for WM environments whose window has no title-bar
+      -- close button. NIL by default: it used to be Escape, and Escape is
+      -- how the player toggles the menu -- a missed pause became a lost
+      -- session. Quitting is the menu's EXIT entry, and a Config.Local
+      -- override can put Config.window.quitKey back for a specific setup.
       if Config.window.quitKey
         and Input.GetPressed(Config.window.quitKey) then self:quit() end
 

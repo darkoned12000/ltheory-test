@@ -1174,7 +1174,7 @@ function GameView:onLightningStrike (e)
   local sound = Sound.Load(sfx.sound, false, true)
   sound:set3DPos(e.pos, Vec3f(0, 0, 0))
   sound:set3DMinMaxDistance(sfx.minDist or 500, 0)
-  sound:setVolume(sfx.volume or 3.5)
+  sound:setVolume((sfx.volume or 3.5) * (Config.audio.sfxVolume or 1))
   sound:setFreeOnFinish(true)
   sound:play()
 end
@@ -1337,6 +1337,25 @@ function GameView:setOrbit (orbit)
     lastCamera:pop()
     self.camera:push()
   end
+end
+
+function GameView:onPlayerShipChanged ()
+  -- The world was rebuilt around the player (NEW GAME / CUSTOM GAME): the
+  -- old ship was deleted with the system it lived in, and every camera
+  -- still holds it as its target. Re-seat BOTH cameras (the chase owns the
+  -- frame, the orbit is F3), then SNAP rather than glide: `CameraChase:warp`
+  -- recomputes the pose around the new ship, and the eye-smoothing state
+  -- (used for HUD velocity readouts) is re-seeded from the snapped camera.
+  -- Without the snap the camera drifts in from wherever the old ship died,
+  -- and the new ship starts somewhere off-frame.
+  local controlling = self.player:getControlling()
+  self.cameraChase:setTarget(controlling)
+  self.cameraOrbit:setTarget(controlling)
+  local camera = self.camera
+  if camera.setTarget then camera:setTarget(controlling) end
+  if camera.warp then camera:warp() end
+  self.eyeLast = camera.pos:clone()
+  self.eyeVel = controlling and controlling:getVelocity():clone() or Vec3f()
 end
 
 function GameView.Create (player)

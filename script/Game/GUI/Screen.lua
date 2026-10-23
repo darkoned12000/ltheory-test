@@ -122,13 +122,14 @@ function Band:onDraw (focus, active)
   -- edge as a bright arc.
   DrawEx.Line(x + 40, y + sy - 1, x + sx - 40, y + sy - 1, screen.accent)
 
-  -- The title, centred, and raised five pixels clear of the band's line.
-  -- The centring is the framework's own (Widget:drawTextRectCentered), which
-  -- accounts for the descenders -- a title drawn with the naive formula
-  -- sits ON the line instead of above it.
+  -- The title, centred. Its baseline sits ten pixels below the band's
+  -- vertical centre-line (the player asked for it lower), and the band is
+  -- tall enough (11% of the window) that the descenders stay clear of the
+  -- hairline under it. The centring is the framework's own
+  -- (Widget:drawTextRectCentered), which accounts for the descenders.
   local font = Cache.Font('Exo2Black', Math.Round(sy * 0.52))
   local bound = font:getSize(screen.title or '')
-  local titleY = y + 0.5 * (sy + bound.y) - bound.y - 5
+  local titleY = y + 0.5 * (sy + bound.y) - bound.y + 5
   font:draw(screen.title or '',
     x + (sx - bound.z) * 0.5 - bound.x,
     titleY,
@@ -195,6 +196,19 @@ function Screen.init (self, opts)
   self.backdrop = opts.backdrop or Screen.defaultBackdrop
   self.onClose  = opts.onClose
 
+  -- EVERYTHING ELSE THE CALLER PASSED IS KEPT AS IT IS.
+  --
+  -- A main menu carries onNewGame / onCustomGame / onInfo / onHelp / onExit;
+  -- a station screen will carry its own similar set. `Screen.init` cannot
+  -- enumerate them -- and if it tried, the FIRST callback it forgot to copy
+  -- would be a silent no-op button: clicked, a stack trace that never
+  -- happens, and a menu that looks alive and does nothing. (Found the hard
+  -- way: the very first version of this file dropped every callback except
+  -- onClose, because init only copied the fields it knew about.)
+  for k, v in pairs(opts) do
+    if self[k] == nil then self[k] = v end
+  end
+
   -- Panel's own fields. A screen is a Panel so that it inherits
   -- `cancel()` -- which is how ESC finds its way to `onCancel`.
   self.children = List()
@@ -252,6 +266,10 @@ function Screen:open ()
   self:setEnabled(true)
   return self
 end
+-- NOTE : open() may only be called from a widget that is ALREADY IN THE
+-- CANVAS'S TREE: `setModal` needs the canvas state, and it is found by
+-- walking `parent`. The app flushes its deferred adds (a `canvas:update`)
+-- before opening anything at boot -- see LTheory:onInit.
 
 -- Close the screen: give the input back and fade out.
 function Screen:close ()

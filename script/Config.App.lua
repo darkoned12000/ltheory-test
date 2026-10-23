@@ -210,6 +210,11 @@ Config.audio = {
   --   Config.audio.musicVolume = 0.2
   music       = 'system/ambiance/089',
   musicVolume = 0.35,
+  -- One master gain for every gameplay SFX (blaster, explosion, engine,
+  -- thunder). It multiplies each effect's own `Config.audio.sfx.<name>.
+  -- volume` at the moment the sound plays, so the slider on the SETTINGS
+  -- screen applies live without rebuilding anything. Default: full.
+  sfxVolume   = 1.0,
 
   -- Gameplay sound effects, keyed by logical effect name. Each entry:
   --   sound   = asset name under res/sound/ (extension auto-probed)
@@ -381,15 +386,20 @@ Config.render = {
 }
 
 -- Window setup at launch (consumed by Application:run). ``width``/``height`` set
--- the initial window size (Hyprland's tiler can override once it maps the window),
--- ``fullscreen`` covers the whole output if true, and ``quitKey`` is a physical
--- key (see Button.Keyboard.*) that quits the app cleanly on Hyprland, where the
--- XWayland window has no title-bar close button. Override in Config.Local.lua.
+-- the initial window size (Hyprland's tiler can override once it maps the window)
+-- and ``fullscreen`` covers the whole output if true. Override in Config.Local.lua.
+--
+-- There is NO ``quitKey`` any more. It was Escape, and Escape is how the
+-- player toggles the menu -- an accidental quit in the middle of a chase
+-- because someone wanted pause is not an acceptable trade for a missing
+-- title-bar button. Quitting is the menu's EXIT entry. If a specific window
+-- manager still wants a quit key, set ``Config.window.quitKey = >>Button.<key>``
+-- in Config.Local.lua -- Application:run reads it if it is set.
 Config.window = {
   width      = 1024,  -- default = 1600
   height     = 768,   -- default = 900
   fullscreen = false,
-  quitKey    = Button.Keyboard.Escape,
+  quitKey    = nil,
 }
 
 -- GPU portability & picture: same binary scales from integrated GPU to RTX.

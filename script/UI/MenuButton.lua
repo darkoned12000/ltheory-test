@@ -83,11 +83,14 @@ function MenuButton:onDraw (focus, active)
   DrawEx.Point(x + 12, y + sy * 0.5, 3.5,
     Color(accent.r, accent.g, accent.b, (focus == self and 1.0 or 0.7) * alpha))
 
-  -- The label.
+  -- The label. The draw y is the same formula `Widget:drawText` and the
+  -- framework's Button use (`y + (sy + bound.y) * 0.5 - bound.y`) -- one
+  -- early version read `(sy - bound.y)` and the text hung below the plate
+  -- by exactly one glyph ascent. See libphx/src/Font.cpp on centering.
   local textCol = focus == self and Color(1, 1, 1, alpha) or Color(0.82, 0.87, 0.94, alpha)
   font:draw(self.text,
     x + 24 - bound.x,
-    y + (sy - bound.y) * 0.5 - bound.y,
+    y + (sy + bound.y) * 0.5 - bound.y,
     textCol.r, textCol.g, textCol.b, textCol.a)
 end
 

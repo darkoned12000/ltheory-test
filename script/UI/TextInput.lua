@@ -73,7 +73,12 @@ function TextInput:onUpdate (state)
   end
 end
 
-function TextInput:onInputFocused (state)
+function TextInput:inputFocused (state)
+  -- NOTE : Override `inputFocused`, NOT `onInputFocused`: the canvas
+  -- dispatches `inputFocused` (which Widget routes on to `onInput` — and the
+  -- raw per-frame path calls `onInput` on every widget, focused or not). A
+  -- text field must take keys ONLY while focused and any onInput override
+  -- would leak keystrokes into it while you fly the ship.
   for _, c in ipairs(CHARS) do
     if Input.GetPressed(c[2]) then
       if #self.text < self.maxLength then
@@ -104,9 +109,12 @@ function TextInput:onDraw (focus, active)
   DrawEx.RectOutline(x, y, sx, sy,
     focus == self and Color(0.45, 0.80, 1.0, 0.9) or Color(0.30, 0.50, 0.70, 0.45))
 
+  -- The draw y is the framework's centering formula (`Widget:drawText`,
+  -- `y + (sy + bound.y) * 0.5 - bound.y`); the early `(sy - bound.y)`
+  -- variant hung the text below the plate by one glyph ascent.
   local textCol = Color(0.88, 0.93, 0.98, 1.0)
   local bound = font:getSize(self.text)
-  font:draw(self.text, x + 10, y + (sy - bound.y) * 0.5 - bound.y,
+  font:draw(self.text, x + 10, y + (sy + bound.y) * 0.5 - bound.y,
     textCol.r, textCol.g, textCol.b, textCol.a)
 
   -- The caret.

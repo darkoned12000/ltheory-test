@@ -47,3 +47,10 @@ screenshot/
 
 # The generated version (the commit count) -- written by the build.
 script/Generated/
+
+# The player's settings-screen choices (Game/GUI/SettingsScreen.lua writes it
+# at runtime; boot applies it after Config.Local.lua). User-local state.
+script/Config.Settings.lua
+
+# Save slots (Game/SaveGame.lua): one JSON file per slot.
+saves/

@@ -221,20 +221,15 @@ function HUD:drawLock (a)
 end
 
 function HUD:drawReticle (a)
-  -- Saved below for the cursor-direction branch.
+  -- The reticle does not draw over the debug panel: the custom pointer is
+  -- there. The reticle tracks the aim input; with a mouse the aim point is
+  -- the cursor (and turrets fire along camera:mouseToRay, so the ring ==
+  -- the impact point on screen). With a controller (no cursor) it tracks
+  -- the aim stick (self.aimX/aimY from the thrust controller).
   local debugWindow = self.gameView.debugWindow
   local overPanel = debugWindow and debugWindow:isEnabled()
                     and debugWindow:containsPoint(
                       Input.GetMousePosition().x, Input.GetMousePosition().y)
-  -- Hide the OS cursor during play; the game reticle is the only aim indicator.
-  -- When the debug panel is open we keep the OS cursor visible so its widgets are
-  -- interactive (the panel's onEnable/onDisable also set the cursor, but HUD draws
-  -- every frame so it would otherwise immediately re-hide it).
-  if not (debugWindow and debugWindow:isEnabled()) then
-    Input.SetMouseVisible(false)
-  end
-
-  -- Over the open panel the OS cursor is the pointer; no game reticle needed.
   if overPanel then return end
 
   local cx, cy = self.sx / 2, self.sy / 2

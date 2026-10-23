@@ -7,13 +7,9 @@ local Container = require('UI.Container')
 
 DebugWindow.name = 'Debug Window'
 
-function DebugWindow:onEnable ()
-  Input.SetMouseVisible(true)
-end
-
-function DebugWindow:onDisable ()
-  Input.SetMouseVisible(false)
-end
+-- NOTE : the OS cursor is never shown (the canvas draws the game's own
+-- pointer; see LTheory:onInit), so the old onEnable/onDisable
+-- SetMouseVisible calls that showed it over this panel are gone.
 
 function DebugWindow:input (state)
   if not self:containsPoint(state.mousePosX, state.mousePosY) then return end

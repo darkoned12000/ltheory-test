@@ -10,6 +10,44 @@ setmetatable(Canvas, Container)
 Canvas.isCanvas = true
 Canvas.name     = 'Canvas'
 
+-- THE CUSTOM CURSOR
+-- =================
+-- `showCursor` turns on a draw-over-everything pointer in place of the
+-- system cursor, for apps that want to own their menu feel. It is the old
+-- game's `Icon Pointer`: two fading strokes out of a tip, 0 -> (1,2) and
+-- 0 -> (2,1) in triangle-normalized space. The system cursor stays hidden
+-- the whole session (the app hides it once at boot); this one draws only
+-- when there is something to POINT AT -- a modal screen, or a hovered
+-- widget -- so a happily flying ship still has no cursor at all.
+
+-- The pointer tip's leg length and its fade resolution.
+local cursorLeg = 22
+local cursorSegs = 6
+local cursorColor = Color(0.55, 0.82, 1.0, 1)
+
+function Canvas:drawCursor (s)
+  if not self.showCursor                then return end
+  if not (s.modalFocus or s.focus or s.active) then return end
+  local mx, my = s.mousePosX, s.mousePosY
+
+  -- Two legs out of the tip, each in fading segments: bright at the tip,
+  -- gone by the end. Leg 0->(1,2), leg 0->(2,1), scaled by `cursorLeg`.
+  for i = 0, cursorSegs do
+    local t0, t1 = i / cursorSegs, (i + 1) / cursorSegs
+    local a = (1.0 - t1) * 0.95 + 0.05
+    local c = Color(cursorColor.r, cursorColor.g, cursorColor.b, a)
+    -- Leg 0->(2,1): the shallow, nearly-horizontal stroke.
+    DrawEx.Line(mx + cursorLeg * 2 * t0, my + cursorLeg * t0,
+                mx + cursorLeg * 2 * t1, my + cursorLeg * t1, c)
+    -- Leg 0->(1,2): the steep, nearly-vertical stroke.
+    DrawEx.Line(mx + cursorLeg * t0, my + cursorLeg * 2 * t0,
+                mx + cursorLeg * t1, my + cursorLeg * 2 * t1, c)
+  end
+  -- The tip, filled, so the pointer has an unambiguous head.
+  DrawEx.Point(mx + 1, my + 1, 2, cursorColor)
+end
+
+
 function Canvas:findMouseFocus ()
   local s = self.state
   local foci = {}
@@ -188,6 +226,7 @@ function Canvas:draw (sx, sy)
       Draw.PushAlpha(self.enabled)
       DrawEx.PushAlpha(self.enabled)
       for i = 1, #self.children do self.children[i]:draw(s.focus, s.active) end
+      self:drawCursor(s)
       DrawEx.PopAlpha()
       Draw.PopAlpha()
       BlendMode.Pop()
@@ -231,6 +270,9 @@ function Canvas.Create ()
     state          = nil,
     addQueue       = List(),
     removeQueue    = List(),
+
+    -- The custom pointer; apps turn it on and never show the system cursor.
+    showCursor     = false,
 
     -- Debug
     drawFocus   = false,

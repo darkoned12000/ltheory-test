@@ -140,7 +140,7 @@ function GPUParticles.explode (pos, baseVel, scale)
   local sound = Sound.Load(sfx.sound, false, true)
   sound:set3DPos(pos, baseVel)
   sound:set3DMinMaxDistance(sfx.minDist, 0)
-  sound:setVolume(min(2.0, sfx.volume * (0.5 + 0.08 * scale)))
+  sound:setVolume(min(2.0, sfx.volume * (0.5 + 0.08 * scale)) * (Config.audio.sfxVolume or 1))
   sound:setFreeOnFinish(true)
   sound:play()
 

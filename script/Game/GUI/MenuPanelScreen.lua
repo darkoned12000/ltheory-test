@@ -31,17 +31,22 @@ function MenuPanelScreen.Create (opts)
   opts = opts or {}
   local self = setmetatable({}, MenuPanelScreen)
 
-  Screen.init(self, {
-    title    = opts.title or '',
-    subtitle = opts.subtitle or '',
-    onClose  = opts.onClose,
-    -- A header, not a centred band: this is a page with a title.
-    bandAtTop = true,
-    -- OPAQUE. The menu is already dimming the world; this is a PAGE over
-    -- the menu, and a translucent one lets the menu's title and entries
-    -- show through the text.
-    backdrop = opts.backdrop or Color(0.012, 0.016, 0.03, 1.0),
-  })
+  -- Like MainMenu: copy the caller's opts and layer the defaults on top.
+  -- Screen.init keeps every option it is given; a constructor that rebuilt
+  -- the table field-by-field was how main-menu buttons lost their
+  -- callbacks and clicked to nothing.
+  local o = {}
+  for k, v in pairs(opts) do o[k] = v end
+  o.title    = o.title or ''
+  o.subtitle = o.subtitle or ''
+  -- A header, not a centred band: this is a page with a title.
+  o.bandAtTop = true
+  -- OPAQUE. The menu is already dimming the world; this is a PAGE over
+  -- the menu, and a translucent one lets the menu's title and entries
+  -- show through the text.
+  o.backdrop = o.backdrop or Color(0.012, 0.016, 0.03, 1.0)
+
+  Screen.init(self, o)
 
   -- The content is a one-column grid, and the CLOSE entry is under it.
   self.content:setAlign(0.5, 0)

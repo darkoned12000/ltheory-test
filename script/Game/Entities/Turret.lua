@@ -107,7 +107,7 @@ function Turret:fire ()
   local sound = Sound.Load(sfx.sound, false, true)
   sound:set3DPos(e.pos, self:getParent():getVelocity())
   sound:set3DMinMaxDistance(sfx.minDist, 0)
-  sound:setVolume(sfx.volume)
+  sound:setVolume(sfx.volume * (Config.audio.sfxVolume or 1))
   sound:setFreeOnFinish(true)
   sound:play()
 
