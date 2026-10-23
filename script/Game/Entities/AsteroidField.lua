@@ -466,6 +466,7 @@ function AsteroidField:update (shipPos)
   local ld, ud = self.loadDist, self.unloadDist
   local ud2 = ud * ud
   local touched = 0
+  local loadedN = 0
 
   -- Load chunks by CENTRE distance. With rocks clamped to their cell, the
   -- half-diagonal bound is exact and getFadeBand places the end of the fade
@@ -489,6 +490,7 @@ function AsteroidField:update (shipPos)
             self.system:addChild(chunk.rocks[i].entity)
           end
           touched = touched + 1
+          loadedN = loadedN + 1
         end
       end
     end
@@ -542,7 +544,13 @@ function AsteroidField:update (shipPos)
     end
   end
 
-  return touched, #doomed + evicted
+  -- RETURN THE TRUTH SEPARATELY: `touched` (loads + unloads) was being
+  -- printed as "+loads", so a sector change read as `+8972/-4600` —
+  -- implying the new system ADDED 8972 chunks on top of the old — when it
+  -- had actually dropped all 4600 old ones and loaded a fresh 4372-chunk
+  -- sphere. The playtester read the anomaly correctly anyway ("shouldn't
+  -- the count start over?"); the log should agree with the field.
+  return loadedN, #doomed + evicted
 end
 
 function AsteroidField:getStats ()
