@@ -109,6 +109,13 @@ Config.gen = {
     fadeStart   = 8.75,    -- fully solid inside 21875
     loadRadius  = 12,      -- fade finishes around 27263; chunks load to 30000
     unloadRadius = 14,     -- dropped beyond 35000 (hysteresis)
+    -- THE BUDGET: the hard ceiling on loaded chunks, evicted farthest-first
+    -- when a long flight's path tube would grow past it. Radius hysteresis
+    -- cannot bound cost by itself (a 60k-unit flight loads a ~30k-radius tube
+    -- along the whole path: measured 8151 -> 16887 rocks in one session with
+    -- the FPS dying). 4600 covers the boot sphere at this load radius with
+    -- headroom, so the cap only ever trims what is already behind you.
+    maxChunks   = 4600,
     radius      = 400000,
     -- Rock size is in world units on the entity scale; the mesh radius is about
     -- 0.54 x scale. Base sizes are 12..300, with rare landmarks up to 900. At

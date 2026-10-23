@@ -336,8 +336,9 @@ end
 -- TWO SAVES IN THE SAME SECOND would have collided on the same name and
 -- silently overwritten (a fast double-click on SAVE NEW SLOT looked
 -- exactly like "the game only keeps one save"): -2, -3, ... disambiguate.
-function SaveGame.DefaultSlotName ()
-  local base = 'save-' .. os.date('%Y%m%d-%H%M%S')
+-- `base` is the name prefix; the scan is shared by the menu's save (save-…)
+-- and the F6 quicksave (quicksave-…).
+function SaveGame.UnusedSlotName (base)
   local name = base
   local n = 2
   while File.Exists(slotPath(name)) and n < 100 do
@@ -345,6 +346,10 @@ function SaveGame.DefaultSlotName ()
     n = n + 1
   end
   return name
+end
+
+function SaveGame.DefaultSlotName ()
+  return SaveGame.UnusedSlotName('save-' .. os.date('%Y%m%d-%H%M%S'))
 end
 
 -- ---------------------------------------------------------------------------

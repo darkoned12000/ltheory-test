@@ -44,13 +44,17 @@ silently so the world is not left paused).
   young), quicksaves included; a NEW slot beyond the cap is refused,
   overwriting an existing slot never is.
 * Each SAVE accumulates into its own timestamped slot
-  (`save-YYYYMMDD-HHMMSS`) — the old quicksave rule, kept.
-* **QUICK SAVE (F6) / QUICK LOAD (F7)** — the old game's keys. The
-  quicksave is ONE rolling slot (`quicksave`): one keypress, same slot
-  every time, no list to manage. The thumbnail is captured AT THE PRESS
-  (the live frame, no menu over it — the capture context the menu path
-  cannot have); quick load runs the same regenerate-and-restore path a
-  LOAD row does. The map's layer filters moved to F1-F4 to free the keys.
+  (`save-YYYYMMDD-HHMMSS`, `-2`/`-3` disambiguation when two land in the
+  same second) — the old quicksave rule, kept.
+* **QUICK SAVE (F6) / QUICK LOAD (F7)** — the old game's keys. F6 is
+  ACCUMULATING: every press lands in its own timestamped
+  `quicksave-…` slot (a rolling single slot made "multiple saves"
+  impossible from the keyboard). F7 loads the NEWEST save of any kind.
+  The map's layer filters moved to F1-F4 to free the keys.
+* **DELETE**: every LOAD row has a DEL button (json + thumbnail both);
+  with the cap small, that is the way out when the list fills.
+* **Scrollbar**: the LOAD list scrolls in a fixed-height ScrollView;
+  CLOSE is a footer under it, never inside the scroll.
 * **Thumbnails**: the game banks a working shot every time the menu
   opens from live play, and a save copies it next to its JSON
   (`<slot>.png`). The capture reads the post chain's final compose
@@ -115,3 +119,17 @@ somewhere before it can be saved. Phase 2 saves a *delta over the seed*.
 The old `Load-Save/SAVE-LOAD-AND-INVENTORY.md` roadmap phases (inventory
 UI, mining wiring, loot pods) map onto this codebase as separate items —
 the snapshot fields (`items`, credits) are already in the schema, waiting.
+
+## The asteroid-field budget (same-day companion fix)
+
+Play-testing hit the FPS wall that motivated this doc's neighbor item:
+radius hysteresis cannot bound cost, because a long flight loads a
+load-radius TUBE along the whole path and the unload ring only drops what
+is well behind the ship (measured in one session: 4370 → 6588 chunks,
+8151 → 16887 rocks). The field now carries `maxChunks`
+(`gen.asteroidField.maxChunks`, default 4600, tunable live in
+Debug > Asteroid Field): past the budget it evicts the FARTHEST chunks
+first, never one still inside the load radius, so visible rocks cannot
+pop out and regeneration from the seed puts an evicted chunk back
+identically on the way back. Verified: one 50k jump → `+8500/-4135 →
+4600 chunks`, count clamped, rock count bounded at boot level.

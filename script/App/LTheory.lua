@@ -381,8 +381,10 @@ function LTheory:onInit ()
         The rows live in a SWAPPED child grid of the page's content: a
         fresh list is built every time the page opens (via the framework's
         deferred `add`/`remove`, which keep the widget bookkeeping honest)
-        and every time a save lands. The CLOSE button rides INSIDE the
-        swapped grid, so it stays the last thing on the page. ]]
+        and every time a save lands. The SAVE page's CLOSE rides INSIDE
+        its swapped grid, so it stays the last thing on that page; the
+        LOAD page's CLOSE is a footer under its scroll view, so it never
+        needs scrolling to. ]]
     self.savePopup = GUI.MenuPanelScreen.Create({
       title   = 'SAVE GAME',
       onClose = function () self:openMenu() end,
@@ -449,8 +451,8 @@ function LTheory:onInit ()
     self.loadGrid = nil
     self.loadTexs = {}
     local function refreshLoadList ()
-      if self.loadGrid then
-        self.loadPopup.content:remove(self.loadGrid)
+      if self.loadScroll then
+        self.loadPopup.content:remove(self.loadScroll)
       end
       -- The row textures (Tex2D_Load decodes a fresh one per refresh) are
       -- ours alone; free the previous list or a session of page-opens
@@ -458,7 +460,7 @@ function LTheory:onInit ()
       -- marks it immediately) so the freed textures are never drawn.
       for i = 1, #self.loadTexs do self.loadTexs[i]:free() end
       self.loadTexs = {}
-      self.loadGrid = UI.Grid():setCols(1):setAlign(0.5, 0)
+      self.loadGrid = UI.Grid():setCols(1):setAlign(0, 0)
       self.loadGrid:setStretch(0, 0)
       local slots = SaveGame.ListSlots()
       if #slots == 0 then
@@ -468,7 +470,8 @@ function LTheory:onInit ()
       else
         -- Each slot is a row of two: its thumbnail (what the game looked
         -- like when it was saved; old slots without one just omit it) and
-        -- the facts, LOAD button under them.
+        -- the facts, LOAD and DEL buttons under them. The cap is small
+        -- (10), so a DELETE is the way out when the list is full.
         for _, info in ipairs(slots) do
           local row = UI.Grid():setCols(2):setStretch(0, 0)
           row:setPadCellX(16)
@@ -476,6 +479,8 @@ function LTheory:onInit ()
             local tex = Tex2D.Load(info.thumb)
             self.loadTexs[#self.loadTexs + 1] = tex
             row:add(UI.Image.Create(tex))
+          else
+            row:add(UI.Label():setText(''))
           end
           local col = UI.Grid():setCols(1):setStretch(0, 0)
           col:add(UI.Label():setText(string.format('%s   ·   %s',
@@ -486,15 +491,36 @@ function LTheory:onInit ()
           end
           col:add(UI.Label():setText(string.format('Credits: %d   ·   seed %s',
             info.credits, info.seedHex)))
-          col:add(UI.MenuButton.Create('LOAD', function ()
+          local btns = UI.Grid():setCols(2):setStretch(0, 0)
+          btns:setPadCellX(8)
+          btns:add(UI.MenuButton.Create('LOAD', function ()
             self:loadGame(info.slotName)
           end))
+          btns:add(UI.MenuButton.Create('DEL', function ()
+            if SaveGame.Delete(info.slotName) then
+              printf("[SAVE] deleted '%s'", info.slotName)
+            end
+            refreshLoadList()
+          end))
+          col:add(btns)
           row:add(col)
           self.loadGrid:add(row)
         end
       end
-      self.loadGrid:add(UI.MenuButton.Create('CLOSE', function () self.loadPopup:close() end))
-      self.loadPopup.content:add(self.loadGrid)
+      -- The page scrolls when the slots outgrow it; the scroll view is the
+      -- swapped child (a fixed-height window onto the rebuilt grid). CLOSE
+      -- stays OUTSIDE the scroll (a footer), so it never needs scrolling to.
+      self.loadScroll = UI.ScrollView()
+        :setPadUniform(2)
+        :setScrollable(false, true)
+        :setMinSize(0, 500)
+        :setStretch(0, 0)
+      self.loadScroll:add(self.loadGrid)
+      self.loadScroll.vScrollTarget = 0
+      self.loadScroll.vScrollValue = 0
+      self.loadPopup.content:add(self.loadScroll)
+      self.loadPopup.content:add(UI.MenuButton.Create('CLOSE',
+        function () self.loadPopup:close() end))
     end
 
     self.canvas:add(self.loadPopup, false)
@@ -568,7 +594,12 @@ function LTheory:onInput ()
   if not self:anyScreenOpen() then
     if Input.GetPressed(Bindings.QuickSave) then
       SaveGame.CaptureWorkingShot(self.gameView and self.gameView.renderer)
-      local name, why = self:saveGameNow('quicksave')
+      -- ACCUMULATING quicksaves, like the old game's F6: every press lands
+      -- in its own timestamped slot, so flying between saves keeps all of
+      -- them (a rolling single slot made "multiple saves" impossible from
+      -- the keyboard and read exactly like the save system being broken).
+      local name, why = self:saveGameNow(
+        SaveGame.UnusedSlotName('quicksave-' .. os.date('%Y%m%d-%H%M%S')))
       if name then
         printf('[QUICKSAVE] %s (%s credits)', name,
           tostring((self.player:getControlling()):getCredits()))
@@ -576,8 +607,15 @@ function LTheory:onInput ()
         Log.Warning('QUICKSAVE failed: %s', tostring(why))
       end
     elseif Input.GetPressed(Bindings.QuickLoad) then
-      local ok, why = self:loadGame('quicksave')
-      if not ok then Log.Warning('QUICKLOAD: %s', tostring(why)) end
+      -- Quick load = the NEWEST save of any kind, quicksaves included --
+      -- the old game's F7 semantics (SaveGame.ListSlots is newest-first).
+      local latest = SaveGame.ReadLatest()
+      if latest then
+        local ok, why = self:loadGame(latest.slotName)
+        if not ok then Log.Warning('QUICKLOAD: %s', tostring(why)) end
+      else
+        Log.Warning('QUICKLOAD: no saves yet')
+      end
     end
   end
 

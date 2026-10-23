@@ -314,6 +314,7 @@ function System:streamAsteroidField (ship)
   local perChunk = knob('gen.asteroidField.perChunk',   cfg.perChunk)    or 0
   local loadR    = knob('gen.asteroidField.loadRadius', cfg.loadRadius)   or 4
   local fadeR    = knob('gen.asteroidField.fadeStart',  cfg.fadeStart)    or 0
+  local maxChunks = knob('gen.asteroidField.maxChunks', cfg.maxChunks)    or 0
 
   if not enabled then
     -- Turning it off UNLOADS rather than pauses: a frozen field would still cost
@@ -340,6 +341,7 @@ function System:streamAsteroidField (ship)
   self.asteroidField.perChunk = perChunk
   self.asteroidField.loadDist  = self.asteroidField.chunkSize * loadR
   self.asteroidField.fadeStart = self.asteroidField.chunkSize * fadeR
+  self.asteroidField.maxChunks = maxChunks
 
   -- The ship is PASSED IN, not looked up. There is no System:addPlayer: the
   -- `self.players` list is populated only by spawnAI, so with NPCs disabled it

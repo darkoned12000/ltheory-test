@@ -98,6 +98,16 @@ function AsteroidField.new (system, opts)
 
   self.perChunk   = opts.perChunk   or 6
   self.radius     = opts.radius     or 400000
+  -- THE BUDGET (the FPS ceiling). Radius hysteresis alone cannot bound the
+  -- cost: flying any long arc loads a load-radius TUBE along the whole path,
+  -- and the unload ring only drops what is well behind the ship, so rocks
+  -- accumulate without bound (measured in one session: 4370 -> 6588 chunks,
+  -- 8151 -> 16887 rocks, FPS dying by the end). Beyond maxChunks the field
+  -- evicts the FARTHEST chunks first; regeneration from the seed puts any
+  -- evicted chunk back, identically, on the way back, so the field still
+  -- reads as endless and permanent. 0 = no cap (not recommended).
+  self.maxChunks  = opts.maxChunks  or 0
+  self.chunkCount = 0
   -- Rock size. These are WORLD units on the entity scale, and the generated
   -- mesh's collision/visual radius comes out at roughly 0.54 * scale, so:
   --   scale 40 -> radius ~21, scale 180 -> radius ~97.
@@ -380,6 +390,7 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
 
   local chunk = { cx = cx, cy = cy, cz = cz, rocks = rocks }
   self.chunks[chunkSalt(cx, cy, cz)] = chunk
+  self.chunkCount = self.chunkCount + 1
   return chunk
 end
 
@@ -498,10 +509,40 @@ function AsteroidField:update (shipPos)
     local c = doomed[i]
     self:unloadChunk(c)
     self.chunks[chunkSalt(c.cx, c.cy, c.cz)] = nil
+    self.chunkCount = self.chunkCount - 1
     touched = touched + 1
   end
 
-  return touched, #doomed
+  -- THE BUDGET: evict the FARTHEST chunks until within maxChunks. Only runs
+  -- when over, and never evicts a chunk still inside the load radius, so
+  -- visible rocks cannot pop out -- when the load sphere alone exceeds the
+  -- budget the cap quietly gives up (the panel owner set a budget smaller
+  -- than what they asked the reach to hold).
+  local evicted = 0
+  if self.maxChunks > 0 and self.chunkCount > self.maxChunks then
+    local list = {}
+    for _, chunk in pairs(self.chunks) do
+      local ox = (chunk.cx + 0.5) * cs - px
+      local oy = (chunk.cy + 0.5) * cs - py
+      local oz = (chunk.cz + 0.5) * cs - pz
+      local d2 = ox * ox + oy * oy + oz * oz
+      if d2 > loadLimit2 then
+        list[#list + 1] = { chunk = chunk, d2 = d2 }
+      end
+    end
+    table.sort(list, function (a, b) return a.d2 > b.d2 end)
+    for i = 1, #list do
+      if self.chunkCount <= self.maxChunks then break end
+      local c = list[i].chunk
+      self:unloadChunk(c)
+      self.chunks[chunkSalt(c.cx, c.cy, c.cz)] = nil
+      self.chunkCount = self.chunkCount - 1
+      touched = touched + 1
+      evicted = evicted + 1
+    end
+  end
+
+  return touched, #doomed + evicted
 end
 
 function AsteroidField:getStats ()
@@ -516,6 +557,7 @@ end
 function AsteroidField:clear ()
   for _, chunk in pairs(self.chunks) do self:unloadChunk(chunk) end
   self.chunks = {}
+  self.chunkCount = 0
   self.loadedCount = 0
 end
 
