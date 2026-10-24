@@ -437,9 +437,14 @@ local genName = NameGen.genName
 
 function System:spawnAI (shipCount)
   local player = Entities.Player()
+  -- THE BRAIN MUST BE IN THE WORLD: the capital's Think action ticks via
+  -- Event.Update, which only fires for entities in the tree. The capital
+  -- was never added to the system -- its Think never ran, and every ship
+  -- it owned sat idle forever (the whole AI economy was a no-op).
+  self:addChild(player)
   for i = 1, shipCount do
     local ship = self:spawnShip()
-    ship:setOwner(player)
+    ship:setOwner(player) -- routes through addAsset: the capital's ship book
   end
   player:addItem(Item.Credit, kStartCredits)
   player:pushAction(Actions.Think())
@@ -485,9 +490,15 @@ function System:spawnAsteroidField (count, oreCount)
     asteroid:setScale(scale)
     asteroid:setRot(rng:getQuat())
 
-    -- Mark the last `oreCount` rocks as ore-bearing (mineable later)
+    -- Mark the last `oreCount` rocks as ore-bearing (mineable later).
+    -- THE ORE IS A REAL COMMODITY: this used to read `Item.Ore`, a name
+    -- from the old game's item set that this one never defined -- the
+    -- silent nil seeded yields with NO item, and the first AI miner that
+    -- priced a job crashed on item:getMass(). The belt's rock now yields
+    -- one of the T1 commodities the stations' standing bids actually
+    -- want (the same rule the streaming field's rocks use).
     if i > (count - oreCount) then
-      asteroid:addYield(Item.Ore, 1.0)
+      asteroid:addYield(rng:choose(Item.T1), 1.0)
     end
 
     zone:add(asteroid)
@@ -682,6 +693,12 @@ function System:spawnStation ()
   -- station:setFlow(Item.Silver, self.rng:getUniformRange(-1000, 0))
   station:addMarket()
   station:addTrader()
+  station.trader.credits = 100000 -- the trader's own escrow bank
+  -- THE AI'S DEMAND BOOK (see buildPlace's note): standing bids the NPC
+  -- miners work against.
+  for _, item in ipairs(Item.T1) do
+    station.trader:addStandingBid(item, Item.Price[item] or 10, 200)
+  end
 
   local prod = self.rng:choose(Production.All())
   station:addFactory()

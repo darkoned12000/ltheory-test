@@ -8,6 +8,10 @@ local Trader = class(function (self, parent)
   self.parent = parent
   self.credits = 0
   self.elems = {}
+  -- The STANDING bids: the station's permanent demand, re-armed by
+  -- update() when the AI's deliveries drain the book (the same rule the
+  -- player-facing Market's standing orders follow).
+  self.standingBids = {}
 end)
 
 function Trader:getData (item)
@@ -136,6 +140,14 @@ local function sortBids (a, b)
   return a > b
 end
 
+-- STANDING demand: `count` deep, at this price. The AI's Mine jobs price
+-- themselves against this book (Trader:sell pays the top bid); without a
+-- seeded book every job pays 0 and the AI stays idle forever.
+function Trader:addStandingBid (item, price, count)
+  self.standingBids[item] = { price = price, count = count }
+  for _ = 1, count do self:addBid(item, price) end
+end
+
 function Trader:update ()
   for item, data in pairs(self.elems) do
     if #data.asksQueue > 0 then
@@ -148,6 +160,14 @@ function Trader:update ()
       for i, v in ipairs(data.bidsQueue) do insert(data.bids, v) end
       table.clear(data.bidsQueue)
       table.sort(data.bids, sortBids)
+    end
+  end
+
+  -- Re-arm the standing demand the deliveries have drained.
+  for item, s in pairs(self.standingBids) do
+    local data = self:getData(item)
+    while #data.bids + #data.bidsQueue < s.count do
+      self:addBid(item, s.price)
     end
   end
 end

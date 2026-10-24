@@ -48,6 +48,12 @@ end
 local Market = class(function (self)
   self.data = {}
   self.escrow = {}
+  -- The STANDING orders: a station's permanent demand and stock, seeded
+  -- by the world and topped up by update() whenever trading depletes
+  -- the book (a one-shot bid would go silent forever once filled, which
+  -- read as "the market stopped wanting my ore").
+  self.standingBuy = {}
+  self.standingSell = {}
 end)
 
 function Market:addBuy (...)
@@ -56,6 +62,19 @@ end
 
 function Market:addSell (...)
   addOrder(OrderType.Sell, self, ...)
+end
+
+-- STANDING orders: the world seeds a station's permanent demand (the
+-- bid for a belt's ore) and stock (what its factory makes, the
+-- consumables an outpost sells). update() keeps the books at that level.
+function Market:addStandingBuy (actor, item, count, price)
+  self.standingBuy[item] = { actor = actor, count = count, price = price }
+  self:addBuy(actor, item, count, price)
+end
+
+function Market:addStandingSell (actor, item, count, price)
+  self.standingSell[item] = { actor = actor, count = count, price = price }
+  self:addSell(actor, item, count, price)
 end
 
 function Market:update (e, dt)
@@ -87,6 +106,24 @@ function Market:update (e, dt)
 
       if orderBuy.count == 0 then table.remove(v.ordersBuy) end
       if orderSell.count == 0 then table.remove(v.ordersSell) end
+    end
+  end
+
+  -- TOP UP the standing books. Trading (the player's, an NPC miner's)
+  -- depletes them; the demand and the stock are the station's
+  -- PERMANENT state, so a sold-out bid re-arms at its standing level
+  -- instead of the market going quiet forever. Re-added whole: a book
+  -- this shallow has no partial state worth preserving.
+  for item, s in pairs(self.standingBuy) do
+    local book = self.data[item]
+    if not (book and #book.ordersBuy > 0) then
+      self:addBuy(s.actor, item, s.count, s.price)
+    end
+  end
+  for item, s in pairs(self.standingSell) do
+    local book = self.data[item]
+    if not (book and #book.ordersSell > 0) then
+      self:addSell(s.actor, item, s.count, s.price)
     end
   end
 end

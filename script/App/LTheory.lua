@@ -93,8 +93,13 @@ function LTheory:generate ()
   self.sectorIndex = 0
   self:buildGates()
 
-  for i = 1, 0 do
-    self.system:spawnAI(100)
+  -- THE AI POPULATION: the economy's participants. Each spawnAI is one
+  -- capital whose ships pick jobs by PAYOUT (Actions/Think.lua): mining
+  -- the belts into the stations' standing bids, riding the flows. The
+  -- count is opt-in until play-tested (the asteroid field's rule):
+  -- Config.game.aiShips, 0 = no AI.
+  if (Config.game.aiShips or 0) > 0 then
+    self.system:spawnAI(Config.game.aiShips)
   end
 
   -- Spawn 60 procedural asteroids 3,000 units directly in front of player
@@ -1113,14 +1118,37 @@ function LTheory:buildPlace (region, sectorName)
   -- sell them there, and buy the energy cells the reactors make.
   local Item = require('Game.Item')
   place:addMarket()
+  -- THE TRADER: the Jobs.Mine AI drops its ore at ANY market; the Mine
+  -- job prices the run with dst:getTrader() — a market without a trader
+  -- crashed the brain the first time it priced a job. Every market
+  -- carries both books now.
+  place:addTrader()
+  place.trader.credits = 100000 -- the trader's own escrow bank
+  -- THE AI'S DEMAND BOOK: the standing bids the NPC miners price their
+  -- jobs against (and get paid from). Same prices the player-facing
+  -- market pays, so the two books cannot disagree about what ore is worth.
+  for _, item in ipairs(Item.T1) do
+    place.trader:addStandingBid(item, Item.Price[item] or 10, 200)
+  end
   -- The place's working capital: it has to be able to PAY for what it
   -- buys, or the market's transfer fails on the buyer's side.
   place:addCredits(100000)
+  -- STANDING ORDERS, not one-shot stock: the bid is this place's
+  -- PERMANENT demand for what a belt yields, and Market:update tops the
+  -- book back up whenever trading depletes it (a 200-unit bid sold off
+  -- once would otherwise go silent forever -- "the market stopped
+  -- wanting my ore").
   for _, item in ipairs(Item.T1) do
-    place.market:addBuy(place, item, 200, Item.Price[item] or 10)
+    local price = Item.Price[item] or 10
+    place.market:addStandingBuy(place, item, 200, price)
   end
 
-  -- A yard makes things, and sells them.
+  -- The SELL side, so every dock has something to buy:
+  --   a yard sells what its factory makes (the product, at the book
+  --     price -- this is where the loop's cheap energy comes from);
+  --   a rig or relay sells the universal consumable, ENERGY, at a
+  --     premium -- the far-from-home markup, and the reason the yard's
+  --     margin is worth the trip.
   if kind == 'yard' then
     local Production = require('Game.Production')
     place:addFactory()
@@ -1129,8 +1157,12 @@ function LTheory:buildPlace (region, sectorName)
     -- iterOutputs() is ipairs over the outputs, so it yields the INDEX
     -- first; the list itself is the public field.
     for _, out in ipairs(prod.outputs) do
-      place.market:addSell(place, out.item, 200, Item.Price[out.item] or 20)
+      place.market:addStandingSell(place, out.item, 200,
+        Item.Price[out.item] or 20)
     end
+  else
+    place.market:addStandingSell(place, Item.Energy, 200,
+      math.ceil((Item.Price.Energy or 26) * 1.25))
   end
 
   self.system:addChild(place)

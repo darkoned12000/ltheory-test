@@ -296,6 +296,12 @@ Config.game = {
 
   dockRange              = 50,
 
+  -- THE AI POPULATION (the economy's participants): NPC capital ships
+  -- whose Think action picks jobs by payout -- mining the belts into
+  -- the stations' standing bids, riding the trade flows. 0 = none
+  -- (default until the jobs path is play-tested); raise for traffic.
+  aiShips                = 6,
+
   -- The SECTOR's extent, in world units. A sector is a volume of space with
   -- its own name and its own regions; this is how big it is.
   --

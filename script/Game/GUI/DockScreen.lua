@@ -293,7 +293,7 @@ function DockScreen:buildSellRows (grid, ship, market)
     end
   end
   if not any then
-    tbl:AddRow({ { text = 'You are holding nothing this market bids on.', color = MUTED } })
+    tbl:AddRow({ { text = 'You are holding nothing this market bids on. Mine a belt first, then sell here.', color = MUTED } })
   end
   grid:add(tbl)
   grid:add(cell(' ', nil, MUTED))
