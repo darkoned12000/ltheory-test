@@ -35,10 +35,10 @@ DockScreen.name = 'Dock Screen'
 -- COLUMN WIDTHS, fixed so the rows line up: each row is its own grid,
 -- and label-sized columns would drift every row's cells (the settings
 -- page's misalignment trap, again).
-local COL_ITEM  = 190
-local COL_PRICE = 100
-local COL_DEPTH = 120
-local COL_COUNT = 80
+local COL_ITEM  = 200
+local COL_PRICE = 110
+local COL_DEPTH = 130
+local COL_COUNT = 90
 
 -- The palette (the menu's own family).
 local ACCENT = Color(0.45, 0.80, 1.0, 1.0)
@@ -194,7 +194,7 @@ function DockScreen:refresh ()
 
   local tabs = Grid():setCols(2):setStretch(0, 0)
   tabs:setPadCellX(8)
-  tabs:add(MenuButton.Create('MARKET', function ()
+  tabs:add(MenuButton.Create('BUY', function ()
     if self.tab ~= 'market' then self.tab = 'market'; self:refresh() end
   end))
   tabs:add(MenuButton.Create('SELL', function ()
@@ -229,7 +229,7 @@ function DockScreen:buildBuyRows (grid, ship, market)
     { title = 'PRICE',     width = COL_PRICE },
     { title = 'SUP/DEM',   width = COL_DEPTH },
     { title = 'HELD',      width = COL_COUNT },
-    { title = ' ',         width = 170       },
+    { title = ' ',         width = 220       },
   }, { height = 240 })
 
   local any = false
@@ -268,7 +268,7 @@ function DockScreen:buildSellRows (grid, ship, market)
     { title = 'COMMODITY', width = COL_ITEM  },
     { title = 'HELD',      width = COL_COUNT },
     { title = 'PRICE',     width = COL_PRICE },
-    { title = ' ',         width = 170       },
+    { title = ' ',         width = 220       },
   }, { height = 240 })
 
   local any = false

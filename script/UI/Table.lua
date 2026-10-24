@@ -25,11 +25,13 @@ local DrawEx = require('UI.DrawEx')
 
 local Table = {}
 
--- The palette, from the menu's own family.
-local OUTLINE = Color(0.45, 0.80, 1.0, 0.30)
-local HEAD_BG = Color(0.10, 0.14, 0.24, 0.90)
+-- The palette, from the menu's own family. The header band reads as a
+-- DIFFERENT shade on purpose (the user's ask): darker and more opaque
+-- than the rows, with the accent line under it.
+local OUTLINE = Color(0.45, 0.80, 1.0, 0.35)
+local HEAD_BG = Color(0.05, 0.08, 0.15, 0.95)
 local HEAD_TX = Color(0.74, 0.82, 0.94, 1.0)
-local LINE_C  = Color(0.45, 0.80, 1.0, 0.12)
+local LINE_C  = Color(0.45, 0.80, 1.0, 0.14)
 local WHITE   = Color(0.88, 0.93, 0.98, 1.0)
 
 -- `cols`: an array of { title = 'PRICE', width = 100 }.
@@ -40,12 +42,21 @@ function Table.Create (cols, opts)
 
   -- The sticky header: OUTSIDE the scroll, so it never moves.
   local header = Grid():setCols(#cols)
-  header:setPadCellX(4)
+  header:setPadCellX(8)
   for _, col in ipairs(cols) do
     local l = Label():setText(col.title or '')
     l:setFontColor(HEAD_TX)
     if col.width then l:setWidth(col.width) end
     header:add(l)
+  end
+  -- The header's own COLUMN lines, from the laid-out cells' real rects.
+  header.onDraw = function (_, focus, active)
+    local x, y, sx, sy = header:getRectGlobal()
+    for i = 1, #header.children - 1 do
+      local c = header.children[i]
+      local cx, cy, csx, csy = c:getRectGlobal()
+      DrawEx.Rect(cx + csx + 4, y + 2, 1, sy - 4, LINE_C)
+    end
   end
 
   local rows = Grid():setCols(1)
@@ -72,26 +83,40 @@ function Table.Create (cols, opts)
   -- AddRow: cells matched column-by-column. A cell is a string or
   -- number (plain text), { text =, color = } (styled text),
   -- { image = tex } (a small item icon), or any widget (button grids).
-  -- Each row draws a faint separator under it.
+  -- Each row draws a separator under it AND the vertical column lines
+  -- between its cells, from the cells' real rects.
   frame.AddRow = function (_, cells)
     local row = Grid():setCols(#cols)
-    row:setPadCellX(4)
+    row:setPadCellX(8)
     row.onDraw = function (_, focus, active)
       local x, y, sx, sy = row:getRectGlobal()
       DrawEx.Rect(x, y + sy, sx, 1, LINE_C)
+      for i = 1, #row.children - 1 do
+        local c = row.children[i]
+        local cx, cy, csx, csy = c:getRectGlobal()
+        DrawEx.Rect(cx + csx + 4, y + 2, 1, sy - 4, LINE_C)
+      end
     end
     for i = 1, #cols do
       local c = cells[i]
+      -- EVERY CELL RESPECTS ITS COLUMN'S WIDTH: a text cell that sizes
+      -- to its own content ("26") breaks the alignment with the header
+      -- column above it ("PRICE", 110px) -- the squeezed, unprofessional
+      -- look the user called out. Widgets (buttons) size themselves;
+      -- images too.
+      local colWidth = cols[i] and cols[i].width or nil
       if c == nil then
         -- An empty cell keeps the column alive.
       elseif type(c) == 'string' or type(c) == 'number' then
-        row:add(Label():setText(tostring(c)):setFontColor(WHITE))
+        local l = Label():setText(tostring(c)):setFontColor(WHITE)
+        if colWidth then l:setWidth(colWidth) end
+        row:add(l)
       elseif type(c) == 'table' and c.image then
         row:add(Image.Create(c.image))
       elseif type(c) == 'table' and c.text then
         local l = Label():setText(c.text)
         l:setFontColor(c.color or WHITE)
-        if c.width then l:setWidth(c.width) end
+        l:setWidth(c.width or colWidth)
         row:add(l)
       else
         row:add(c)
