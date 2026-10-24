@@ -201,7 +201,7 @@ function DockScreen:refresh ()
   head:add(cell(
     market and (market:isOpen() and 'MARKET (OPEN)' or 'MARKET (CLOSED)'),
     280,
-    market and market:isOpen() and OPEN_C or CLOSED_C))
+    market and market:isOpen() and GOOD or CLOSED_C))
   head:add(cell(format('YOUR CREDITS:  %d', ship and ship:getCredits() or 0), 240, WHITE))
   self.body:add(head)
 
