@@ -254,9 +254,10 @@ function LTheory:onInit ()
   -- about to touch (see UI/Canvas.lua for why the hardware one is hidden).
   -- WHAT it is over is decided every frame in onUpdate: only UI gets a
   -- pointer, playing does not.
+  self.masterControl = Controls.MasterControl(self.gameView, self.player)
   self.canvas
     :add(self.gameView
-      :add(Controls.MasterControl(self.gameView, self.player)))
+      :add(self.masterControl))
 
   self.debugWindow = GUI.DebugWindow(self)
   self.gameView.debugWindow = self.debugWindow
@@ -552,6 +553,14 @@ function LTheory:onInit ()
     self.canvas:add(self.settingsScreen, false)
     self.screens[#self.screens + 1] = self.settingsScreen
 
+    -- DOCK: the market window as a real page. It opens and closes with
+    -- the docked state (see the watcher in onUpdate); it is in the
+    -- screens list so anyScreenOpen pauses the world and shows the
+    -- pointer while it is up.
+    self.dockScreen = GUI.DockScreen.Create({ player = self.player })
+    self.canvas:add(self.dockScreen, false)
+    self.screens[#self.screens + 1] = self.dockScreen
+
     -- FLUSH THE ADDS, THEN OPEN.
     --
     -- Screen:open needs the canvas state (for the modal focus), and it is
@@ -641,7 +650,8 @@ function LTheory:onInput ()
   -- answer is the state captured at the end of the last frame. Asking now
   -- would always say no (the canvas has just closed it) and the menu
   -- would open on the very key that closed it.
-  if Input.GetPressed(Button.Keyboard.Escape) and not self.screenWasOpen then
+  if Input.GetPressed(Button.Keyboard.Escape) and not self.screenWasOpen
+     and not self.masterControl:isPlayerDocked() then
     self:openMenu()
   end
 end
@@ -1199,6 +1209,22 @@ function LTheory:onUpdate (dt)
   -- The state the ESC toggle reads next frame (see LTheory:onInput).
   self.screenWasOpen = self:anyScreenOpen()
 
+  -- THE DOCK SCREEN: opened and closed BY THE DOCKED STATE, not by any
+  -- key. One watcher, here, where the docked predicate already lives:
+  -- MasterControl's control sets run the world half (the orbit camera),
+  -- and this runs the UI half.
+  local docked = self.masterControl and self.masterControl:isPlayerDocked()
+  if self.dockScreen then
+    if docked and not self.dockScreen:isOpen() then
+      self.dockScreen:refresh() -- retitle to the dock you pulled into
+      self.dockScreen:open()
+    elseif not docked and self.dockScreen:isOpen() then
+      -- Silent close: the screen has no onClose, and none may grow here --
+      -- the menu must not pop open over the undocked ship.
+      self.dockScreen:close()
+    end
+  end
+
   -- THE POINTER ONLY EXISTS ON UI.
   --
   -- While flying, the player aims with the reticle; a cursor next to it is
@@ -1212,6 +1238,9 @@ function LTheory:onUpdate (dt)
   self.canvas.showCursor =
     self:anyScreenOpen()
     or (self.debugWindow ~= nil and self.debugWindow:isEnabled() or false)
+    -- DOCKED IS UI TOO: the market window is clickable, and without this
+    -- the player docked at a station had no pointer at all.
+    or (self.masterControl ~= nil and self.masterControl:isPlayerDocked())
 
   -- TEMP: headless settings snapshot.
   if os.getenv('PHX_DUMP_SETTINGS') and not self.__dumped then
@@ -1293,17 +1322,25 @@ function LTheory:onUpdate (dt)
   end
   -- getRoot() is nil with no controlling ship, and a DESTROYED ship detaches
   -- from the tree (no `update`). Guard so a bad spawn can't kill the process.
-  -- THE GAME IS PAUSED BEHIND A MENU.
+  -- THE GAME IS PAUSED BEHIND A MENU -- BUT NOT BEHIND THE DOCK.
   --
   -- A menu is its own page: the world does not run while it is up. The
   -- ship does not fly (the HUD feeds it zeros), and nothing else moves
   -- either -- the rocks, the market, the gates. What still runs is the
   -- camera drift, which is the camera's, not the world's: the menu has to
   -- have something alive behind it.
+  --
+  -- THE DOCK SCREEN IS THE EXCEPTION, and the stuck-at-dock bug is why:
+  -- the UNDOCK button, ESC and the F key all push an Undock ACTION onto
+  -- the ship, and actions only tick when the ship updates. Pausing the
+  -- world behind the dock screen queued the action into a frozen world --
+  -- the player was docked forever, Ctrl-C the only exit. The dock is a
+  -- station interface over a LIVE hangar (the old game's did the same):
+  -- the market's books keep ticking, and every undock path works.
   local paused = self:anyScreenOpen()
-  -- Toasts age only in live play (see Toast.lua's clock rule): a toast
-  -- queued from a menu action survives, full alpha, until the menu is
-  -- gone and the game is back.
+  if self.dockScreen and self.dockScreen:isOpen() then
+    paused = false
+  end
   Toast.Update(paused and 0 or dt)
   local root = self.player and self.player:getRoot()
   if not paused and root and root.update then root:update(dt) end

@@ -689,6 +689,19 @@ function System:spawnStation ()
   station:setName(format('%s %s',
     genName(self.rng),
     prod:getName()))
+  -- THE BOOK: the main station trades like the region places do -- it
+  -- BUYS the raw commodities the belts yield and SELLS what its own
+  -- factory makes. Its book was never seeded: docking at the MAIN
+  -- station (the natural first dock) showed an empty market on both
+  -- tabs, and the working capital has to exist for the market's
+  -- transfers to pay the player.
+  station:addCredits(100000)
+  for _, item in ipairs(Item.T1) do
+    station.market:addBuy(station, item, 200, Item.Price[item] or 10)
+  end
+  for _, out in ipairs(prod.outputs) do
+    station.market:addSell(station, out.item, 200, Item.Price[out.item] or 20)
+  end
   self:addChild(station)
   return station
 end

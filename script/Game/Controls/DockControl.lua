@@ -1,5 +1,17 @@
-local Actions = requireAll('Game.Actions')
-local ShipBindings = require('Game.Controls.ShipBindings')
+--[[ DockControl -- the docked STATE's controller.
+
+  Docking has two halves. This one is the WORLD half: the camera leaves
+  the chase and orbits the station you pulled up to, and the control bar
+  keeps an icon for the docked control set. The UI half (the market
+  window with its MARKET/SELL tabs, the trade buttons, the F/R/T keys)
+  lives in GUI/DockScreen.lua -- a real Screen, opened and closed by
+  LTheory's docked-state watcher, which centers and modal-inputs
+  correctly (this panel is a full-screen overlay and always was: sizing
+  a window inside it is what produced the edge-to-edge band).
+
+  The keyboard shortcuts are the screen's now (F undock, R sell
+  everything, T buy the cheapest ask) -- see DockScreen:onInput.
+]]
 
 local DockControl = {}
 DockControl.__index = DockControl
@@ -9,69 +21,17 @@ function DockControl:onEnable ()
   local pCamera = self.gameView.camera
   self.gameView:setOrbit(true)
 
-  local station  = self.player:getControlling():getParent()
-  self.station = station
-  -- The MARKET, if the thing you are docked with has one. Every region's
-  -- place has one, so this is the economy's front door: the panel is where
-  -- the ore you mined becomes credits.
-  self.market = (station and station.hasMarket and station:hasMarket())
-                and station:getMarket() or nil
+  self.station = self.player:getControlling():getParent()
   self.message = nil
 
   self.camera = self.gameView.camera
   self.camera:setYaw(-Math.Pi2)
   self.camera:setPitch(Math.Pi4)
   self.camera:setRadius(1000)
-  self.camera:setTarget(station)
+  self.camera:setTarget(self.station)
   self.camera:setRelative(true)
   self.camera:warp()
   self.camera:lerpFrom(pCamera.pos, pCamera.rot)
-end
-
--- Sell everything the market will take.
-function DockControl:sellAll ()
-  local ship = self.player:getControlling()
-  local market = self.market
-  if not market then return end
-  local sold, earned = 0, 0
-  for _, q in ipairs(market:quotes()) do
-    if q.bid then
-      local have = ship:getItemCount(q.item)
-      if have > 0 then
-        local n, credits = market:sell(ship, q.item, have)
-        sold = sold + n
-        earned = earned + credits
-      end
-    end
-  end
-  if sold > 0 then
-    self.message = format('Sold %d for %d credits', sold, earned)
-  else
-    self.message = 'Nothing here the market wants'
-  end
-end
-
--- Buy the cheapest thing the market is selling.
-function DockControl:buyOne ()
-  local ship = self.player:getControlling()
-  local market = self.market
-  if not market then return end
-  local best, bestPrice
-  for _, q in ipairs(market:quotes()) do
-    if q.ask and (not bestPrice or q.ask < bestPrice) then
-      best, bestPrice = q, q.ask
-    end
-  end
-  if not best then
-    self.message = 'Nothing here for sale'
-    return
-  end
-  local n, paid = market:buy(ship, best.item, 1)
-  if n > 0 then
-    self.message = format('Bought 1 %s for %d credits', best.item:getName(), paid)
-  else
-    self.message = format('Cannot afford a %s', best.item:getName())
-  end
 end
 
 -- Give the camera back to the ship.
@@ -82,83 +42,6 @@ end
 -- the station for good, and the ship was never followed again.
 function DockControl:onDisable ()
   self.gameView:setOrbit(false)
-end
-
-function DockControl:onInput (state)
-  if ShipBindings.Dock:get() > 0 then
-    self.player:getControlling():pushAction(Actions.Undock())
-    return
-  end
-  if self.market then
-    if ShipBindings.Sell:get() > 0 then self:sellAll() end
-    if ShipBindings.Buy:get() > 0 then self:buyOne() end
-  end
-end
-
-function DockControl:onDraw (focus, active)
-  -- TODO : Unify this with HUD
-  local x, y, sx, sy = self:getRectGlobal()
-  UI.DrawEx.TextAdditive(
-    'NovaMono',
-    'Press F to Undock',
-    16,
-    x, y, sx, sy,
-    1, 1, 1, 1,
-    0.5, 0.99
-  )
-
-  if not self.market then return end
-
-  -- THE MARKET.
-  --
-  -- The prices the market will pay and will ask, the player's hold and
-  -- credits, and the two keys that move things. The economy was invisible
-  -- until this: the ore could be mined and it could be carried, and there
-  -- was nowhere to turn it into anything.
-  local ship = self.player:getControlling()
-  local line = 0
-  local function put (text, r, g, b)
-    line = line + 1
-    UI.DrawEx.TextAdditive('NovaMono', text, 15,
-      x + 24, y + 40 + (line - 1) * 20, sx, sy, r, g, b, 1, 0.0, 0.0)
-  end
-
-  local name = (self.station and self.station.getName and self.station:getName()) or 'Station'
-  put(name .. '  --  MARKET', 1.0, 0.80, 0.40)
-  put(format('Credits: %d', ship:getCredits()), 1, 1, 1)
-
-  local holding = {}
-  for _, item in ipairs(require('Game.Item').All()) do
-    local n = ship:getItemCount(item)
-    if n > 0 then holding[#holding + 1] = format('%s x%d', item:getName(), n) end
-  end
-  if #holding > 0 then
-    put('Holding: ' .. table.concat(holding, ', '), 0.7, 0.9, 1.0)
-  end
-
-  -- The old Limit Theory's market panel (Market/MidPanel.lts) had the same
-  -- columns: the item, the price you would BUY at, the price you would
-  -- SELL at, the SUPPLY against the DEMAND, and how much of it you are
-  -- holding. The supply and demand are the market's DEPTH -- how much there
-  -- is to trade, and at what -- which is what tells the player whether a
-  -- price is real or thin.
-  put(' ', 0, 0, 0)
-  put(format('%-20s %7s %7s %9s %6s', 'COMMODITY', 'BUY AT', 'SELL AT',
-    'SUP/DEM', 'HELD'), 0.7, 0.7, 0.8)
-  for _, q in ipairs(self.market:quotes()) do
-    local d = self.market:depth(q.item) or {}
-    put(format('%-20s %7s %7s %9s %6s', q.item:getName(),
-      q.ask and tostring(q.ask) or '-',
-      q.bid and tostring(q.bid) or '-',
-      format('%s/%s', tostring(d.supply or 0), tostring(d.demand or 0)),
-      tostring(ship:getItemCount(q.item))), 1, 1, 1)
-  end
-
-  put(' ', 0, 0, 0)
-  put('R = sell everything    T = buy one', 0.6, 0.8, 1.0)
-  if self.message then
-    put(self.message, 0.4, 1.0, 0.5)
-  end
 end
 
 function DockControl:onDrawIcon (iconButton, focus, active)

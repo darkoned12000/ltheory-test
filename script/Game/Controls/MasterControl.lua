@@ -63,6 +63,10 @@ local ControlSets = {
   },
 }
 
+function MasterControl:isPlayerDocked ()
+  return isPlayerDocked(self)
+end
+
 function MasterControl:onInput (state)
   if Bindings.TogglePanel:get() > 0 then
     self.panel:toggleEnabled()
