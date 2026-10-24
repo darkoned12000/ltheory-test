@@ -45,6 +45,8 @@ local ACCENT = Color(0.45, 0.80, 1.0, 1.0)
 local WHITE  = Color(0.88, 0.93, 0.98, 1.0)
 local MUTED  = Color(0.62, 0.72, 0.86, 1.0)
 local GOOD   = Color(0.40, 1.0, 0.50, 1.0)
+-- The market's state colors: OPEN green, CLOSED red.
+local CLOSED_C = Color(1.0, 0.35, 0.35, 1.0)
 
 -- One fixed-width cell: a label sized to a column so every row's cells
 -- land on the same x.
@@ -115,6 +117,11 @@ function DockScreen:trade (item, count, selling)
   if not market then return end
   local n, total
   if selling then
+    if not market:isOpen() then
+      self.message = 'The market is not buying.'
+      self:refresh()
+      return
+    end
     n, total = market:sell(ship, item, count)
     if n > 0 then
       self.message = format('Sold %d %s for %d credits', n, item:getName(), total)
@@ -187,20 +194,36 @@ function DockScreen:refresh ()
   local ship = self.player and self.player:getControlling()
   self.title = station and station.getName and station:getName() or 'DOCK'
 
+  -- THE MARKET'S STATE: OPEN (green) or CLOSED (red). A closed market
+  -- sells its stock but buys nothing -- abandoned, damaged, or a depot
+  -- that only sells equipment; the knob gameplay mechanics will flip.
   local head = Grid():setCols(2):setStretch(0, 0)
-  head:add(cell('MARKET', 280, MUTED))
-  head:add(cell(format('CREDITS  %d', ship and ship:getCredits() or 0), 220, WHITE))
+  head:add(cell(
+    market and (market:isOpen() and 'MARKET (OPEN)' or 'MARKET (CLOSED)'),
+    280,
+    market and market:isOpen() and OPEN_C or CLOSED_C))
+  head:add(cell(format('YOUR CREDITS:  %d', ship and ship:getCredits() or 0), 240, WHITE))
   self.body:add(head)
 
   local tabs = Grid():setCols(2):setStretch(0, 0)
   tabs:setPadCellX(8)
-  tabs:add(MenuButton.Create('BUY', function ()
+  local buyBtn = MenuButton.Create('BUY', function ()
     if self.tab ~= 'market' then self.tab = 'market'; self:refresh() end
-  end))
-  tabs:add(MenuButton.Create('SELL', function ()
+  end)
+  local sellBtn = MenuButton.Create('SELL', function ()
     if self.tab ~= 'sell' then self.tab = 'sell'; self:refresh() end
-  end))
+  end)
+  -- THE ACTIVE TAB IS UNMISSABLE: the selected plate reads like a
+  -- focused one and stays that way (see MenuButton:setSelected).
+  buyBtn:setSelected(self.tab == 'market')
+  sellBtn:setSelected(self.tab == 'sell')
+  tabs:add(buyBtn)
+  tabs:add(sellBtn)
   self.body:add(tabs)
+
+  -- A 25px BREATH before and after the table: the tab buttons and the
+  -- UNDOCK button sat touching its outline.
+  self.body:add(cell(' ', nil, MUTED))
 
   if market then
     local list = Grid():setCols(1):setStretch(0, 0)
@@ -211,6 +234,8 @@ function DockScreen:refresh ()
     self.body:add(cell('This dock has no market.', nil, MUTED))
   end
 
+  -- The breath after the table (same 25px rule).
+  self.body:add(cell(' ', nil, MUTED))
   self.body:add(cell(self.message or ' ', nil, GOOD))
   self.body:add(MenuButton.Create('UNDOCK  (F)', function ()
     self.player:getControlling():pushAction(Actions.Undock())
@@ -262,8 +287,13 @@ end
 
 -- The SELL tab: ONE table of YOUR HOLD — one row per commodity you are
 -- carrying that this market bids on, with the price you would get and
--- the sell buttons in the row.
+-- the sell buttons in the row. A CLOSED market buys nothing: the table
+-- says so in its own voice.
 function DockScreen:buildSellRows (grid, ship, market)
+  if not market:isOpen() then
+    grid:add(cell('This market is not buying.', nil, CLOSED_C))
+    return
+  end
   local tbl = Table.Create({
     { title = 'COMMODITY', width = COL_ITEM  },
     { title = 'HELD',      width = COL_COUNT },

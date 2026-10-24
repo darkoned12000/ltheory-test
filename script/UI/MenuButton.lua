@@ -55,6 +55,14 @@ function MenuButton:setDisabled (disabled)
   return self
 end
 
+-- A SELECTED entry (the active tab of a set): the plate reads the way a
+-- focused one does and STAYS that way until deselected -- the player
+-- knows without a doubt which page they are on, hover or not.
+function MenuButton:setSelected (selected)
+  self.selected = selected
+  return self
+end
+
 function MenuButton:onFindMouseFocus (mx, my, foci)
   if self.disabled then return end
   Widget.onFindMouseFocus(self, mx, my, foci)
@@ -72,22 +80,24 @@ function MenuButton:onDraw (focus, active)
 
   local accent = self.accent or MenuButton.defaultAccent
   local alpha = self.disabled and 0.28 or 1.0
+  local on = self.selected or focus == self
 
   -- The plate.
-  local bg = focus == self and Color(0.16, 0.30, 0.46, 0.95)
-                         or Color(0.06, 0.09, 0.14, 0.85)
+  local bg = on and Color(0.16, 0.30, 0.46, 0.95)
+                 or Color(0.06, 0.09, 0.14, 0.85)
   DrawEx.Panel(x, y, sx, sy, Color(bg.r, bg.g, bg.b, bg.a * alpha), 0.5)
-  DrawEx.RectOutline(x, y, sx, sy, Color(accent.r, accent.g, accent.b, 0.25 * alpha))
+  DrawEx.RectOutline(x, y, sx, sy,
+    Color(accent.r, accent.g, accent.b, (on and 0.85 or 0.25) * alpha))
 
   -- The bullet.
   DrawEx.Point(x + 12, y + sy * 0.5, 3.5,
-    Color(accent.r, accent.g, accent.b, (focus == self and 1.0 or 0.7) * alpha))
+    Color(accent.r, accent.g, accent.b, (on and 1.0 or 0.7) * alpha))
 
   -- The label. The draw y is the same formula `Widget:drawText` and the
   -- framework's Button use (`y + (sy + bound.y) * 0.5 - bound.y`) -- one
   -- early version read `(sy - bound.y)` and the text hung below the plate
   -- by exactly one glyph ascent. See libphx/src/Font.cpp on centering.
-  local textCol = focus == self and Color(1, 1, 1, alpha) or Color(0.82, 0.87, 0.94, alpha)
+  local textCol = on and Color(1, 1, 1, alpha) or Color(0.82, 0.87, 0.94, alpha)
   font:draw(self.text,
     x + 24 - bound.x,
     y + (sy + bound.y) * 0.5 - bound.y,

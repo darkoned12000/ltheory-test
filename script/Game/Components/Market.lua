@@ -54,7 +54,20 @@ local Market = class(function (self)
   -- read as "the market stopped wanting my ore").
   self.standingBuy = {}
   self.standingSell = {}
+  -- THE OPEN STATE: whether this station BUYS at all. A closed market
+  -- still SELLS its stock (an abandoned or damaged station has
+  -- leftovers but no demand; a fuel depot may sell equipment but not
+  -- take goods) -- the knob gameplay mechanics will flip.
+  self.open = true
 end)
+
+function Market:isOpen ()
+  return self.open ~= false
+end
+
+function Market:setOpen (open)
+  self.open = open and true or false
+end
 
 function Market:addBuy (...)
   addOrder(OrderType.Buy, self, ...)
