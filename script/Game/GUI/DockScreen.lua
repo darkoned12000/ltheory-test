@@ -227,9 +227,9 @@ function DockScreen:refresh ()
   local head = Grid():setCols(2):setStretch(0, 0)
   head:add(cell(
     market and (market:isOpen() and 'MARKET (OPEN)' or 'MARKET (CLOSED)'),
-    280,
+    300,
     market and market:isOpen() and GOOD or CLOSED_C))
-  head:add(cell(format('YOUR CREDITS:  %d', ship and ship:getCredits() or 0), 240, WHITE))
+  head:add(cell(format('YOUR CREDITS:  %d', ship and ship:getCredits() or 0), 280, WHITE))
   self.body:add(head)
 
   local tabs = Grid():setCols(2):setStretch(0, 0)
@@ -273,7 +273,7 @@ function DockScreen:refresh ()
     local use = math.min(math.max(need, 0), held)
     local row = Grid():setCols(2):setStretch(0, 0)
     row:add(cell(format('POWER  %d/%d   CELLS  %d',
-      ship:getCharge(), ship:getChargeMax(), held), 300, WHITE))
+      ship:getCharge(), ship:getChargeMax(), held), 420, WHITE))
     if use > 0 then
       row:add(MenuButton.Create(format('RECHARGE  %d CELL%s',
         use, use == 1 and '' or 'S'), function ()

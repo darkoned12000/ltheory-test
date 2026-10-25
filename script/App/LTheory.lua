@@ -679,6 +679,13 @@ end
 -- menu, and that frame shows the dimmed world behind the popup, not the
 -- game.
 function LTheory:openMenu ()
+  if self.masterControl and self.masterControl:isPlayerDocked() then
+    -- While docked the menu has no business opening: the dock page is
+    -- the only page, and ESC undocks instead. Popups closing while
+    -- docked used to call this and flash the menu (and its title band)
+    -- under the dock's translucent backdrop -- the "garbled title".
+    return
+  end
   if self.menu then
     if not self.menu:isOpen() then
       if self.hasDrawn and not self.screenWasOpen then
@@ -1129,7 +1136,7 @@ function LTheory:buildPlace (region, sectorName)
   -- crashed the brain the first time it priced a job. Every market
   -- carries both books now.
   place:addTrader()
-  place.trader.credits = 100000 -- the trader's own escrow bank
+  place.trader.credits = 500000 -- the trader's own escrow bank
   -- THE AI'S DEMAND BOOK: the standing bids the NPC miners price their
   -- jobs against (and get paid from). Same prices the player-facing
   -- market pays, so the two books cannot disagree about what ore is worth.
@@ -1138,7 +1145,7 @@ function LTheory:buildPlace (region, sectorName)
   end
   -- The place's working capital: it has to be able to PAY for what it
   -- buys, or the market's transfer fails on the buyer's side.
-  place:addCredits(100000)
+  place:addCredits(500000)
   -- STANDING ORDERS, not one-shot stock: the bid is this place's
   -- PERMANENT demand for what a belt yields, and Market:update tops the
   -- book back up whenever trading depletes it (a 200-unit bid sold off

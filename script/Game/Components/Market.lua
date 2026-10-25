@@ -323,9 +323,12 @@ function Market:sell (actor, item, count)
         filled = filled + q
         if o.count <= 0 then table.remove(orders, i) end
       else
-        -- A broke bid withdraws itself rather than sitting at the top
-        -- of the book forever.
-        table.remove(orders, i)
+        -- A broke buyer: the bid STAYS (it is still demand; the place
+        -- earns credits from its asks and can pay again later). Do not
+        -- withdraw it -- withdrawing every broke bid is what emptied
+        -- whole markets. The buyer is the same for every bid in this
+        -- book, so stop selling into it.
+        break
       end
       i = i - 1
     end
