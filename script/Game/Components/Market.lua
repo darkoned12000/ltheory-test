@@ -1,5 +1,6 @@
 local Entity = require('Game.Entity')
 local Registry = require('Game.EconomyRegistry')
+local PriceCurve = require('Game.PriceCurve')
 
 local OrderType = {
   Buy = {
@@ -23,12 +24,31 @@ local function addOrder (type, self, actor, item, count, price)
     data[item] = {
       ordersBuy = {},
       ordersSell = {},
+      -- THE ESCROW: a SELL order parks its goods at list time, so the
+      -- book never promises one shelf twice (a factory and a book would
+      -- otherwise both spend the same inventory), and a buyer can never
+      -- be told the shelf has stock it does not.
+      escrowStock = 0,
     }
   end
 
   local orders = type == OrderType.Buy and
     data[item].ordersBuy or
     data[item].ordersSell
+
+  -- A SELL order is escrowed goods, not a promise: take what the actor
+  -- actually holds out of its inventory the moment the order is listed.
+  -- Whatever it lacked simply does not make it into the book.
+  if type == OrderType.Sell and actor.getItemCount then
+    local held = actor:getItemCount(item)
+    if held < count then count = held end
+    if count > 0 then
+      actor:removeItem(item, count)
+      data[item].escrowStock = data[item].escrowStock + count
+    end
+    -- An ask with nothing behind it never enters the book.
+    if count <= 0 then return end
+  end
 
   insert(orders, {
     actor = actor,
@@ -79,15 +99,26 @@ end
 
 -- STANDING orders: the world seeds a station's permanent demand (the
 -- bid for a belt's ore) and stock (what its factory makes, the
--- consumables an outpost sells). update() keeps the books at that level.
+-- consumables an outpost sells). update() keeps the books at that
+-- level, and the OPENING order prices off the shelf like every re-arm
+-- does (a new place with an empty shelf bids 1.5x its anchors).
 function Market:addStandingBuy (actor, item, count, price)
   self.standingBuy[item] = { actor = actor, count = count, price = price }
-  self:addBuy(actor, item, count, price)
+  local stock = actor.getItemCount and actor:getItemCount(item) or 0
+  self:addBuy(actor, item, count, PriceCurve.price(price, stock, count))
 end
 
 function Market:addStandingSell (actor, item, count, price)
   self.standingSell[item] = { actor = actor, count = count, price = price }
   self:addSell(actor, item, count, price)
+end
+
+function Market:escrowFor (item, count)
+  local book = self.data[item]
+  if not book then return 0 end
+  local parked = math.min(count, book.escrowStock or 0)
+  book.escrowStock = (book.escrowStock or 0) - parked
+  return parked
 end
 
 function Market:update (e, dt)
@@ -124,19 +155,54 @@ function Market:update (e, dt)
 
   -- TOP UP the standing books. Trading (the player's, an NPC miner's)
   -- depletes them; the demand and the stock are the station's
-  -- PERMANENT state, so a sold-out bid re-arms at its standing level
-  -- instead of the market going quiet forever. Re-added whole: a book
-  -- this shallow has no partial state worth preserving.
+  -- PERMANENT state, so a sold-out bid re-arms instead of the market
+  -- going quiet forever.
+
+  -- THE LIVING PRICE: the re-arm price follows the shelf (PriceCurve).
+  -- A drained bid means the place wanting the material, and it pays more
+  -- to get it; a full shelf discounts. Prices drift around the anchors
+  -- in Content.lua, so two stations in different states quote different
+  -- prices -- which is what the AI caravans arbitrage.
   for item, s in pairs(self.standingBuy) do
     local book = self.data[item]
-    if not (book and #book.ordersBuy > 0) then
-      self:addBuy(s.actor, item, s.count, s.price)
+    local cur = 0
+    if book then
+      for _, o in ipairs(book.ordersBuy) do cur = cur + o.count end
+    end
+    if s.count > cur then
+      -- The buyer can only bid for what it can pay for when filled
+      -- (the settle path takes the credits out of the actor's bank).
+      local credits = s.actor.getCredits and s.actor:getCredits() or 0
+      local stock = s.actor.getItemCount and s.actor:getItemCount(item) or 0
+      local price = PriceCurve.price(s.price, stock, s.count)
+      local want = min(s.count - cur, floor(credits / price))
+      if want > 0 then
+        self:addBuy(s.actor, item, want, price)
+      end
     end
   end
+
+  -- The SELL side re-arms from the SHELF, not from the standing level:
+  -- the book offers what the place actually holds (escrowed at list
+  -- time), at a scarcity price. A station that has produced comes back
+  -- on the market; a drained depot goes quiet rather than lying.
   for item, s in pairs(self.standingSell) do
     local book = self.data[item]
-    if not (book and #book.ordersSell > 0) then
-      self:addSell(s.actor, item, s.count, s.price)
+    local cur = 0
+    if book then
+      for _, o in ipairs(book.ordersSell) do cur = cur + o.count end
+    end
+    local stock = s.actor.getItemCount and s.actor:getItemCount(item) or s.count
+    local want = min(s.count, stock)
+    if want > cur then
+      local price = PriceCurve.price(s.price, stock, s.count)
+      self:addSell(s.actor, item, want - cur, price)
+    elseif
+      -- Orphaned escrow returns to the shelf: no sell orders left means
+      -- the goods are not promised to anyone.
+      cur == 0 and book and (book.escrowStock or 0) > 0 then
+      s.actor:addItem(item, book.escrowStock)
+      book.escrowStock = 0
     end
   end
 end
@@ -219,25 +285,49 @@ function Market:sell (actor, item, count)
   -- business, not the seller's.)
   if not actor:hasItem(item, count) then return 0, 0 end
 
-  -- Walk the book, best bid first, and settle each order as it is filled.
+  -- Walk the book, best bid first, and settle each order as it is
+  -- filled. Per order, the fill is the least of what remains in the
+  -- caller's trade, what the order holds, and what the buyer's bank
+  -- actually covers (removeCredits asserts; without the clamp a
+  -- drained bid crashed the market instead of just going quiet). A buy
+  -- order holds no goods-escrow -- the escrow is the ASKS' business,
+  -- and applying it here withdrew every standing bid instantly.
   local total, filled = 0, 0
-  for i = #orders, 1, -1 do
+  -- Walking DOWN from the best bid (the list sorts best-last). Every
+  -- settle-or-withdraw step removes at the current index only, which
+  -- shifts just the already-visited tail; stepping down one seems then.
+  local i = #orders
+  while i >= 1 do
     if filled >= count then break end
     local o = orders[i]
     if o.price > 0 then
       local q = math.min(count - filled, o.count)
-      local paid = q * o.price
-      -- The goods and the money change hands: the seller gives the goods and
-      -- is paid; the buyer pays and gets them.
-      actor:removeItem(item, q)
-      o.actor:addItem(item, q)
-      o.actor:removeCredits(paid)
-      actor:addCredits(paid)
-      o.count = o.count - q
-      o.countTotal = o.countTotal - q
-      total = total + paid
-      filled = filled + q
-      if o.count <= 0 then table.remove(orders, i) end
+      -- The buyer's bank: a place cannot pay for what it no longer has
+      -- credits for (removeCredits asserts; without the clamp a drained
+      -- bid crashed the market instead of just going quiet). BUY orders
+      -- hold no goods-escrow -- the escrow check is the ASKS' business,
+      -- and applying it here withdrew every standing bid instantly.
+      q = math.min(q, math.floor(o.actor:getCredits() / o.price))
+      if q > 0 then
+        local paid = q * o.price
+        -- The goods and the money change hands: the seller gives the
+        -- goods (their hold) and is paid; the buyer pays (their bank)
+        -- and takes the goods into their inventory.
+        if not actor:removeItem(item, q) then break end
+        o.actor:removeCredits(paid)
+        o.actor:addItem(item, q)
+        actor:addCredits(paid)
+        o.count = o.count - q
+        o.countTotal = o.countTotal - q
+        total = total + paid
+        filled = filled + q
+        if o.count <= 0 then table.remove(orders, i) end
+      else
+        -- A broke bid withdraws itself rather than sitting at the top
+        -- of the book forever.
+        table.remove(orders, i)
+      end
+      i = i - 1
     end
   end
   return filled, total
@@ -275,16 +365,20 @@ function Market:buy (actor, item, count)
   if fillable <= 0 or price <= 0 then return 0, 0 end
   if not actor:addItem(item, fillable) then return 0, 0 end
 
-  -- Walk the book again, settling each order as it is filled.
+  -- Walk the book again, settling each order as it is filled. The
+  -- goods come out of the BOOK'S ESCROW (they were parked from the
+  -- seller at list time), the credits from the buyer; the seller is
+  -- compensated from nothing -- the ask took no credits from them.
   local paid = 0
   for i = #orders, 1, -1 do
     if paid >= fillable then break end
     local o = orders[i]
     if o.price > 0 then
-      local q = math.min(fillable - paid, o.count)
+      local q = math.min(fillable - paid, o.count,
+                         book.escrowStock or 0)
       local cost = q * o.price
       actor:removeCredits(cost)
-      o.actor:removeItem(item, q)
+      self:escrowFor(item, q)
       o.actor:addCredits(cost)
       o.count = o.count - q
       o.countTotal = o.countTotal - q

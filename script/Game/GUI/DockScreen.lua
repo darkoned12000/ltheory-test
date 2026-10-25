@@ -118,6 +118,24 @@ function DockScreen:dock ()
   return station, market
 end
 
+-- POWER SERVICES: convert hold energy cells into capacitor charge, at
+-- 25 charge a cell, in one button press. This is the commodity loop's
+-- LAST MILE: the cells a place sells are worth carrying because they
+-- are the only thing that fills a dead capacitor away from the dock.
+-- The ship's own chargeRate regenerates the rest passively; the cells
+-- pay for the NOW.
+function DockScreen:recharge (cells)
+  local ship = self.player:getControlling()
+  if cells <= 0 then return end
+  if not ship:removeItem(Item.Energy, cells) then return end
+  local want = math.min(ship:getChargeMax(),
+    ship:getCharge() + cells * 25)
+  ship:setCharge(want, ship:getChargeMax(), ship.chargeRate)
+  self.message = format('Recharged %d cell%s', cells,
+    cells == 1 and '' or 's')
+  self:refresh()
+end
+
 -- One trade through the book, then the page rebuilds (prices, depth,
 -- credits and the hold all moved).
 function DockScreen:trade (item, count, selling)
@@ -243,6 +261,31 @@ function DockScreen:refresh ()
     self.body:add(cell('This dock has no market.', nil, MUTED))
   end
 
+  -- POWER SERVICES: the energy cells the market sells have to DO
+  -- something. Docking is where a ship trades cells for charge: each
+  -- cell transfers 25 charge into the capacitor (a cell holds 25x what
+  -- the capacitor does). The row always shows the state; the button
+  -- does what it can, and the page rebuilds (trade()'s refresh).
+  if ship and ship:hasCharge() then
+    local Energy = Item.Energy
+    local held = ship:getItemCount(Energy)
+    local need = math.ceil((ship:getChargeMax() - ship:getCharge()) / 25)
+    local use = math.min(math.max(need, 0), held)
+    local row = Grid():setCols(2):setStretch(0, 0)
+    row:add(cell(format('POWER  %d/%d   CELLS  %d',
+      ship:getCharge(), ship:getChargeMax(), held), 300, WHITE))
+    if use > 0 then
+      row:add(MenuButton.Create(format('RECHARGE  %d CELL%s',
+        use, use == 1 and '' or 'S'), function ()
+        self:recharge(use)
+      end))
+    else
+      row:add(cell(need > 0 and 'CAPACITOR LOW, NO CELLS' or 'CHARGE FULL',
+        nil, MUTED))
+    end
+    self.body:add(row)
+  end
+
   -- The breath after the table (same 25px rule).
   self.body:add(spacer(44))
   self.body:add(cell(self.message or ' ', nil, GOOD))
@@ -288,10 +331,10 @@ function DockScreen:buildBuyRows (grid, ship, market)
       })
     end
   end
-  if not any then
-    tbl:AddRow({ { text = 'Nothing here for sale right now.', color = MUTED } })
-  end
   grid:add(tbl)
+  if not any then
+    grid:add(cell('Nothing here for sale right now.', nil, MUTED))
+  end
 end
 
 -- The SELL tab: ONE table of YOUR HOLD — one row per commodity you are
@@ -331,10 +374,10 @@ function DockScreen:buildSellRows (grid, ship, market)
       })
     end
   end
-  if not any then
-    tbl:AddRow({ { text = 'You are holding nothing this market bids on. Mine a belt first, then sell here.', color = MUTED } })
-  end
   grid:add(tbl)
+  if not any then
+    grid:add(cell('You are holding nothing this market bids on.', nil, MUTED))
+  end
   grid:add(cell(' ', nil, MUTED))
   grid:add(MenuButton.Create('SELL EVERYTHING', function ()
     self:sellAll()

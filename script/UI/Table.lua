@@ -100,6 +100,10 @@ function Table.Create (cols, opts)
   local function noteWidth (i, text)
     local bound = normalFont and normalFont:getSize(tostring(text))
     local w = bound and (bound.z + 16) or 0
+    -- A hard ceiling per column: one long value (a message row, a
+    -- verbose commodity) may not balloon its column across the screen;
+    -- longer text clips inside the fixed width instead.
+    if w > 560 then w = 560 end
     if w > colMax[i] then
       colMax[i] = w
       applyWidths()

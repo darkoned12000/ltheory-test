@@ -25,8 +25,13 @@ insert(Item.T2, Item.Energy)
 -- running: mine here, sell there, and the difference is yours.
 Item.Price = {
   [Item.Isotopes] = 14,   -- the belt's raw product, and the reactors' fuel
-  [Item.Silver]   = 9,
+  [Item.Silver]   = 9,    -- the reactors' control rods: a SECOND reason a
+                          -- belt pays (silver yields alongside isotopes)
   [Item.Energy]   = 26,   -- a reactor makes 10 of these from one isotope
+  [Item.Waste]    = 3,    -- toxic near-junk: the DISPOSAL price a place
+                          -- pays to take it off your hold, and the bound
+                          -- price it asks when handing it on to a solar
+                          -- array -- a wash, so no round-trip arbitrage
 }
 
 -- Production ------------------------------------------------------------------
@@ -38,8 +43,12 @@ Production.EnergySolar = Production('Solar Energy Array')
   :addOutput(Item.Energy, 5)
   :setDuration(0.5)
 
-Production.EnergyNuclear = Production('Nuclear Reactor') 
+Production.EnergyNuclear = Production('Nuclear Reactor')
   :addInput(Item.Isotopes, 1)
+  :addInput(Item.Silver, 1) -- THE SILVER SINK: control rods per round.
+  -- The belt yields silver as well as isotopes, and without a consumer
+  -- silver was dead weight; priced at 9 against a 260-credit round, it
+  -- is the fee, not the cost -- the makers of the energy demand it.
   :addOutput(Item.Energy, 10)
   :addOutput(Item.Waste, 2)
   :setDuration(0.1)

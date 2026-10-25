@@ -3,7 +3,21 @@ local Entity = require('Game.Entity')
 local Dust = require('Game.Entities.Dust')
 local Nebula = require('Game.Entities.Nebula')
 local Frustum = require('Game.Frustum')
+-- THE RECIPES ARE LOAD-TIME SCOPE: this file loaded under the kernel
+-- require once, Content registered its recipes on THAT copy of the
+-- module, and a require INSIDE the app-sandbox (spawnStation runs
+-- there) hands back a FRESH module with no recipes at all --
+-- EnergyNuclear was nil and the station's seeding crashed. The file
+-- top is the only可靠 place to bind it.
+-- THE RECIPES ARE LOAD-TIME SCOPE: this file loads under the kernel's
+-- require, and Game.Content registers its recipes on THAT copy of the
+-- module. A require INSIDE the app-sandbox (where spawnStation's body
+-- runs) hands back a fresh module with no recipes attached --
+-- EnergyNuclear read nil and the station's seeding crashed. The file
+-- top is the only place to bind it.
 require('Game.Content')
+local Item = require('Game.Item')
+local Production = require('Game.Production')
 
 local System = subclass(Entity, function (self, seed)
   self:addChildren()
@@ -699,25 +713,43 @@ function System:spawnStation ()
   for _, item in ipairs(Item.T1) do
     station.trader:addStandingBid(item, Item.Price[item] or 10, 200)
   end
+  -- And the shelf's asks for the caravans (a capped AI-buyable view of
+  -- what the factory makes and of what miners delivered), plus the
+  -- waste admission at the disposal price -- the traders room mirrors
+  -- the market, not less.
+  for _, out in ipairs(Production.EnergyNuclear.outputs) do
+    station.trader:addStandingAsk(out.item, Item.Price[out.item] or 20, 40)
+  end
+  for _, item in ipairs(Item.T1) do
+    station.trader:addStandingAsk(item, Item.Price[item] or 10, 40, 100)
+  end
+  station.trader:addStandingBid(Item.Waste, Item.Price[Item.Waste], 200)
 
-  local prod = self.rng:choose(Production.All())
+  -- THE PLANT: the station runs the NUCLEAR recipe. It used to pick a
+  -- random production, and that rarely worked out: the SOLAR recipe
+  -- eats WASTE, which nobody mines, so the plant stalled forever and
+  -- the station's sell side stayed empty. The nuclear recipe eats what
+  -- a belt ACTUALLY yields (isotopes + silver), so the miners feed it
+  -- by default and the shelf keeps stock.
   station:addFactory()
-  station:addProduction(prod)
+  station:addProduction(Production.EnergyNuclear)
   station:setName(format('%s %s',
     genName(self.rng),
-    prod:getName()))
+    Production.EnergyNuclear:getName()))
   -- THE BOOK: the main station trades like the region places do -- it
   -- BUYS the raw commodities the belts yield and SELLS what its own
   -- factory makes. Its book was never seeded: docking at the MAIN
   -- station (the natural first dock) showed an empty market on both
   -- tabs, and the working capital has to exist for the market's
-  -- transfers to pay the player.
+  -- transfers to pay the player. The WASTE bid is the disposal sink.
   station:addCredits(100000)
   for _, item in ipairs(Item.T1) do
-    station.market:addBuy(station, item, 200, Item.Price[item] or 10)
+    station.market:addStandingBuy(station, item, 200, Item.Price[item] or 10)
   end
-  for _, out in ipairs(prod.outputs) do
-    station.market:addSell(station, out.item, 200, Item.Price[out.item] or 20)
+  station.market:addStandingBuy(station, Item.Waste, 200, Item.Price[Item.Waste])
+  for _, out in ipairs(Production.EnergyNuclear.outputs) do
+    station.market:addStandingSell(station, out.item, 200,
+      Item.Price[out.item] or 20)
   end
   self:addChild(station)
   return station

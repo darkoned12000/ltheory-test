@@ -70,6 +70,10 @@ end
 
 function Production:setDuration (duration)
   self.duration = duration
+  return self -- CHAINABLE: the Content recipes end in :setDuration,
+              -- and a fluent call that returns nil assigned nil into
+              -- the named field (the recipes were only ever read back
+              -- through All(), so nobody had pulled a name before).
 end
 
 return Production

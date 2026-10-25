@@ -9,6 +9,12 @@ local File = require('ffi.File')
 -- quicksave's first live-play frame).
 local Bindings = require('phx.util.ApplicationBindings')
 local Toast = require('Game.GUI.Toast')
+-- THE RECIPES ARE LOAD-TIME SCOPE (see Game/Entities/System.lua's note):
+-- a require inside the app-sandbox returns a fresh module with nothing
+-- on it; buildPlace's body runs in the sandbox, so it binds through
+-- this upvalue instead.
+require('Game.Content')
+local Productions = require('Game.Production')
 local DebugControl = require('Game.Controls.DebugControl')
 local Sector = require('Game.Region')
 local SectorGraph = require('Game.SectorGraph')
@@ -1137,32 +1143,49 @@ function LTheory:buildPlace (region, sectorName)
   -- PERMANENT demand for what a belt yields, and Market:update tops the
   -- book back up whenever trading depletes it (a 200-unit bid sold off
   -- once would otherwise go silent forever -- "the market stopped
-  -- wanting my ore").
+  -- wanting my ore"). The RE-ARM PRICE now drifts with the shelf
+  -- (PriceCurve): a bare shelf bids 1.5x the anchor, a full one 0.75x.
   for _, item in ipairs(Item.T1) do
-    local price = Item.Price[item] or 10
-    place.market:addStandingBuy(place, item, 200, price)
+    place.market:addStandingBuy(place, item, 200, Item.Price[item] or 10)
   end
+  -- THE DISPOSAL SINK: every place takes WASTE off a hold for its near-
+  -- junk price. Without a dump, a run through a nuclear plant left the
+  -- player carrying radioactive filth with nowhere to put it.
+  place.market:addStandingBuy(place, Item.Waste, 200, Item.Price[Item.Waste])
+  place.trader:addStandingBid(Item.Waste, Item.Price[Item.Waste], 200)
 
-  -- The SELL side, so every dock has something to buy:
-  --   a yard sells what its factory makes (the product, at the book
-  --     price -- this is where the loop's cheap energy comes from);
-  --   a rig or relay sells the universal consumable, ENERGY, at a
-  --     premium -- the far-from-home markup, and the reason the yard's
-  --     margin is worth the trip.
-  if kind == 'yard' then
-    local Production = require('Game.Production')
+  -- THE PLANT, EVERYWHERE: a yard, a rig or a relay each run the NUCLEAR
+  -- recipe. The belt yields isotopes (the fuel) and silver (the rods);
+  -- the miners sell both into the bids; the plant eats them and makes
+  -- the ENERGY and the WASTE. That makes the place's sell side REAL --
+  -- its standing asks re-arm from what the shelf holds (Market tops the
+  -- ask book up to its stock at the curve price), and a drained depot
+  -- goes quiet rather than promising what it does not have. The old
+  -- flat 'sells Energy at a premium with no source' is gone: the far-
+  -- from-home premium is now the SCARCITY price that a bare shelf
+  -- produces on its own.
+  do
     place:addFactory()
-    local prod = Production.All()[1]
-    place:addProduction(prod)
+    place:addProduction(Productions.EnergyNuclear)
     -- iterOutputs() is ipairs over the outputs, so it yields the INDEX
     -- first; the list itself is the public field.
-    for _, out in ipairs(prod.outputs) do
+    for _, out in ipairs(Productions.EnergyNuclear.outputs) do
       place.market:addStandingSell(place, out.item, 200,
         Item.Price[out.item] or 20)
     end
-  else
-    place.market:addStandingSell(place, Item.Energy, 200,
-      math.ceil((Item.Price.Energy or 26) * 1.25))
+    -- The AI's caravan book for the shelf: the plant's outputs listed
+    -- as buyable asks, capped at 40 -- a shelf's worth, not a firehose
+    -- (this is what gives Jobs.Transport a real ask to buy against).
+    for _, out in ipairs(Productions.EnergyNuclear.outputs) do
+      place.trader:addStandingAsk(out.item, Item.Price[out.item] or 20, 40)
+    end
+    -- ...and the raw shelf: place stock of T1 (what miners delivered)
+    -- is buyable too -- but only BEYOND the plant's working reserve, so
+    -- the ore that feeds the reactor cannot be hauled away from under
+    -- it (the caravan books stripped the shelf instantly without this).
+    for _, item in ipairs(Item.T1) do
+      place.trader:addStandingAsk(item, Item.Price[item] or 10, 40, 100)
+    end
   end
 
   self.system:addChild(place)

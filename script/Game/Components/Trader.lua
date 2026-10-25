@@ -1,5 +1,6 @@
 local Entity = require('Game.Entity')
 local Registry = require('Game.EconomyRegistry')
+local PriceCurve = require('Game.PriceCurve')
 local Credit = require('Game.Item').Credit
 
 --------------------------------------------------------------------------------
@@ -12,6 +13,9 @@ local Trader = class(function (self, parent)
   -- update() when the AI's deliveries drain the book (the same rule the
   -- player-facing Market's standing orders follow).
   self.standingBids = {}
+  -- The STANDING offers: the shelf's goods, listed as AI-buyable asks
+  -- (stock-backed, capped) -- the buy-in side of the caravan trade.
+  self.standingAsks = {}
 end)
 
 function Trader:getData (item)
@@ -122,6 +126,10 @@ function Trader:sell (asset, item)
   if not asset:hasItem(item, 1) then return false end
 
   local price = data.bids[1]
+  -- THE BANK: a trader pays from its own escrow (a 100k bank, seeded by
+  -- the world). Without this guard the subtraction went NEGATIVE and the
+  -- place kept buying with money it did not have.
+  if self.credits < price then return false end
   asset:removeItem(item, 1)
   player:addItem(Credit, price)
   self.credits = self.credits - price
@@ -148,6 +156,28 @@ function Trader:addStandingBid (item, price, count)
   for _ = 1, count do self:addBid(item, price) end
 end
 
+-- STANDING offers: the place's shelf, `count` deep, re-armed from what
+-- it holds BEYOND a factory's working reserve (addAsk pulls the good
+-- from inventory into the book's escrow, so an ask is real stock, never
+-- a promise). These are the books the AI caravans buy from when running
+-- Transport between two places, at the same living price.
+function Trader:addStandingAsk (item, anchor, count, reserve)
+  self.standingAsks[item] = {
+    price = anchor, count = count, reserve = reserve or 0 }
+end
+
+-- The LIVING PRICE on this place's demand side: the same PriceCurve the
+-- player-facing market bends -- the place bids high when its shelf is
+-- bare, low when it is full. So two stations in different states offer
+-- two different prices for the same commodity, and THAT difference is
+-- what the AI caravans (Jobs.Transport via computeTrade) arbitrage.
+function Trader:bidPrice (item)
+  local s = self.standingBids[item]
+  if not s then return 0 end
+  local stock = self.parent.getItemCount and self.parent:getItemCount(item) or 0
+  return PriceCurve.price(s.price, stock, s.count)
+end
+
 function Trader:update ()
   for item, data in pairs(self.elems) do
     if #data.asksQueue > 0 then
@@ -163,11 +193,35 @@ function Trader:update ()
     end
   end
 
-  -- Re-arm the standing demand the deliveries have drained.
+  -- Re-arm the standing demand the deliveries have drained. At the
+  -- living price, and only while the bank can conceivably pay for it:
+  -- a broke trader stops pretending to buy.
   for item, s in pairs(self.standingBids) do
     local data = self:getData(item)
-    while #data.bids + #data.bidsQueue < s.count do
-      self:addBid(item, s.price)
+    local price = self:bidPrice(item)
+    while #data.bids + #data.bidsQueue < s.count
+      and self.credits >= price do
+      self:addBid(item, price)
+    end
+  end
+
+  -- Re-arm the standing offers from the shelf. Each listed ask moves
+  -- one unit of the good from the place's inventory into the book's
+  -- escrow (that is what addAsk does), so the asks never exceed the
+  -- real stock; the cap (s.count) keeps a producing factory's whole
+  -- output stream out of one book -- the trade stays from a shelf,
+  -- not a firehose.
+  for item, s in pairs(self.standingAsks) do
+    local data = self:getData(item)
+    local stock = self.parent.getItemCount and self.parent:getItemCount(item) or 0
+    -- THE PLANT'S WORKING STOCK: the asks may only offer what the shelf
+    -- holds BEYOND the production's reserve. Without it, the caravan
+    -- books stripped the incoming ore instantly and the local factory
+    -- starved -- input reserves guaranteed, surplus haulable.
+    local reserve = s.reserve or 0
+    if #data.asks + #data.asksQueue < s.count and stock > reserve then
+      local price = PriceCurve.price(s.price, stock - reserve, s.count)
+      self:addAsk(item, price)
     end
   end
 end
