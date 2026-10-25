@@ -61,6 +61,45 @@ Live in `script/Game/`. The event model: every damageable entity calls `Entity:a
 - **Targeting/HUD**: `drawTargets` locks the nearest entity within 128px of screen center; `T`/`G` lock/clear; `drawLock` clears on death and draws a health bar over the target.
 - Spawn a field: `self.system:spawnAsteroidField(2000, 20)`. Manual: build an `Entities.Asteroid(seed, scale)`, `setPos(Vec3f(...))`, then `self.system:addChild(a)`.
 
+## Commodities & Resources (Content.lua)
+The full commodity catalog lives in `script/Game/Content.lua` (`Item.*`, `Item.Price`, `Item.T1`/`T2`/`Gas`, `Production.*`). All prices are ANCHORS; the live price bends around them via `Game/PriceCurve.lua` (1.5× at empty shelf, 0.75× at full). Standing bids re-arm from these anchors, so adding a commodity = add the item, its price, its tier, and (optionally) a production recipe + a standing buy/sell at places.
+
+### Raw minerals (T1 — mined from asteroids; `System:spawnAsteroidField` yields `rng:choose(Item.T1)`)
+- `Isotopes` (5 mass, 14cr) — reactor fuel
+- `Silver` (2 mass, 9cr) — reactor control rods
+- `Iron` (4 mass, 6cr) — common construction feedstock
+- `Copper` (3 mass, 8cr) — conductive feedstock
+- `Titanium` (4 mass, 18cr) — ship hulls and weapon housings
+- `Platinum` (3 mass, 22cr) — weapon design catalyst
+- `Gold` (2 mass, 40cr) — computer applications, scarce
+- `WaterIce` (3 mass, 5cr) — hydration / life support
+
+Region-based diversification (icy belts yield WaterIce, metallic belts yield Titanium/Platinum, etc.) is a future enhancement; today every rock rolls from the whole T1 pool.
+
+### Captured nebula gases (Gas — NOT in T1; harvested from nebulas with the right equipment, a future feature)
+- `Helium3` (1 mass, 15cr) — high energy density
+
+The item and its price exist so the market can trade it, but no capture source or standing supply is wired yet. Places stand a small buy bid (demand) so a future capture rig has somewhere to sell.
+
+### Refined / intermediate products (T2 — produced by factories)
+- `Energy` (26cr) — nuclear/solar output; recharges ship capacitors at dock
+- `MachineParts` (24cr) — Refinery: 2 Iron + 1 Copper
+- `Electronics` (30cr) — Electronics Plant: 1 Gold + 1 Silver
+- `WeaponComponents` (45cr) — Weapons Fabricator: 2 Titanium + 1 Platinum
+- `FoodRations` (12cr) — Hydroponics Bay: 2 WaterIce (population demand)
+
+### Byproduct / sink
+- `Waste` (3cr) — reactor output; every place stands a disposal bid (near-zero-sum so no round-trip arbitrage)
+
+### Production recipes (Game/Production.lua)
+`EnergySolar`, `EnergyNuclear`, `Refinery`, `Electronics`, `Weapons`, `Hydroponics`. Today every place and the main station run `EnergyNuclear` (the only recipe that eats what a belt actually yields). Wiring the others to specific place types (a refinery yard, a hydroponics station near a populated planet) is the natural next step -- the recipes and items already exist.
+
+### Economy wiring (where the commodities flow)
+- `System:spawnStation` / `LTheory:buildPlace` seed standing BUY bids for all of `Item.T1` + `Item.Waste` + `Item.Gas` at every place, and standing SELL asks for the factory's outputs (escrow-backed, reserve-protected so the plant keeps its working stock).
+- `AsteroidField` yields `rng:choose(Item.T1)` per rock.
+- `Trader` books mirror the market books (same anchors, same PriceCurve) so AI caravans price arbitrage against the same sheet the player sees.
+- Loot / derelicts are NOT implemented yet; commodity drops on `Event.Destroyed` are the natural next feature.
+
 ## Post-4.6 Hardening (all done)
 - **Validator restored**: `moderngl` in `.venv-tools`; `configure.py test` runs headlessly (llvmpipe/EGL). Fails fast on any shader typo.
 - **Graceful runtime shader failure** (`74f717a`): C++ non-abort + cached-good program fallback + in-game overlay naming the bad pass. A broken shader degrades instead of crashing.

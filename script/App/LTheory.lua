@@ -1154,6 +1154,15 @@ function LTheory:buildPlace (region, sectorName)
   place.market:addStandingBuy(place, Item.Waste, 200, Item.Price[Item.Waste])
   place.trader:addStandingBid(Item.Waste, Item.Price[Item.Waste], 200)
 
+  -- THE CAPTURED-GAS DEMAND: every place buys nebula gases (Helium-3
+  -- and friends) at a modest price, so a future capture rig has
+  -- somewhere to sell. No standing ASKS (no source wired yet -- capture
+  -- equipment is a future feature), so the book is buy-only.
+  for _, item in ipairs(Item.Gas) do
+    place.market:addStandingBuy(place, item, 100, Item.Price[item] or 15)
+    place.trader:addStandingBid(item, Item.Price[item] or 15, 100)
+  end
+
   -- THE PLANT, EVERYWHERE: a yard, a rig or a relay each run the NUCLEAR
   -- recipe. The belt yields isotopes (the fuel) and silver (the rods);
   -- the miners sell both into the bids; the plant eats them and makes

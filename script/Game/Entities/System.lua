@@ -747,6 +747,11 @@ function System:spawnStation ()
     station.market:addStandingBuy(station, item, 200, Item.Price[item] or 10)
   end
   station.market:addStandingBuy(station, Item.Waste, 200, Item.Price[Item.Waste])
+  -- THE CAPTURED-GAS DEMAND (see buildPlace's note): buy-only books.
+  for _, item in ipairs(Item.Gas) do
+    station.market:addStandingBuy(station, item, 100, Item.Price[item] or 15)
+    station.trader:addStandingBid(item, Item.Price[item] or 15, 100)
+  end
   for _, out in ipairs(Production.EnergyNuclear.outputs) do
     station.market:addStandingSell(station, out.item, 200,
       Item.Price[out.item] or 20)
