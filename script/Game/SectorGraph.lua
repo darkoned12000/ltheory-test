@@ -130,8 +130,11 @@ end
 -- fence, not a set of places. Which is exactly why the old generator used a
 -- SPARSE lattice instead (see NEIGHBOUR_COUNT).
 --
--- Eight is a good number for now: enough that the galaxy feels like a
--- galaxy, few enough that every sector is worth visiting.
+-- The number of sectors in this galaxy is derived from the seed, so
+-- different universes get different galaxies instead of the same 8
+-- every time. Range 8..25: few enough that every sector is worth
+-- visiting, varied enough that a new seed feels like a new galaxy.
+-- (The field is set inside layout(), since the count depends on the seed.)
 SectorGraph.SECTOR_COUNT = 8
 
 -- How many gates each sector has.
@@ -245,7 +248,13 @@ function SectorGraph.layout (galaxySeed, radius)
   local NameGen = require('Game.NameGen')
   local Sector = require('Game.Region')
 
-  local count = SectorGraph.SECTOR_COUNT
+  -- Sector count is derived from the galaxy seed: 8..25, so a new seed
+  -- gives a genuinely different galaxy instead of the same 8 sectors.
+  local folded = SpaceField.foldSeed(galaxySeed)
+  local count = 8 + math.floor(SpaceField.hash32(0, 0, 0, folded, 7) * 18)
+  if count < 8 then count = 8 end
+  if count > 25 then count = 25 end
+  SectorGraph.SECTOR_COUNT = count
   local out = {}
 
   -- The galaxy's own radius: the disc the sectors are scattered through.
