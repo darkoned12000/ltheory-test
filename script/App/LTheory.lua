@@ -1161,10 +1161,16 @@ function LTheory:buildPlace (region, sectorName)
   place.market:addStandingBuy(place, Item.Waste, 200, Item.Price[Item.Waste])
   place.trader:addStandingBid(Item.Waste, Item.Price[Item.Waste], 200)
 
-  -- THE CAPTURED-GAS DEMAND: every place buys nebula gases (Helium-3
-  -- and friends) at a modest price, so a future capture rig has
-  -- somewhere to sell. No standing ASKS (no source wired yet -- capture
-  -- equipment is a future feature), so the book is buy-only.
+  -- THE STARTING STOCK: a place opens for business with a modest shelf,
+  -- so a player docking in the first minute (before any NPC has mined
+  -- or any factory has run) sees something to buy and something to sell
+  -- into, instead of two empty tables. The factory's working stock is
+  -- reserved so the asks do not strip the inputs.
+  place:addItem(Item.Isotopes, 20)
+  place:addItem(Item.Silver, 20)
+  place:addItem(Item.Energy, 50)
+  place:addItem(Item.Waste, 10)
+  -- Gas demand only (no supply yet -- capture equipment is future).
   for _, item in ipairs(Item.Gas) do
     place.market:addStandingBuy(place, item, 100, Item.Price[item] or 15)
     place.trader:addStandingBid(item, Item.Price[item] or 15, 100)

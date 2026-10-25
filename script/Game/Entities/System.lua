@@ -707,7 +707,7 @@ function System:spawnStation ()
   -- station:setFlow(Item.Silver, self.rng:getUniformRange(-1000, 0))
   station:addMarket()
   station:addTrader()
-  station.trader.credits = 100000 -- the trader's own escrow bank
+  station.trader.credits = 500000 -- the trader's own escrow bank
   -- THE AI'S DEMAND BOOK (see buildPlace's note): standing bids the NPC
   -- miners work against.
   for _, item in ipairs(Item.T1) do
@@ -742,7 +742,13 @@ function System:spawnStation ()
   -- station (the natural first dock) showed an empty market on both
   -- tabs, and the working capital has to exist for the market's
   -- transfers to pay the player. The WASTE bid is the disposal sink.
-  station:addCredits(100000)
+  station:addCredits(500000)
+  -- THE STARTING STOCK (see buildPlace's note): a station opens with a
+  -- modest shelf so a player docking in the first minute sees stock.
+  station:addItem(Item.Isotopes, 20)
+  station:addItem(Item.Silver, 20)
+  station:addItem(Item.Energy, 50)
+  station:addItem(Item.Waste, 10)
   for _, item in ipairs(Item.T1) do
     station.market:addStandingBuy(station, item, 200, Item.Price[item] or 10)
   end
