@@ -66,6 +66,46 @@ function Table.Create (cols, opts)
   scroll:setStretch(0, 0)
   scroll:add(rows)
 
+  -- AUTO-FIT: each column widens to the longest thing in it -- the
+  -- header's title sets the minimum, and every text cell added can raise
+  -- it; ALL the cells (header + every row) re-width to the new max, so
+  -- the columns stay aligned AND nothing is ever clipped. Widgets
+  -- (button clusters) size themselves; images too.
+  local normalFont = Config.ui.font.normal
+  local rowsCells = {}
+  local colMax = {}
+  for i, col in ipairs(cols) do
+    -- The caller's width is a FLOOR (not added to the content): the
+    -- column's width is the longest of the floor, the header title and
+    -- every cell, plus padding.
+    colMax[i] = math.max(col.width or 0,
+      (normalFont and normalFont:getSize(col.title or '').z or 0) + 14)
+  end
+  local headerCells = header.children
+
+  local function applyWidths ()
+    for i = 1, #cols do
+      if headerCells[i] and headerCells[i].setWidth then
+        headerCells[i]:setWidth(colMax[i])
+      end
+    end
+    for _, rowCells in ipairs(rowsCells) do
+      for i = 1, #cols do
+        if rowCells[i] and rowCells[i].setWidth then
+          rowCells[i]:setWidth(colMax[i])
+        end
+      end
+    end
+  end
+  local function noteWidth (i, text)
+    local bound = normalFont and normalFont:getSize(tostring(text))
+    local w = bound and (bound.z + 16) or 0
+    if w > colMax[i] then
+      colMax[i] = w
+      applyWidths()
+    end
+  end
+
   -- The outline + the header band's underline (drawn under the content).
   -- The underline runs the FULL frame width: the header row can be
   -- narrower than the widest data row (button clusters are wider than
@@ -97,6 +137,7 @@ function Table.Create (cols, opts)
         DrawEx.Rect(cx + csx + 4, y + 2, 1, sy - 4, LINE_C)
       end
     end
+    local rowCells = {}
     for i = 1, #cols do
       local c = cells[i]
       -- EVERY CELL RESPECTS ITS COLUMN'S WIDTH: a text cell that sizes
@@ -109,19 +150,23 @@ function Table.Create (cols, opts)
         -- An empty cell keeps the column alive.
       elseif type(c) == 'string' or type(c) == 'number' then
         local l = Label():setText(tostring(c)):setFontColor(WHITE)
-        if colWidth then l:setWidth(colWidth) end
+        noteWidth(i, c)
+        rowCells[i] = l
         row:add(l)
       elseif type(c) == 'table' and c.image then
         row:add(Image.Create(c.image))
       elseif type(c) == 'table' and c.text then
         local l = Label():setText(c.text)
         l:setFontColor(c.color or WHITE)
-        l:setWidth(c.width or colWidth)
+        noteWidth(i, c.text)
+        rowCells[i] = l
         row:add(l)
       else
         row:add(c)
       end
     end
+    rowsCells[#rowsCells + 1] = rowCells
+    applyWidths()
     rows:add(row)
     return row
   end

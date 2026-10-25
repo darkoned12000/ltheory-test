@@ -1250,6 +1250,17 @@ function LTheory:onUpdate (dt)
     if docked and not self.dockScreen:isOpen() then
       self.dockScreen:refresh() -- retitle to the dock you pulled into
       self.dockScreen:open()
+      -- THE MENU MUST NOT BE UNDER THE DOCK PAGE: its title band and
+      -- entry row render through the dock's translucent backdrop -- the
+      -- big title's glyphs sit right under the market table and read as
+      -- garbage ("the title gets messed up when navigating"). Closing it
+      -- silently: no onClose pop-back.
+      if self.menu:isOpen() then
+        local oc = self.menu.onClose
+        self.menu.onClose = nil
+        self.menu:close()
+        self.menu.onClose = oc
+      end
     elseif not docked and self.dockScreen:isOpen() then
       -- Silent close: the screen has no onClose, and none may grow here --
       -- the menu must not pop open over the undocked ship.

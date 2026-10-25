@@ -57,6 +57,15 @@ local function cell (text, width, color)
   return l
 end
 
+-- A VERTICAL BREATH of a given height: an empty label with a FIXED
+-- height. (The plain empty-label spacer only ever gives one font line,
+-- ~20px -- the user's half-inch gaps need the real height.)
+local function spacer (h)
+  local l = Label():setText('')
+  l:setHeight(h)
+  return l
+end
+
 -- opts:
 --   player -- the player entity; the docked ship and its parent station
 --             are resolved fresh on every refresh, so the page always
@@ -223,7 +232,7 @@ function DockScreen:refresh ()
 
   -- A 25px BREATH before and after the table: the tab buttons and the
   -- UNDOCK button sat touching its outline.
-  self.body:add(cell(' ', nil, MUTED))
+  self.body:add(spacer(44))
 
   if market then
     local list = Grid():setCols(1):setStretch(0, 0)
@@ -235,7 +244,7 @@ function DockScreen:refresh ()
   end
 
   -- The breath after the table (same 25px rule).
-  self.body:add(cell(' ', nil, MUTED))
+  self.body:add(spacer(44))
   self.body:add(cell(self.message or ' ', nil, GOOD))
   self.body:add(MenuButton.Create('UNDOCK  (F)', function ()
     self.player:getControlling():pushAction(Actions.Undock())
