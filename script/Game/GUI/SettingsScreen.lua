@@ -281,11 +281,6 @@ function SettingsScreen.Create (opts)
   body:add(buildRow(Label('Resolution'), resSlide))
   line('')
   line('GRAPHICS (advanced)', Color(0.45, 0.80, 1.0, 1.0))
-  self:addLine('DISPLAY', Color(0.45, 0.80, 1.0, 1.0))
-  body:add(buildRow(Label('Window mode'), modeSlide))
-  body:add(buildRow(Label('Resolution'), resSlide))
-  line('')
-  self:addLine('GRAPHICS (advanced)', Color(0.45, 0.80, 1.0, 1.0))
   -- Toggles via OptionSlider; sliders for continuous values.
   local bloomToggle = OptionSlider.Create(
     function () return Config.gpu.bloom and 2 or 1 end,
