@@ -293,36 +293,48 @@ function SettingsScreen.Create (opts)
   -- Toggles via OptionSlider; sliders for continuous values.
   local bloomToggle = OptionSlider.Create(
     function () return Config.gpu.bloom and 2 or 1 end,
-    function (i) Config.gpu.bloom = (i == 2); commit() end,
+    function (i) Config.gpu.bloom = (i == 2); Settings.set('postfx.bloom.enable', Config.gpu.bloom); commit() end,
     { 'OFF', 'ON' })
   local bloomInt = Slider.Create(
     function () return Config.gpu.bloomIntensity end,
-    function (v) Config.gpu.bloomIntensity = Math.Clamp(v, 0, 4); commit() end,
+    function (v) Config.gpu.bloomIntensity = Math.Clamp(v, 0, 4); Settings.set('postfx.bloom.intensity', Config.gpu.bloomIntensity); commit() end,
     0, 4)
   local sharpenToggle = OptionSlider.Create(
     function () return Config.gpu.sharpen and 2 or 1 end,
-    function (i) Config.gpu.sharpen = (i == 2); commit() end,
+    function (i) Config.gpu.sharpen = (i == 2); Settings.set('postfx.sharpen.enable', Config.gpu.sharpen); commit() end,
     { 'OFF', 'ON' })
   local sharpenStr = Slider.Create(
     function () return Config.gpu.sharpenStrength end,
-    function (v) Config.gpu.sharpenStrength = Math.Clamp(v, 0, 3); commit() end,
+    function (v) Config.gpu.sharpenStrength = Math.Clamp(v, 0, 3); Settings.set('postfx.sharpen.strength', Config.gpu.sharpenStrength); commit() end,
     0, 3)
   local tonemapToggle = OptionSlider.Create(
     function () return Config.gpu.tonemap and 2 or 1 end,
-    function (i) Config.gpu.tonemap = (i == 2); commit() end,
+    function (i) Config.gpu.tonemap = (i == 2); Settings.set('postfx.tonemap.enable', Config.gpu.tonemap); commit() end,
     { 'OFF', 'ON' })
   local exposureSlide = Slider.Create(
     function () return (Config.gpu.exposureEV + 4) / 8 end,
-    function (v) Config.gpu.exposureEV = Math.Clamp(v * 8 - 4, -4, 4); commit() end,
+    function (v) Config.gpu.exposureEV = Math.Clamp(v * 8 - 4, -4, 4); Settings.set('postfx.exposure.ev', Config.gpu.exposureEV); commit() end,
     0, 1)
   local satSlide = Slider.Create(
     function () return Config.gpu.colorSat / 3 end,
-    function (v) Config.gpu.colorSat = Math.Clamp(v * 3, 0, 3); commit() end,
+    function (v) Config.gpu.colorSat = Math.Clamp(v * 3, 0, 3); Settings.set('postfx.color.sat', Config.gpu.colorSat); commit() end,
     0, 1)
   local contrastSlide = Slider.Create(
     function () return Config.gpu.colorContrast / 3 end,
-    function (v) Config.gpu.colorContrast = Math.Clamp(v * 3, 0, 3); commit() end,
+    function (v) Config.gpu.colorContrast = Math.Clamp(v * 3, 0, 3); Settings.set('postfx.color.contrast', Config.gpu.colorContrast); commit() end,
     0, 1)
+  local tempSlide = Slider.Create(
+    function () return (Config.gpu.colorTemp + 1) / 2 end,
+    function (v) Config.gpu.colorTemp = Math.Clamp(v * 2 - 1, -1, 1); Settings.set('postfx.color.temp', Config.gpu.colorTemp); commit() end,
+    0, 1)
+  local tintSlide = Slider.Create(
+    function () return (Config.gpu.colorTint + 1) / 2 end,
+    function (v) Config.gpu.colorTint = Math.Clamp(v * 2 - 1, -1, 1); Settings.set('postfx.color.tint', Config.gpu.colorTint); commit() end,
+    0, 1)
+  local aberrationToggle = OptionSlider.Create(
+    function () return Config.gpu.aberration and 2 or 1 end,
+    function (i) Config.gpu.aberration = (i == 2); Settings.set('postfx.aberration.enable', Config.gpu.aberration); commit() end,
+    { 'OFF', 'ON' })
   body:add(buildRow(Label('Bloom'), bloomToggle))
   body:add(buildRow(Label('Bloom intensity'), bloomInt))
   body:add(buildRow(Label('Sharpen'), sharpenToggle))
@@ -331,6 +343,9 @@ function SettingsScreen.Create (opts)
   body:add(buildRow(Label('Exposure (EV)'), exposureSlide))
   body:add(buildRow(Label('Saturation'), satSlide))
   body:add(buildRow(Label('Contrast'), contrastSlide))
+  body:add(buildRow(Label('Color temp'), tempSlide))
+  body:add(buildRow(Label('Color tint'), tintSlide))
+  body:add(buildRow(Label('Aberration'), aberrationToggle))
 
   line('')
   line('')
