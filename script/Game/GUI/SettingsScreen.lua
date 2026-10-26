@@ -32,6 +32,7 @@
 
 local ScrollView = require('UI.ScrollView')
 local Screen     = require('Game.GUI.Screen')
+local MenuButton = require('UI.MenuButton')
 local MenuPanelScreen = require('Game.GUI.MenuPanelScreen')
 local Grid       = require('UI.Grid')
 local Label      = require('UI.Label')
@@ -353,7 +354,10 @@ function SettingsScreen.Create (opts)
   line('')
   line('')
   line('AUDIO', Color(0.45, 0.80, 1.0, 1.0))
-  body:add(buildRow(Label('Music volume'), musicSlide))
+  body:add(buildRow(Label('Music volume'),
+    musicSlide,
+    Label():setMinWidth(60):setAlign(1, 0.5):setFormat('%.f%%')
+      :setPollFn(function () return Math.Round(Config.audio.musicVolume * 100) end)))
   body:add(buildRow(Label('Effects volume'),
     sfxSlide,
     Label():setMinWidth(60):setAlign(1, 0.5):setFormat('%.f%%')
@@ -391,8 +395,6 @@ function SettingsScreen.Create (opts)
   line('')
   line('')
   line('Changes apply right away.', Color(0.45, 0.80, 1.0, 1.0))
-  self:addCloseButton()
-
 
   local scrollView = ScrollView()
     :setPad(2, 24, 2, 2)
@@ -402,6 +404,12 @@ function SettingsScreen.Create (opts)
   if scrollView.setStretchY then scrollView:setStretchY(1) end
   self.content:setStretch(0, 1)
   self.content:add(scrollView)
+
+  -- CLOSE button at the bottom, centered.
+  local closeRow = Grid():setCols(1):setAlign(0.5, 0)
+  closeRow:setStretch(0, 0)
+  closeRow:add(MenuButton.Create('CLOSE', function () self:close() end))
+  self.content:add(closeRow)
 
   self.content:setAlign(0.44, 0.05)
 
