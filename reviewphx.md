@@ -237,16 +237,15 @@ Audio, Bit, BlendMode, BoxMesh, BoxTree, BSP, Button, Bytes, ClipRect, Collision
 4. **Thread pool cap** — increased from 8 to 16 to better utilize high-core-count machines. Still capped to avoid oversubscription.
 5. **MemPool/MemStack** — could use a custom allocator for better cache locality. Deferred: major refactor, low ROI. Current malloc-based approach is simple and debuggable.
 
-## C++20 adoption (Option 1)
+## C++20 adoption (Options 1 + 3 partial)
 
-Applied `[[likely]]`/`[[unlikely]]` annotations to hot paths:
-- `Draw.cpp`: overflow/empty guards marked `[[unlikely]]`
-- `Font.cpp`: glyph cache hit marked `[[likely]]`, missing glyph marked `[[unlikely]]`
-- `Shader.cpp`: broken-shader-load guard marked `[[unlikely]]`
+Applied `[[likely]]`/`[[unlikely]]` annotations to hot paths (Draw, Font, Shader).
+Applied `std::span` to Draw.cpp (Draw_Enqueue, Imm_Draw) -- bounds safety on the immediate-draw path.
 
-Pure annotation, zero behavioral change. Compiler uses these for branch prediction.
-
-### Options 2 & 3 (documented, not applied)
+### Option 2 status
+- **Option 2 (designated initializers):** Deferred. Would clean up `Vec3f self = { x, y, z }` to `{.x=x, .y=y, .z=z}`, but requires changing the macro layer in `Vec3.h` (100+ call sites). High effort, marginal readability. Deferred.
+- **Option 3 (std::span):** Partially applied. Draw.cpp (Draw_Enqueue, Imm_Draw) now use `std::span`. Tex2D_Load left as-is (stbi owns the memory, span is just a view -- low value).
+& 3 (documented, not applied)
 - **Option 2 (designated initializers):** Would clean up `Vec3f self = { x, y, z }` → `{.x=x, .y=y, .z=z}`. Requires changing the macro layer in `Vec3.h` (100+ call sites). High effort, marginal readability benefit. Deferred.
 - **Option 3 (std::span):** Could replace raw `ptr + size` in `Draw.cpp` (s_verts buffer) and `Tex2D_Load.cpp`. Medium effort, safer buffer handling. Deferred.
 
