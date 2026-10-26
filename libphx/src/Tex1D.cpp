@@ -64,7 +64,7 @@ void Tex1D_Draw (Tex1D* self, float x, float y, float xs, float ys) {
     { x + xs,  y + ys,  0.0f, 1.0f, 1.0f },
     { x + xs,  y,       0.0f, 1.0f, 0.0f },
   };
-  Imm_Draw(q, 4, GL_QUADS);
+  Imm_Draw(std::span(q, 4), GL_QUADS);
 }
 
 void Tex1D_GenMipmap (Tex1D* self) {

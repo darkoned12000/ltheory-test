@@ -259,12 +259,12 @@ void Mesh_DrawNormals (Mesh* self, float scale) {
     buf[n].u = 0.0f;               buf[n].v = 0.0f;
     ++n;
     if (n == 512) {
-      Imm_Draw(buf, n, GL_LINES);
+      Imm_Draw(std::span(buf, n), GL_LINES);
       n = 0;
     }
   }
   if (n > 0)
-    Imm_Draw(buf, n, GL_LINES);
+    Imm_Draw(std::span(buf, n), GL_LINES);
 }
 
 void Mesh_GetBound (Mesh* self, Box3f* out) {

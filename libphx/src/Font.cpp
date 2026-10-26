@@ -336,7 +336,7 @@ void Font_Draw (
       GLCALL(glActiveTexture(GL_TEXTURE0))
       GLCALL(glBindTexture(GL_TEXTURE_2D, Tex2D_GetHandle(self->atlas)))
       Draw_SetTexturedImm(true);
-      Imm_Draw(verts, n * 4, GL_QUADS);
+      Imm_Draw(std::span(verts, n * 4), GL_QUADS);
     }
     if (verts != stackVerts)
       MemFree(verts);
@@ -363,7 +363,7 @@ void Font_DrawShaded (Font* self, cstr text, float x, float y) {
     if (n) {
       Shader_SetTex2D("glyph", self->atlas);
       Draw_SetTexturedImm(true);
-      Imm_Draw(verts, n * 4, GL_QUADS);
+      Imm_Draw(std::span(verts, n * 4), GL_QUADS);
     }
     if (verts != stackVerts)
       MemFree(verts);
