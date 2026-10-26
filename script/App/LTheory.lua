@@ -1346,6 +1346,130 @@ function LTheory:onUpdate (dt)
     require('Game.GUI.DebugWindow').DumpSettings()
   end
 
+  -- [TEST HOOK] PHX_UITEST=1: automated UI smoke test. Drives the main
+  -- menu + market flow headlessly and prints [UITEST] PASS/FAIL lines so
+  -- regressions in the UI layer are caught without a human eyeballing
+  -- screenshots. Assertions are checked at each stage; a single FAIL
+  -- aborts the run with a non-zero-ish marker.
+  if os.getenv('PHX_UITEST') and not self.__uiDone then
+    self.__uiT = (self.__uiT or 0) + dt
+    local s = self.player and self.player:getControlling()
+    local function fail (msg)
+      printf('[UITEST] FAIL: %s', msg)
+      self.__uiDone = true
+      self.__uiFailed = true
+    end
+    local function pass (msg)
+      printf('[UITEST] PASS: %s', msg)
+    end
+
+    if self.__uiStage == nil and self.__uiT >= 2.0 then
+      self.__uiStage = 1
+      -- 1) Main menu opens and closes.
+      self:openMenu()
+      if not (self.menu and self.menu:isOpen()) then
+        fail('main menu did not open') return
+      end
+      pass('main menu opens')
+      self.menu:close()
+      if self.menu:isOpen() then fail('main menu did not close') return end
+      pass('main menu closes')
+    elseif self.__uiStage == 1 and self.__uiT >= 2.4 then
+      self.__uiStage = 2
+      -- 2) Dock at a market.
+      local target
+      for _, e in pairs(self.system.children) do
+        if e.hasMarket and e:hasMarket() then target = e break end
+      end
+      if not target then fail('no market station in system') return end
+      s:setPos(target:getPos() + Vec3f(80, 0, 0))
+      target:addDocked(s)
+      self.__uiPlace = target
+      -- Seed the ship so the trade stages actually exercise the
+      -- market's buy/sell paths (the player otherwise starts broke).
+      s:addCredits(1000)
+      s:addItem(require('Game.Item').Isotopes, 5)
+    elseif self.__uiStage == 2 and self.__uiT >= 2.8 then
+      self.__uiStage = 3
+      -- 3) Dock screen opened.
+      if not (self.dockScreen and self.dockScreen:isOpen()) then
+        fail('dock screen did not open on dock') return
+      end
+      pass('dock screen opens on dock')
+      -- Menu must NOT be open under it (the garbled-title regression).
+      if self.menu and self.menu:isOpen() then
+        fail('menu open under dock screen (garbled title)') return
+      end
+      pass('menu closed while docked')
+    elseif self.__uiStage == 3 and self.__uiT >= 3.2 then
+      self.__uiStage = 4
+      local m = self.__uiPlace.market
+      -- 4) Market has BUY (asks) and SELL (bids) entries.
+      local quotes = m:quotes()
+      local hasAsk, hasBid = false, false
+      for _, q in ipairs(quotes) do
+        if q.ask then hasAsk = true end
+        if q.bid then hasBid = true end
+      end
+      if not hasAsk then fail('BUY tab empty (no asks)') return end
+      pass('BUY tab has asks')
+      if not hasBid then fail('SELL tab empty (no bids)') return end
+      pass('SELL tab has bids')
+    elseif self.__uiStage == 4 and self.__uiT >= 3.6 then
+      self.__uiStage = 5
+      -- 5) Buy one energy cell (if affordable) and check credits moved.
+      local m = self.__uiPlace.market
+      local Energy = require('Game.Item').Energy
+      local before = s:getCredits()
+      local n, total = m:buy(s, Energy, 1)
+      if n > 0 then
+        if s:getCredits() >= before then
+          fail('buy did not deduct credits') return
+        end
+        pass('BUY deducts credits (n=' .. n .. ')')
+      else
+        pass('BUY: no affordable ask (skipped)')
+      end
+      self.dockScreen:refresh()
+    elseif self.__uiStage == 5 and self.__uiT >= 4.0 then
+      self.__uiStage = 6
+      -- 6) Sell one isotope (seed stock) and check credits moved.
+      local m = self.__uiPlace.market
+      local Iso = require('Game.Item').Isotopes
+      local before = s:getCredits()
+      local n, total = m:sell(s, Iso, 1)
+      if n > 0 then
+        if s:getCredits() <= before then
+          fail('sell did not add credits') return
+        end
+        pass('SELL adds credits (n=' .. n .. ')')
+      else
+        pass('SELL: no matching bid (skipped)')
+      end
+      self.dockScreen:refresh()
+    elseif self.__uiStage == 6 and self.__uiT >= 4.4 then
+      self.__uiStage = 7
+      -- 7) Market still has entries after trading (re-arm works).
+      local m = self.__uiPlace.market
+      local hasBid = false
+      for _, q in ipairs(m:quotes()) do
+        if q.bid then hasBid = true end
+      end
+      if not hasBid then fail('bids vanished after trade (re-arm broken)') return end
+      pass('bids re-arm after trade')
+      -- 8) Undock closes the dock screen.
+      s:pushAction(Actions.Undock())
+    elseif self.__uiStage == 7 and self.__uiT >= 5.0 then
+      self.__uiStage = 8
+      if self.dockScreen and self.dockScreen:isOpen() then
+        fail('dock screen did not close on undock') return
+      end
+      pass('dock screen closes on undock')
+      printf('[UITEST] ALL CHECKS PASSED')
+      self.__uiDone = true
+    end
+  end
+
   -- [TEST HOOK] PHX_SAVENOW=<slot>: at ~2.5 s, save the game, MOVE the ship,
   -- then load the same slot in-process and print both positions. The
   -- roundtrip's proof is the post-load position matching the pre-move one.
