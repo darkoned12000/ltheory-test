@@ -220,3 +220,89 @@ Pure annotation, zero behavioral change. Compiler uses these for branch predicti
 ### Options 2 & 3 (documented, not applied)
 - **Option 2 (designated initializers):** Would clean up `Vec3f self = { x, y, z }` → `{.x=x, .y=y, .z=z}`. Requires changing the macro layer in `Vec3.h` (100+ call sites). High effort, marginal readability benefit. Deferred.
 - **Option 3 (std::span):** Could replace raw `ptr + size` in `Draw.cpp` (s_verts buffer) and `Tex2D_Load.cpp`. Medium effort, safer buffer handling. Deferred.
+
+---
+
+## Phase resolutions (reviewphx branch)
+
+### Phase 4 — Audio (miniaudio backend)
+- **Status:** Resolved (no code changes needed).
+- Sound_EnsureLoaded calls Fatal on failure — intentional. Missing audio files are a packaging error, not a runtime condition. The game ships with all audio bundled; a missing file indicates a broken install.
+- 3D tuning documented in AGENTS.md (inverse rolloff, per-sound minDist).
+- Mixer forced to stereo, 40ms periods, 100ms gain smoothing — all in place.
+
+### Phase 5 — Texture system
+- **Status:** Resolved (no code changes needed).
+- Magenta fallback for missing images already exists (Tex2D_Load).
+- Anisotropic filtering applied per-texture via Cache.Texture(filtered=true).
+- All textures verified against upstream (stb_image v2.30).
+
+### Phase 6 — Resource system
+- **Status:** Resolved (no code changes needed).
+- Resource_LoadBytes/Cstr call Fatal on failure — intentional (missing required resources = broken install).
+- Path resolution handles dev vs. distributable builds.
+
+### Phase 7 — Engine init (SDL3, GL 4.6)
+- **Status:** Resolved (no code changes needed).
+- SDL3 migration complete. GL 4.6 core profile. GLEW 2.3.1 (system).
+- One global VAO for process lifetime (core profile requirement).
+
+### Phase 9 — Memory management
+- **Status:** Resolved.
+- MemFree wraps free() (safe for NULL). No null-check needed.
+- Glyph nodes leak FIXED (Font_Free now frees them).
+- SDF pipeline intermediate buffers — documented as potential memory hotspot. Not addressed (complex, low priority).
+
+### Phase 10 — Math
+- **Status:** Resolved (no code changes needed).
+- No bounds checking on array access — intentional performance trade-off.
+- SSE4+ assumed (optimization). No change.
+
+### Phase 11 — Collision/Physics (Bullet 3.24)
+- **Status:** Resolved (no code changes needed).
+- AABB overflow at far-from-origin is a Bullet broadphase caveat (seed/position-dependent). Not fixable without Bullet internals.
+- System Bullet 3 headers/libs (ABI-matched).
+
+### Phase 13 — UI (HmGui + ImGui)
+- **Status:** Resolved.
+- HmGui (retained-mode, game UI) and ImGui (homegrown immediate-mode, test apps only) coexist.
+- VAO rebind concern: ImGui is homegrown and uses the global VAO — no rebind needed. The AGENTS.md note about VAO rebind was for a hypothetical dear imgui GL3 backend swap, which we're not doing.
+- Consolidation (HmGui + ImGui) is optional cleanup. ImGui is test-only; removing it would break RenderTest/TestImGui. Deferred.
+
+### Phase 15 — Networking/VR
+- **Status:** Removed.
+- VR.cpp, Socket.cpp, Socket.h, SocketType.h deleted (VR/Socket unused).
+- Server.lua deleted (only consumer of Socket, unused).
+- FFI bindings (Socket.lua, SocketType.lua) deleted.
+- CMake uses file(GLOB) so no CMakeLists changes needed.
+- Build verified clean after removal.
+
+### Phase 14 — Gen pipeline (SDF) — DISCUSSION
+
+The Gen pipeline (SDF.cpp, Mesh_FromSDF.cpp, etc.) uses many intermediate buffers for procedural mesh/planet generation. This is the main memory hotspot.
+
+**What it does:**
+- Generates SDF (signed distance field) volumes on the CPU
+- Converts SDF to meshes via marching cubes
+- Generates planet surfaces, asteroid meshes, nebula volumes
+
+**Memory implications:**
+- Each SDF volume is a 3D grid of floats (e.g., 64³ = 262K floats = 1MB per volume)
+- Multiple intermediate buffers exist during generation (SDF → mesh → LOD)
+- Planet generation creates several volumes (surface, atmosphere, clouds)
+- Peak memory during planet gen could be 10-50MB depending on resolution
+
+**Options:**
+1. **Leave as-is** — generation is one-time per sector/planet, not per-frame. Memory is freed after gen. Low priority.
+2. **Reduce SDF resolution** — lower gen quality but less memory. Configurable via gen parameters.
+3. **Stream generation** — generate chunks instead of full volumes. Major refactor.
+4. **Pool/reuse buffers** — reduce allocations. Medium effort.
+
+**Recommendation:** Option 1 (leave as-is). The gen pipeline runs once per sector entry (not per-frame), and memory is freed after generation. The peak memory (~10-50MB) is acceptable for a desktop game. If memory becomes an issue on low-end hardware, Option 2 (reduce resolution) is the simplest fix.
+
+### Summary of changes on reviewphx branch
+- Removed: VR.cpp, Socket.cpp, Socket.h, SocketType.h, Server.lua, Socket.lua, SocketType.lua (unused networking/VR)
+- Added: [[likely]]/[[unlikely]] annotations on hot paths (Draw, Font, Shader)
+- Upgraded: C++17 → C++20
+- Fixed: Font atlas corruption (3 bugs: stale Tex2D size, glyph position clobber, missing glyph in ordered list)
+- Documented: reviewphx.md (comprehensive engine review)
