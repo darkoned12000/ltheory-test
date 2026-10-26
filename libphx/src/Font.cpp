@@ -166,19 +166,20 @@ static Glyph* Font_GetGlyph (Font* self, uint32 codepoint) {
     }
   }
 
+  /* Record insertion order BEFORE packing, so a grow triggered by this
+   * glyph repacks it too (otherwise the new glyph lands at (1,1) on top
+   * of the first old glyph -- the garbled-title bug). */
+  if (self->orderedCount == self->orderedCap) {
+    self->orderedCap = self->orderedCap ? self->orderedCap * 2 : 64;
+    self->ordered = (Glyph**)MemRealloc(self->ordered, (size_t)self->orderedCap * sizeof(Glyph*));
+  }
+  self->ordered[self->orderedCount++] = g;
+
   /* Pack into the glyph atlas (keeps the CPU copy for later repack). */ {
     g->bits = buffer;
     Font_AtlasPlace(self, g->sx, g->sy, &g->ax, &g->ay);
     Font_AtlasCopy(self, g);
     Font_AtlasUpload(self);
-  }
-
-  /* Record insertion order so a grow can repack everything. */ {
-    if (self->orderedCount == self->orderedCap) {
-      self->orderedCap = self->orderedCap ? self->orderedCap * 2 : 64;
-      self->ordered = (Glyph**)MemRealloc(self->ordered, (size_t)self->orderedCap * sizeof(Glyph*));
-    }
-    self->ordered[self->orderedCount++] = g;
   }
 
   /* Add to glyph cache. */
