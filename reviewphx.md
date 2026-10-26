@@ -193,8 +193,8 @@ Audio, Bit, BlendMode, BoxMesh, BoxTree, BSP, Button, Bytes, ClipRect, Collision
 - ✅ Draw batch (deferred flat + widget) — good.
 - ✅ RenderJobQueue (thread pool for rigid bodies) — good.
 - ✅ Font atlas (shelf-packed, single bind per string) — good.
-- ⚠️ Audio mixer forced to stereo (prevents center/rear channel issues). 40ms periods + 100ms gain smoothing.
-- ⚠️ Per-frame setPitch throttled (resampler crackle prevention).
+- ✅ Audio mixer forced to stereo (prevents center/rear channel issues). 40ms periods + 100ms gain smoothing. Intentional design choice for miniaudio backend.
+- ✅ Per-frame setPitch throttled (resampler crackle prevention). Intentional design choice in ThrustController.
 
 ### Dead code / unused
 - ⚠️ HmGui + ImGui coexist (consolidation optional).
