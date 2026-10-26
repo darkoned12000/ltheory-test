@@ -239,3 +239,31 @@ These are safe to delete (no code references them). Verify by running the game a
 - ✅ Vertex shader review (math correctness, transform pipelines) — done. See §4 notes.
 - ✅ Include file review (math formulas, noise quality) — done. See §3 notes.
 - Engine/libphx review (separate pass) — pending.
+---
+
+## Potential future uses for "unused" assets
+
+Before deleting the unused asset candidates, consider these possible uses:
+
+### Ice asteroid fields
+- `res/tex2d/ice/01.jpg` — currently unreferenced. Could be used as a texture for ice-type asteroids in icy belt regions. The asteroid material shader (`material/asteroid.glsl`) supports triplanar texturing; adding an ice variant would give visual variety to outer-belt asteroids.
+- `res/texcube/dim1/`, `dim3/`, `dim8/` — pre-baked cubemaps. Could be used as environment maps for icy/dim sectors (low-light regions). Currently all cubemaps are generated at runtime, but pre-baked ones could reduce gen time.
+
+### Controller icons
+- 6 unused icons: `controller_elite`, `controller_one`, `controller_xbox`, `dpad`, `gamepad`, `headset`. These could be surfaced in a Controls settings page (showing which controller is connected) or in a "press button to continue" prompt. The icon system exists (`ui/icon` shader, `Image` widget); wiring these in is a small UI task.
+
+### Stone textures for asteroid types
+- `res/tex2d/stone/` (15 files: 01-04 variants with diffuse/normal/spec/ao) — could be used as asteroid surface materials. Currently asteroids use `material/asteroid.glsl` which may use a single texture set. Adding stone variants would give asteroid fields visual diversity (rocky, metallic, icy).
+- `res/tex2d/metal/02_*` and `metal/03_*` (12 files) — additional metal textures. Could be used for different asteroid compositions (metallic asteroids) or for ship/station hull variants.
+
+### Grass texture
+- `res/tex2d/grass/` (6 files) — likely leftover from terrain experiments. Josh mentioned planet landing as a future feature; grass would be needed for that. **Do not delete** until planet landing is ruled out.
+
+### City cubemap
+- `res/texcube/city/` — could be used for a space station interior skybox or a populated planet's sky. Keep until planet/station interior work is scoped.
+
+### Summary: keep vs delete
+- **Keep (potential future use):** grass/, stone/, water/, ice/, metal/02+03, controller icons, city/dim cubemaps, dev.png
+- **Safe to delete now:** dev.png (0 refs, no future use identified), sunset.jpg (0 refs, no future use identified)
+
+Most "unused" assets have potential future uses. The safest approach is to keep them all until the corresponding features (ice asteroids, planet landing, controller UI, asteroid type variety) are either implemented or explicitly ruled out.
