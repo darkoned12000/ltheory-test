@@ -208,7 +208,15 @@ Audio, Bit, BlendMode, BoxMesh, BoxTree, BSP, Button, Bytes, ClipRect, Collision
 4. **Thread pool cap** — 8 workers. Could be configurable.
 5. **MemPool/MemStack** — could use a custom allocator for better cache locality.
 
-## Next steps
-- Engine/libphx deep review (memory safety audit, performance profiling)
-- VR cleanup (remove if unused)
-- HmGui/ImGui consolidation (optional)
+## C++20 adoption (Option 1)
+
+Applied `[[likely]]`/`[[unlikely]]` annotations to hot paths:
+- `Draw.cpp`: overflow/empty guards marked `[[unlikely]]`
+- `Font.cpp`: glyph cache hit marked `[[likely]]`, missing glyph marked `[[unlikely]]`
+- `Shader.cpp`: broken-shader-load guard marked `[[unlikely]]`
+
+Pure annotation, zero behavioral change. Compiler uses these for branch prediction.
+
+### Options 2 & 3 (documented, not applied)
+- **Option 2 (designated initializers):** Would clean up `Vec3f self = { x, y, z }` → `{.x=x, .y=y, .z=z}`. Requires changing the macro layer in `Vec3.h` (100+ call sites). High effort, marginal readability benefit. Deferred.
+- **Option 3 (std::span):** Could replace raw `ptr + size` in `Draw.cpp` (s_verts buffer) and `Tex2D_Load.cpp`. Medium effort, safer buffer handling. Deferred.
