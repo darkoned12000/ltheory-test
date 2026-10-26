@@ -145,12 +145,12 @@ static Glyph* Font_GetGlyph (Font* self, uint32 codepoint) {
     return self->glyphsAscii[codepoint];
 
   Glyph* g = (Glyph*)HashMap_Get(self->glyphs, &codepoint);
-  if (g)
+  if (g) [[likely]]
     return g;
 
   FT_Face face = self->handle;
   int glyph = FT_Get_Char_Index(face, codepoint);
-  if (glyph == 0)
+  if (glyph == 0) [[unlikely]]
     return 0;
   if (FT_Load_Glyph(face, glyph, FT_LOAD_FORCE_AUTOHINT | FT_LOAD_RENDER))
     return 0;

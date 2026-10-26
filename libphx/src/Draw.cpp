@@ -101,7 +101,7 @@ static void Draw_Unbind () {
 }
 
 static inline void Draw_Push (float x, float y, float z = 0.0f, float u = 0.0f, float v = 0.0f) {
-  if (s_count >= DRAW_MAX_VERTS) return;
+  if (s_count >= DRAW_MAX_VERTS) [[unlikely]] return;
   DrawVert* p = &s_verts[s_count++];
   p->x = x; p->y = y; p->z = z;
   p->u = u; p->v = v;
@@ -254,7 +254,7 @@ int ImmBatch_KeyMatch (
 /* Queue src[0..count) into the deferred flat run, or take the legacy one-shot
  * path when an explicit program or texture blit is in flight. */
 static void Draw_Enqueue (DrawVert const* src, int count, GLenum mode) {
-  if (count <= 0) return;
+  if (count <= 0) [[unlikely]] return;
 
   Draw_WidgetFlush();   /* Widgets queued earlier draw before this flat rect. */
 
@@ -314,7 +314,7 @@ void Imm_Unbind () {
 /* Raw vertex-stream blits (Tex1D/Tex2D/DebugMesh). Flushes any pending run
  * first so the blit lands in queue order, then emits the stream directly. */
 void Imm_Draw (ImmVert const* verts, int count, GLenum mode) {
-  if (!verts || count <= 0) return;
+  if (!verts || count <= 0) [[unlikely]] return;
   Draw_WidgetFlush();   /* Textured blits (font/text) draw after queued widgets. */
   Draw_Commit();
   s_batchTextured = s_lastTextured;
