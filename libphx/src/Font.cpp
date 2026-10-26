@@ -91,12 +91,22 @@ static void Font_AtlasPlace (Font* self, int w, int h, int* outX, int* outY) {
     self->curX = 0;
     self->shelfY += self->shelfH + 2;
     self->shelfH = 0;
-    while (self->shelfY + cellH > self->atlasSize && self->atlasSize < FONT_ATLAS_MAX)
+    int grew = 0;
+    while (self->shelfY + cellH > self->atlasSize && self->atlasSize < FONT_ATLAS_MAX) {
       Font_AtlasGrow(self);
+      grew = 1;
+    }
     if (self->shelfY + cellH > self->atlasSize) {
       /* Pathological: a clamped glyph still taller than the max atlas. Overlap. */
       self->curX = 0;
       self->shelfY = 0;
+    }
+    if (grew) {
+      /* The glyph was already placed (and its bits copied + uploaded) during
+       * the grow's repack of the ordered list. Do NOT overwrite *outX/*outY
+       * here -- doing so clobbered the grow's placement with (1,1) and
+       * left the bits at the grow's position, corrupting the atlas. */
+      return;
     }
   }
   *outX = self->curX + 1;
