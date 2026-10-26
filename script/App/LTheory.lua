@@ -931,6 +931,11 @@ function LTheory:buildGates ()
   -- Clear the old ones.
   if self.gates then
     for _, g in ipairs(self.gates) do
+      if g.sound then
+        g.sound:setVolume(0)
+        g.sound:free()
+        g.sound = nil
+      end
       if g:getParent() then g:getParent():removeChild(g) end
       g:delete()
     end
@@ -1688,10 +1693,31 @@ function LTheory:onUpdate (dt)
         -- sector inaudible -- and the hum is exactly the cue that says
         -- "there is a portal over there".
         if nearest.sound then
-          nearest.sound:setVolume(Entities.Wormhole.droneVolume(gd))
+          local v = Entities.Wormhole.droneVolume(gd)
+          if v < 0.001 then
+            -- Effectively silent: free the sound so it cannot linger as a
+            -- faint drone after the player flies away (miniaudio at gain 0
+            -- can still produce audible output on some backends).
+            nearest.sound:free()
+            nearest.sound = nil
+          else
+            nearest.sound:setVolume(v)
+          end
+        elseif Entities.Wormhole.droneVolume(gd) >= 0.001 then
+          -- Sound was freed (player flew away and came back): restart it.
+          nearest:startSound()
+          if nearest.sound then
+            nearest.sound:setVolume(Entities.Wormhole.droneVolume(gd))
+          end
         end
         for _, g in ipairs(self.gates or {}) do
-          if g ~= nearest and g.sound then g.sound:setVolume(0) end
+          if g ~= nearest and g.sound then
+            g.sound:setVolume(0)
+            -- Free silenced (non-nearest) gate sounds too, so they cannot
+            -- accumulate across sector changes.
+            g.sound:free()
+            g.sound = nil
+          end
         end
       end
     end
