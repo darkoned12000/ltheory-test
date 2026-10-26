@@ -72,7 +72,7 @@ RenderJobQueue* RenderJobQueue_Create (int workers) {
     int cores = SDL_GetNumLogicalCPUCores();
     if (cores <= 0) cores = 1;
     workers = cores;
-    if (workers > 8) workers = 8;  /* cap to avoid oversubscription (Phase 4; tune later) */
+    if (workers > 16) workers = 16;  /* cap to avoid oversubscription; 16 covers high-core-count machines */
   }
   if (workers < 1) workers = 1;
   RenderJobQueue* q = MemNew(RenderJobQueue);

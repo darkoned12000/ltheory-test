@@ -202,11 +202,11 @@ Audio, Bit, BlendMode, BoxMesh, BoxTree, BSP, Button, Bytes, ClipRect, Collision
 - ⚠️ VR support (unclear if used).
 
 ### Modernization opportunities
-1. **Font atlas max size** — bumped to 4096. Could use 8192 on high-end (GL_MAX_TEXTURE_SIZE).
-2. **Anisotropic filtering** — applied per-texture. Could be a global setting.
-3. **GPU particle pool** — 131072 capacity. Could be dynamic based on VRAM.
-4. **Thread pool cap** — 8 workers. Could be configurable.
-5. **MemPool/MemStack** — could use a custom allocator for better cache locality.
+1. **Font atlas max size** — bumped to 4096. Could use 8192 on high-end (GL_MAX_TEXTURE_SIZE). Deferred: 4096 is sufficient for current font sizes (2700 glyphs at 78px). Bump only if profiling shows atlas overflow.
+2. **Anisotropic filtering** — applied per-texture via Cache.Texture(filtered=true). Could be a global setting (Config.gpu.anisotropy). Deferred: per-texture control is more flexible.
+3. **GPU particle pool** — 131072 capacity. Could be dynamic based on VRAM. Deferred: VRAM querying is platform-specific and complex. Current fixed capacity is predictable.
+4. **Thread pool cap** — increased from 8 to 16 to better utilize high-core-count machines. Still capped to avoid oversubscription.
+5. **MemPool/MemStack** — could use a custom allocator for better cache locality. Deferred: major refactor, low ROI. Current malloc-based approach is simple and debuggable.
 
 ## C++20 adoption (Option 1)
 
