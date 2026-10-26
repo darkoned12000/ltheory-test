@@ -59,7 +59,10 @@ Live in `script/Game/`. The event model: every damageable entity calls `Entity:a
 - **Asteroids** build a procedurally generated mesh + rigid body + visible LOD mesh (cached per seed). Health = `max(15, scale*10)`. Death spawns 2–4 smaller children (cascading) + an explosion burst. `System:sweepDestroyed()` (each update) removes dead/`deleted` children and pulls their bodies out of physics — without it you could still crash into a "destroyed" rock.
 - **Ramming** (`System:handleRamming`) maps rigid-body collisions → entities, deals symmetric damage above a relative-speed threshold.
 - **Targeting/HUD**: `drawTargets` locks the nearest entity within 128px of screen center; `T`/`G` lock/clear; `drawLock` clears on death and draws a health bar over the target.
-- **UI smoke test**: `tools/run_ui_test.sh` (boots with `PHX_UITEST=1`) drives the main menu + market flow headlessly and asserts 10 checks (menu open/close, dock open, no menu-under-dock, BUY/SELL non-empty, buy deducts credits, sell adds credits, re-arm, undock closes). Exits non-zero on any FAIL. Expand the hook in `LTheory:onUpdate` (`PHX_UITEST`) as new UI is added.
+- **UI smoke test**: `tools/run_ui_test.sh` / `python3 configure.py uitest` (boots with `PHX_UITEST=1`) drives the main menu + market flow headlessly and asserts 10 checks. `configure.py test` now runs this automatically.
+- **Economy test**: `tools/run_econ_test.sh` (PHX_ECONTEST=1) — full commodity loop (sell raws → factory produces → buy energy → recharge).
+- **Save/load test**: `tools/run_save_test.sh` (PHX_SAVETEST=1) — save/move/load/verify round-trip.
+- **Audio test**: `tools/run_audio_test.sh` (PHX_AUDIOTEST=1) — plays every SFX, verifies no crash (catches miniaudio Vorbis rejections).
 - Spawn a field: `self.system:spawnAsteroidField(2000, 20)`. Manual: build an `Entities.Asteroid(seed, scale)`, `setPos(Vec3f(...))`, then `self.system:addChild(a)`.
 
 ## Commodities & Resources (Content.lua)
