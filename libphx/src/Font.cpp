@@ -245,13 +245,18 @@ void Font_Acquire (Font* self) {
 
 void Font_Free (Font* self) {
   RefCounted_Free(self) {
-    for (int i = 0; i < self->orderedCount; ++i)
+    for (int i = 0; i < self->orderedCount; ++i) {
       MemFree(self->ordered[i]->bits);
+      MemFree(self->ordered[i]);  /* free the Glyph node itself (was leaking) */
+    }
     MemFree(self->ordered);
     MemFree(self->atlasBits);
     if (self->atlas)
       Tex2D_Free(self->atlas);
-    /* TODO : Free glyphs! (the Glyph nodes themselves still leak) */
+    /* HashMap glyphs: nodes are the same Glyph* pointers, already freed above.
+     * The HashMap itself owns its bucket array; destroy it. */
+    if (self->glyphs)
+      HashMap_Free(self->glyphs);
     FT_Done_Face(self->handle);
     MemFree(self);
   }

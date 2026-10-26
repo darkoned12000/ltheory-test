@@ -100,8 +100,16 @@ static void Draw_Unbind () {
   GLCALL(glBindBuffer(GL_ARRAY_BUFFER, 0));
 }
 
+/* Forward declaration: Draw_Push may commit a pending run on overflow. */
+static void Draw_Commit ();
+
 static inline void Draw_Push (float x, float y, float z = 0.0f, float u = 0.0f, float v = 0.0f) {
-  if (s_count >= DRAW_MAX_VERTS) [[unlikely]] return;
+  if (s_count >= DRAW_MAX_VERTS) [[unlikely]] {
+    /* Overflow: commit the pending run and retry, instead of silently
+     * dropping the vertex (which left holes in the rendered geometry). */
+    Draw_Commit();
+  }
+  if (s_count >= DRAW_MAX_VERTS) [[unlikely]] return; /* still full (single primitive > buffer) */
   DrawVert* p = &s_verts[s_count++];
   p->x = x; p->y = y; p->z = z;
   p->u = u; p->v = v;
