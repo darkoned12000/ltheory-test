@@ -353,10 +353,11 @@ function SettingsScreen.Create (opts)
 
 
   local scrollView = ScrollView()
-    :setPadUniform(2)
+    :setPad(2, 24, 2, 2)
     :setScrollable(false, true)
     :add(body)
   if scrollView.setScrollSpeed then scrollView:setScrollSpeed(36) end
+  if scrollView.setMinSize then scrollView:setMinSize(0, 400) end
   self.content:add(scrollView)
 
   self.content:setAlign(0.44, 0.05)
