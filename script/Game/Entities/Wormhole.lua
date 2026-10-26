@@ -206,11 +206,11 @@ end
 -- The first curve was far too generous: at 55k it was still at 59% volume.
 -- This one is CUBIC, so it stays quiet until you are genuinely close, and
 -- then comes up quickly as the portal fills the view.
-local DRONE_FADE_DIST = 40000
+local DRONE_FADE_DIST = 20000
 function Wormhole.droneVolume (distance)
   if not distance or distance >= DRONE_FADE_DIST then return 0 end
   local t = 1 - (distance / DRONE_FADE_DIST)
-  return t * t * t * 1.2
+  return t * t * t * t * 1.2
 end
 
 -- The sound of coming through a gate.
