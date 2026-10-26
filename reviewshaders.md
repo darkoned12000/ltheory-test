@@ -126,6 +126,20 @@ All referenced filters are live. Key findings:
 
 Note: `fog.glsl` still exists as an include even though the fog filter was removed. Check if it's still included anywhere.
 
+### Include math correctness notes (deep review)
+- `common.glsl`: `farPlane = 1e6`, `Fcoef = 0.10034332462` (logarithmic depth). Correct for log-depth. Must update Fcoef if farPlane changes.
+- `deferred.glsl`: Material constants (Diffuse/Metal/Ice/NoShade) encoded as 0/1/2/3 over Material_SIZE=4.0. Used for material-aware SSAO dispatch. Correct.
+- `math.glsl`: TAU, PI, PI2, saturate. Standard. Good.
+- `noise.glsl`: Hash-based noise (fast but low quality). Used for real-time. random.glsl is higher quality (for GPU computation). Good separation.
+- `scattering.glsl` / `scattering2.glsl`: Atmospheric scattering. `scattering2` has CLOUDS_ENABLED=0 (disabled). `iSteps=16, jSteps=1`. Could increase quality at cost.
+- `pbr.glsl`: GGX microsurface distribution. Standard formula. Good.
+- `planetlocal.glsl`: Shared frame conversion (planet + ring). Prevents drift between planet and ring orientation. Good.
+- `tonemapping.glsl`: Color grading micro-knobs (saturation, contrast, temp, tint). ACES/AgX/Filmic/Khronos operators. Good.
+- `medium.glsl`: Volumetric medium (ellipsoid union, <=16 ellipsoids). Shared by volume/volblur. Good.
+- `gamma.glsl`: kGamma=2.2, GAMMA_CORRECT=1. Standard sRGB. Good.
+- `fdm.glsl`: Finite differences for frequency-based LOD. `kDefaultMaxFreq=1.0`, frequency = kDefaultMaxFreq / pow(distance, 0.75). Reasonable falloff.
+- `fog.glsl`: `getFog()` = 1 - exp(-depth) where depth = distance/1e6. Simple exponential fog. Only used by unused `uv_metal`. Dead code candidate.
+
 ---
 
 ## 4. Vertex shaders (`res/shader/vertex/`)
@@ -135,6 +149,17 @@ Note: `fog.glsl` still exists as an include even though the fog filter was remov
 | `billboard/axis`, `billboard/quad`, `billboard/quadpos`, `billboard/wrapped` | ✅ | Used |
 | `farplane`, `identity`, `particles`, `shadow`, `ui3D`, `ui`, `ui/widget`, `uvspace`, `vp`, `worldray`, `wv`, `wvp`, `wvp_zoff` | ✅ except below |
 | `wvp_zoff` | 🗑️ | 0 refs |
+
+### Math correctness notes (deep review)
+- `billboard/axis.glsl`: `normalize(cross(toCam, look))` — if `toCam ∥ look`, cross = 0 → normalize(0) = NaN. Edge case (camera directly behind billboard). Low risk.
+- `billboard/quad.glsl`: `right = cross(look, up)` is **not normalized**. If `look` and `up` aren't perfectly orthogonal, `right` has wrong magnitude → skewed billboard. Should be `normalize(cross(look, up))`. Minor visual artifact.
+- `billboard/wrapped.glsl`: `mod(toCam, kWrapDistance)` — GLSL mod can lose precision for large `toCam` values (camera far from origin). The wrap distance (1024) is small relative to world scale (kSystemScale ~1e5), so precision loss is possible. Consider `fract(toCam / kWrapDistance) * kWrapDistance`.
+- `wvp.glsl`: TAA jitter correctly multiplied by `gl_Position.w` for NDC-space offset. Jitter applied only to geometry, not fullscreen passes. Well-documented rationale.
+- `particles.glsl`: correctly mirrors the AoS Particle struct (stride-48). Dead particles pushed to z=3 (clipped). Good.
+- `worldray.glsl`: reconstructs world ray from inverse view/proj. Correct.
+- `farplane.glsl`: sets z = w (far plane). Standard. Good.
+- `ui3D.glsl`: NDC remap via mix(viewport.xy, viewport.zw, 0.5 + 0.5*p.xy). Correct for viewport transform.
+- `shadow.glsl`: conventional unjittered transform for depth-only. Good (shadows shouldn't jitter).
 
 ---
 
@@ -159,6 +184,6 @@ Note: `fog.glsl` still exists as an include even though the fog filter was remov
 6. **Memory:** The filter chain creates many intermediate textures (buffer0, buffer1, bloom buffers). Could pool/reuse on low-end.
 
 ## Next steps
-- Vertex shader review (math correctness, transform pipelines)
-- Include file review (math formulas, noise quality)
-- Engine/libphx review (separate pass)
+- ✅ Vertex shader review (math correctness, transform pipelines) — done. See §4 notes.
+- ✅ Include file review (math formulas, noise quality) — done. See §3 notes.
+- Engine/libphx review (separate pass) — pending.
