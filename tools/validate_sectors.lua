@@ -158,8 +158,9 @@ do
   -- adding one to it does not change it at all -- the value rounds back to the
   -- same double. The seed has to be genuinely different.
   local c = SectorGraph.layout(987654321098765432, RADIUS)
-  local differs = false
-  for i = 1, #a do
+  local differs = (#a ~= #c)
+  local n = math.min(#a, #c)
+  for i = 1, n do
     if a[i].center.x ~= c[i].center.x or a[i].center.z ~= c[i].center.z then
       differs = true
     end
