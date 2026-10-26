@@ -274,11 +274,11 @@ function Application:run ()
         end
       end
 
-      if Input.GetPressed(Bindings.ToggleFullscreen) then
+      if Input.GetPressed(Bindings.ToggleFullscreen) and not (self.anyScreenOpen and self:anyScreenOpen()) then
         self.window:toggleFullscreen()
       end
 
-      if Input.GetPressed(Bindings.Reload) then
+      if Input.GetPressed(Bindings.Reload) and not (self.anyScreenOpen and self:anyScreenOpen()) then
         Profiler.Begin('Engine.Reload')
         Cache.Clear()
         SendEvent('Engine.Reload')
@@ -286,11 +286,11 @@ function Application:run ()
         Profiler.End()
       end
 
-      if Input.GetDown(Bindings.TimeAccel) then
+      if Input.GetDown(Bindings.TimeAccel) and not (self.anyScreenOpen and self:anyScreenOpen()) then
         timeScale = Config.debug.timeAccelFactor
       end
 
-      if Input.GetPressed(Bindings.ToggleWireframe) then
+      if Input.GetPressed(Bindings.ToggleWireframe) and not (self.anyScreenOpen and self:anyScreenOpen()) then
         Settings.set('render.wireframe', not Settings.get('render.wireframe'))
       end
 
