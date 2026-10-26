@@ -75,6 +75,17 @@ local function commit ()
     f:writeStr(string.format('Config.window.fullscreen  = %s\n', tostring(Config.window.fullscreen)))
     f:writeStr(string.format('Config.audio.musicVolume  = %s\n', fmt(Config.audio.musicVolume)))
     f:writeStr(string.format('Config.audio.sfxVolume    = %s\n', fmt(Config.audio.sfxVolume)))
+    f:writeStr('-- Graphics (advanced)\n')
+    f:writeStr(string.format('Config.gpu.bloom            = %s\n', tostring(Config.gpu.bloom)))
+    f:writeStr(string.format('Config.gpu.bloomIntensity   = %s\n', fmt(Config.gpu.bloomIntensity)))
+    f:writeStr(string.format('Config.gpu.sharpen          = %s\n', tostring(Config.gpu.sharpen)))
+    f:writeStr(string.format('Config.gpu.sharpenStrength  = %s\n', fmt(Config.gpu.sharpenStrength)))
+    f:writeStr(string.format('Config.gpu.tonemap          = %s\n', tostring(Config.gpu.tonemap)))
+    f:writeStr(string.format('Config.gpu.exposureEV       = %s\n', fmt(Config.gpu.exposureEV)))
+    f:writeStr(string.format('Config.gpu.colorSat         = %s\n', fmt(Config.gpu.colorSat)))
+    f:writeStr(string.format('Config.gpu.colorContrast    = %s\n', fmt(Config.gpu.colorContrast)))
+    f:writeStr(string.format('Config.gpu.colorTemp        = %s\n', fmt(Config.gpu.colorTemp)))
+    f:writeStr(string.format('Config.gpu.colorTint        = %s\n', fmt(Config.gpu.colorTint)))
     f:close()
   end)
   if not ok then
@@ -96,11 +107,11 @@ end
 -- the same x. A row without a value readout still adds the third column
 -- (empty), so the control column lines up across ALL the rows.
 local CONTROL_WIDTH = 280
-local LABEL_WIDTH   = 160
+local LABEL_WIDTH   = 180
 
 local function buildRow (label, control, trailing)
   local row = Grid():setCols(3):setStretch(0, 0)
-  row:setPadCellX(16)
+  row:setPadCellX(24)
   label:setWidth(LABEL_WIDTH)
   label:setStretch(0, 0)
   control:setStretch(1, 0)
@@ -256,12 +267,72 @@ function SettingsScreen.Create (opts)
   self.content:add(buildRow(Label('Window mode'), modeSlide))
   self.content:add(buildRow(Label('Resolution'), resSlide))
   self:addLine('')
+  self:addLine('GRAPHICS (advanced)', Color(0.45, 0.80, 1.0, 1.0))
+  -- Toggles via OptionSlider; sliders for continuous values.
+  local bloomToggle = OptionSlider.Create(
+    function () return Config.gpu.bloom and 2 or 1 end,
+    function (i) Config.gpu.bloom = (i == 2); commit() end,
+    { 'OFF', 'ON' })
+  local bloomInt = Slider.Create(
+    function () return Config.gpu.bloomIntensity end,
+    function (v) Config.gpu.bloomIntensity = Math.Clamp(v, 0, 4); commit() end,
+    0, 4)
+  local sharpenToggle = OptionSlider.Create(
+    function () return Config.gpu.sharpen and 2 or 1 end,
+    function (i) Config.gpu.sharpen = (i == 2); commit() end,
+    { 'OFF', 'ON' })
+  local sharpenStr = Slider.Create(
+    function () return Config.gpu.sharpenStrength end,
+    function (v) Config.gpu.sharpenStrength = Math.Clamp(v, 0, 3); commit() end,
+    0, 3)
+  local tonemapToggle = OptionSlider.Create(
+    function () return Config.gpu.tonemap and 2 or 1 end,
+    function (i) Config.gpu.tonemap = (i == 2); commit() end,
+    { 'OFF', 'ON' })
+  local exposureSlide = Slider.Create(
+    function () return (Config.gpu.exposureEV + 4) / 8 end,
+    function (v) Config.gpu.exposureEV = Math.Clamp(v * 8 - 4, -4, 4); commit() end,
+    0, 1)
+  local satSlide = Slider.Create(
+    function () return Config.gpu.colorSat / 3 end,
+    function (v) Config.gpu.colorSat = Math.Clamp(v * 3, 0, 3); commit() end,
+    0, 1)
+  local contrastSlide = Slider.Create(
+    function () return Config.gpu.colorContrast / 3 end,
+    function (v) Config.gpu.colorContrast = Math.Clamp(v * 3, 0, 3); commit() end,
+    0, 1)
+  self.content:add(buildRow(Label('Bloom'), bloomToggle))
+  self.content:add(buildRow(Label('Bloom intensity'), bloomInt))
+  self.content:add(buildRow(Label('Sharpen'), sharpenToggle))
+  self.content:add(buildRow(Label('Sharpen strength'), sharpenStr))
+  self.content:add(buildRow(Label('Tonemap (HDR)'), tonemapToggle))
+  self.content:add(buildRow(Label('Exposure (EV)'), exposureSlide))
+  self.content:add(buildRow(Label('Saturation'), satSlide))
+  self.content:add(buildRow(Label('Contrast'), contrastSlide))
+  self:addLine('')
   self:addLine('AUDIO', Color(0.45, 0.80, 1.0, 1.0))
   self.content:add(buildRow(Label('Music volume'), musicSlide))
   self.content:add(buildRow(Label('Effects volume'),
     sfxSlide,
     Label():setMinWidth(60):setAlign(1, 0.5):setFormat('%.f%%')
       :setPollFn(function () return Math.Round(Config.audio.sfxVolume * 100) end)))
+
+  self:addLine('')
+  self:addLine('CONTROLS', Color(0.45, 0.80, 1.0, 1.0))
+  self.content:add(buildRow(Label('Thrust'), Label('WASD')))
+  self.content:add(buildRow(Label('Aim'), Label('Mouse (hold Space)')))
+  self.content:add(buildRow(Label('Boost'), Label('LShift')))
+  self.content:add(buildRow(Label('Fire'), Label('LMB')))
+  self.content:add(buildRow(Label('Dock'), Label('F')))
+  self.content:add(buildRow(Label('Target'), Label('T / G')))
+  self.content:add(buildRow(Label('Map'), Label('V / F10')))
+  self.content:add(buildRow(Label('Menu'), Label('Esc')))
+  self.content:add(buildRow(Label('Quicksave'), Label('F6')))
+  self.content:add(buildRow(Label('Quickload'), Label('F7')))
+  self.content:add(Label('Keybinding remapping is not yet available;')
+    :setFontColor(Color(0.62, 0.72, 0.86, 1.0)))
+  self.content:add(Label('both keyboard+mouse and gamepad are always active.')
+    :setFontColor(Color(0.62, 0.72, 0.86, 1.0)))
 
   self:addLine('')
   self:addLine('Changes apply right away.', Color(0.62, 0.72, 0.86, 1.0))
