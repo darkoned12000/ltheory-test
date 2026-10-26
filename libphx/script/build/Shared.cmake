@@ -65,8 +65,8 @@ function (phx_configure_target_properties target)
     target_compile_options (${target} PRIVATE "-msse3")
     target_compile_options (${target} PRIVATE "-msse4")
 
-    # Modern C++ standard
-    target_compile_options (${target} PRIVATE "-std=c++17")
+    # Modern C++ standard (C++20: designated initializers, concepts, std::span)
+    target_compile_options (${target} PRIVATE "-std=c++20")
 
   endif ()
 endfunction ()
