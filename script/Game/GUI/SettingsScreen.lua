@@ -357,7 +357,8 @@ function SettingsScreen.Create (opts)
     :setScrollable(false, true)
     :add(body)
   if scrollView.setScrollSpeed then scrollView:setScrollSpeed(36) end
-  if scrollView.setMinSize then scrollView:setMinSize(0, 400) end
+  if scrollView.setStretchY then scrollView:setStretchY(1) end
+  self.content:setStretch(0, 1)
   self.content:add(scrollView)
 
   self.content:setAlign(0.44, 0.05)
