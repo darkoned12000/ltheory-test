@@ -261,13 +261,12 @@ function Application:run ()
 
       if Input.GetPressed(Bindings.Screenshot) then
         doScreenshot = true
-        if Settings.exists('render.superSample') then
-          self.prevSS = Settings.get('render.superSample')
-          Settings.set('render.superSample', 2)
-        end
-        -- SSAA and TAA are alternatives. The capture gets one clean 2x spatial
-        -- sample instead of paying for both high-resolution rasterization and
-        -- temporal history on the same frame.
+        -- SSAA 2x was previously enabled for screenshots, but it renders to a
+        -- separate 2x buffer that is composited back to the back buffer; on some
+        -- drivers/compositors the compositing is async and the back-buffer
+        -- readback catches a partial frame (vertical lines). Capture at native
+        -- resolution instead.
+        -- TAA is still disabled for the capture frame (cleaner single-frame).
         if Settings.exists('render.taa.enable') then
           self.prevTAA = Settings.get('render.taa.enable')
           Settings.set('render.taa.enable', false)
@@ -389,10 +388,12 @@ function Application:run ()
 
     if doScreenshot then
       ScreenCap()
-      if self.prevSS then
-        Settings.set('render.superSample', self.prevSS)
-        self.prevSS = nil
-      end
+      -- SSAA 2x was previously enabled for screenshots, but it renders to a
+      -- separate 2x buffer that is composited back to the back buffer; on some
+      -- drivers/compositors the compositing is async and the back-buffer
+      -- readback catches a partial frame (vertical lines). Capture at native
+      -- resolution instead -- the OS screenshot tool captures the composited
+      -- result, and a native-res capture matches it.
       if self.prevTAA ~= nil then
         Settings.set('render.taa.enable', self.prevTAA)
         self.prevTAA = nil
