@@ -161,6 +161,34 @@ def run_hud_tests():
         luajit = 'luajit'
     return subprocess.run([luajit, exe]).returncode
 
+def run_ui_integration_test():
+    exe = 'bin/lt64.exe' if os.name == 'nt' else 'bin/lt64r'
+    if not os.path.exists(exe):
+        print('[configure.py] No game binary found - skipping UI integration test')
+        return 0
+    print('[configure.py] Running UI integration test (main menu + market flow)')
+    env = dict(os.environ)
+    env['PHX_MUTE'] = '1'
+    env['PHX_WINDOWED'] = '1'
+    env['PHX_FIXED_SIZE'] = '1024,768'
+    env['PHX_FIXED_DT'] = '0.016'
+    env['PHX_UITEST'] = '1'
+    out = ''
+    try:
+        p = subprocess.run([exe, 'LTheory'], env=env, timeout=60,
+                          capture_output=True, text=True)
+        out = p.stdout or ''
+    except subprocess.TimeoutExpired as e:
+        raw = e.stdout if e.stdout is not None else b''
+        out = raw.decode('utf-8', 'replace') if isinstance(raw, bytes) else str(raw)
+    if '[UITEST] FAIL:' in out or '[UITEST] ALL CHECKS PASSED' not in out:
+        print('[configure.py] UI integration test FAILED')
+        print(out[-500:])
+        return 1
+    print('[configure.py] UI integration test PASSED')
+    return 0
+
+
 def run_tests():
     result = 0
     exe = os.path.join('build', 'test', 'lte_tests')
@@ -189,6 +217,8 @@ def run_tests():
     result |= run_sdl_tests()
     result |= run_hud_tests()
     result |= run_nodegraph_tests()
+    # Integration tests (require the game binary; run headlessly).
+    result |= run_ui_integration_test()
     return result
 
 def validate_shaders():
@@ -231,6 +261,28 @@ def main():
         elif cmd == 'run':
             exe = 'bin/lt64.exe' if os.name == 'nt' else 'bin/lt64r'
             subprocess.call([exe] + sys.argv[2:])
+        elif cmd == 'uitest':
+            # Headless UI integration test (main menu + market flow).
+            exe = 'bin/lt64.exe' if os.name == 'nt' else 'bin/lt64r'
+            env = dict(os.environ)
+            env['PHX_MUTE'] = '1'
+            env['PHX_WINDOWED'] = '1'
+            env['PHX_FIXED_SIZE'] = '1024,768'
+            env['PHX_FIXED_DT'] = '0.016'
+            env['PHX_UITEST'] = '1'
+            p = None
+            try:
+                p = subprocess.run([exe, 'LTheory'], env=env, timeout=60,
+                                  capture_output=True, text=True)
+                out = p.stdout
+            except subprocess.TimeoutExpired as e:
+                raw = e.stdout if e.stdout is not None else b''
+                out = raw.decode('utf-8', 'replace') if isinstance(raw, bytes) else str(raw)
+            print(out)
+            if '[UITEST] FAIL:' in out or '[UITEST] ALL CHECKS PASSED' not in out:
+                print('[configure.py] UI test FAILED')
+                sys.exit(1)
+            print('[configure.py] UI test PASSED')
         elif cmd == 'test':
             return run_tests()
         else:
