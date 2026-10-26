@@ -185,9 +185,9 @@ Audio, Bit, BlendMode, BoxMesh, BoxTree, BSP, Button, Bytes, ClipRect, Collision
 3. **Font atlas ordered list missing new glyph during grow** — FIXED.
 
 ### Memory safety
-- ⚠️ Glyph nodes leak in Font_Free (TODO noted). Minor.
-- ⚠️ MemFree without null checks in some places. Need audit.
-- ⚠️ SDF pipeline uses many intermediate buffers. Could be a memory hotspot.
+- ✅ Glyph nodes leak in Font_Free — FIXED (Font_Free now frees Glyph nodes; HashMap_Free only frees buckets, no double-free).
+- ✅ MemFree without null checks — RESOLVED (MemFree wraps free(), which is NULL-safe per C standard. No null checks needed.)
+- ⚠️ SDF pipeline uses many intermediate buffers — DOCUMENTED (SDF volume ~4MB at 64³, indices ~1MB, mesh vertices. Peak ~5-10MB per SDF. Freed after generation. Acceptable for desktop. Not a per-frame issue.)
 
 ### Performance
 - ✅ Draw batch (deferred flat + widget) — good.
