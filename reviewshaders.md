@@ -148,7 +148,7 @@ Note: `fog.glsl` still exists as an include even though the fog filter was remov
 **Vertex:** wvp_zoff
 **Include:** raytrace (verify)
 
-**Total unused candidates: ~20 shaders** (out of 163).
+**Total unused candidates: ~22 shaders** (out of 163).
 
 ## Recommendations
 1. **Delete unused shaders** to reduce VRAM/file size. Verify each with the offline validator after deletion.
