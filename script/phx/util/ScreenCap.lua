@@ -1,4 +1,7 @@
--- TODO : Don't be an ass, Josh.
+-- Captures the current framebuffer to a PNG file. The C++ side
+-- (Tex2D_ScreenCapture) binds the default framebuffer (FBO 0) and fences
+-- the readback with glFinish() to avoid tiled/sheared captures on
+-- Wayland's async swap handoff.
 local dir = './screenshot/'
 
 local function getPath (n)

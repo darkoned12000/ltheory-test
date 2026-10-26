@@ -67,6 +67,12 @@ Tex2D* Tex2D_ScreenCapture () {
   // native backend) the swap-to-compositor handoff is asynchronous, and an
   // unfenced glReadPixels after a swap intermittently returned tiled /
   // sheared surfaces -- the "vertical lines" seen in captures.
+  // Make sure we read from the default framebuffer, not a leftover render
+  // target (FBO). The post-processing chain binds FBOs; if one is still
+  // bound, glReadPixels reads from its color attachment (or fails), producing
+  // tiled/sheared/vertical-line captures.
+  GLCALL(glBindFramebuffer(GL_READ_FRAMEBUFFER, 0))
+  GLCALL(glBindFramebuffer(GL_FRAMEBUFFER, 0))
   GLCALL(glReadBuffer(GL_BACK))
   GLCALL(glFinish())
   GLCALL(glReadPixels(0, 0, size.x, size.y, GL_RGBA, GL_UNSIGNED_BYTE, buf))
@@ -131,7 +137,7 @@ void Tex2D_Draw (Tex2D* self, float x, float y, float sx, float sy) {
     { x + sx,  y + sy,  0.0f, 1.0f, 1.0f },
     { x + sx,  y,       0.0f, 1.0f, 0.0f },
   };
-  Imm_Draw(q, 4, GL_QUADS);
+  Imm_Draw(std::span(q, 4), GL_QUADS);
 }
 
 void Tex2D_DrawEx (
@@ -151,7 +157,7 @@ void Tex2D_DrawEx (
     { x1, y1, 0.0f, u1, v1 },
     { x1, y0, 0.0f, u1, v0 },
   };
-  Imm_Draw(q, 4, GL_QUADS);
+  Imm_Draw(std::span(q, 4), GL_QUADS);
 }
 
 void Tex2D_GenMipmap (Tex2D* self) {
