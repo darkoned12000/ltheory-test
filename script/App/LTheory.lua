@@ -1214,6 +1214,11 @@ function LTheory:buildPlace (region, sectorName)
       for _, out in ipairs(prod.outputs) do
         place.trader:addStandingAsk(out.item, Item.Price[out.item] or 20, 40)
       end
+      -- Seed starting stock so the industrial good is on the shelf from
+      -- minute one (the factory needs ~1s to produce the first batch).
+      for _, out in ipairs(prod.outputs) do
+        place:addItem(out.item, 20)
+      end
     end
 
     -- ...and the raw shelf: place stock of T1 (what miners delivered)
