@@ -292,6 +292,9 @@ Mesh* Mesh_FromObj (cstr bytes) {
       VertexIndices vertexIndices[4] = {};
 
       while (s.cursor < s.endOfData && *s.cursor != '\r' && *s.cursor != '\n') {
+        if (vertexIndicesCount >= 4)
+          Obj_Fatal("Face has more than 4 vertices (only triangles and quads are supported).", &s);
+
         VertexIndices* face = &vertexIndices[vertexIndicesCount];
 
         face->iUV = INT32_MIN;

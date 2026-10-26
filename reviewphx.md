@@ -122,12 +122,41 @@ Audio, Bit, BlendMode, BoxMesh, BoxTree, BSP, Button, Bytes, ClipRect, Collision
 - ⚠️ MemNew/MemFree/MemAlloc macros — standard C heap wrappers. No custom pool for most allocations.
 - ⚠️ Some MemFree calls without null checks (MemFree(NULL) is safe in C, but MemFree on freed memory is a double-free). Need audit.
 
-### 10. Math (Math.cpp, GLMatrix.cpp)
+### Input system (Input.cpp, Button.cpp, Key.cpp, Gamepad.cpp)
 
-**Math.cpp / GLMatrix.cpp** — Vector/matrix math.
-- ✅ SSE4+ assumed (optimization).
-- ✅ Matrix operations (multiply, inverse, transpose).
-- ⚠️ No bounds checking on array access (performance trade-off).
+**Input.cpp (809 lines) — SDL3 input mapping**
+- ✅ Gamepad hotplug: SDL_EVENT_GAMEPAD_ADDED/REMOVED handled. Opens/closes gamepad, zeroes input on remove.
+- ⚠️ No explicit axis deadzone: SDL3 axes are normalized to [-1, 1] but small stick drift isn't clamped to 0. Could cause unwanted micro-movement. Tuning concern, not a bug.
+- ✅ Key state tracking: transitions counter + buttons bool + axes float. Hysteresis (Threshold_Pressed=0.5, Threshold_Released=0.4) for analog buttons.
+- ✅ Auto-release for scroll wheels (autoRelease list).
+- ✅ Focus loss releases all down buttons (SDL_EVENT_WINDOW_FOCUS_LOST).
+- ✅ Gamepad axis Y inversion handled (LeftY, RightY).
+- ✅ Mouse focus clickthrough hint (SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH).
+- ⚠️ `Input_GetDeviceState` doesn't bounds-check device.id — but callers check `Input_GetDeviceExists` first. Internal callers use known-valid devices. OK.
+- ✅ Gamepad database loaded from `gamecontrollerdb_205.txt`.
+
+### Mesh loading (Mesh_FromObj.cpp)
+
+**Mesh_FromObj.cpp (404 lines) — OBJ parser**
+- ✅ Well-structured with bounds checking (token length, cursor bounds, index ranges).
+- ✅ Negative indices handled (relative indexing).
+- ✅ Fatal on malformed input (out-of-range floats, bad face counts).
+- ✅ Degenerate polygon detection (equal vertex positions).
+- ⚠️ Face vertex count not bounds-checked against `vertexIndices[4]` array — a face with 5+ vertices would overflow. **FIXED: added bounds check (max 4 vertices per face).**
+- ⚠️ `ConsumeFloat` uses `strtof` with `errno` check — correct. `afterFloat != s->cursor` check prevents partial parses.
+- ✅ Memory: positions/uvs/normals ArrayLists freed at end. indices MemFree'd. Mesh owns vertex data.
+- ⚠️ ArrayList capacity heuristics (0.008 * bytesSize) could under-allocate for dense meshes, causing reallocs. Minor performance, not correctness.
+
+### GPUBuffer (GPUBuffer.cpp)
+
+**GPUBuffer.cpp (65 lines) — SSBO management**
+- ✅ Zero-initialized storage (`MemAllocZero` → `glBufferData`).
+- ✅ Bounds checking on upload/download (`size > self->size` → Fatal).
+- ✅ Proper cleanup (`glDeleteBuffers` + `MemFree`).
+- ✅ `glBufferSubData` for partial uploads.
+- ✅ `glBindBufferBase` for SSBO binding.
+- ⚠️ No resize capability (size is fixed at creation). Acceptable for particle pool (fixed capacity).
+- ⚠️ `MemAllocZero(size)` when size=0: malloc(0) is implementation-defined. But GPUBuffer is always created with size > 0 (particle pool). Low risk.
 
 ### 11. Collision / Physics (CollisionShape.cpp, RigidBody.cpp)
 
