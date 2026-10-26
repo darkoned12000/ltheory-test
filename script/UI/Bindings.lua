@@ -7,8 +7,7 @@ return {
   ):delta(),
   Cancel    = Control.Or(
     Control.MouseButton(Button.Mouse.Right),
-    Control.Key(Button.Keyboard.Escape),
-    Control.Key(Button.Keyboard.LShift)
+    Control.Key(Button.Keyboard.Escape)
   ):delta(),
   Up        = Control.Key(Button.Keyboard.W):delta(),
   Down      = Control.Key(Button.Keyboard.S):delta(),
