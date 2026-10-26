@@ -170,6 +170,51 @@ Note: `fog.glsl` still exists as an include even though the fog filter was remov
 - **No `discard` without layout**: shaders that use `discard` are fine (modern).
 - **SPIR-V / bindless textures**: not yet used; could be future work for reducing draw call overhead.
 
+## res/ asset audit (beyond shaders)
+
+### Texture audit (`res/tex2d/`)
+| Directory | Files | Used? | Notes |
+|---|---|---|---|
+| `metal/01_*` | 3 | ✅ | Used by Material.lua (diffuse/normal/spec) |
+| `metal/02_*`, `metal/03_*` | 12 | 🗑️ | Only `metal/01_*` is referenced. Unused. |
+| `ice/01.jpg` | 1 | 🗑️ | `ice/rust` is a hue family name, not a texture path. Unused. |
+| `grass/` | 6 | 🗑️ | 0 refs. Leftover from terrain experiments. |
+| `stone/` | 15 | 🗑️ | 0 refs. Leftover. |
+| `water/` | 1 | 🗑️ | 0 refs. Leftover. |
+| `icon/` (16 of 22) | 16 | ✅ | Gamepad/controller icons |
+| `icon/` (6 of 22) | 6 | 🗑️ | controller_elite, controller_one, controller_xbox, dpad, gamepad, headset — unused |
+| `image/` | 2 | ✅ | cantinaband, vader |
+| `dev.png` | 1 | 🗑️ | 0 refs |
+| `null.png` | 1 | ✅ | UI/Image.lua default texture |
+| `rock.jpg` | 1 | ✅ | 3 refs |
+| `lensdirt.jpg` | 1 | ✅ | 1 ref |
+| `SMAA_AreaTex.bin`, `SMAA_SearchTex.bin` | 2 | ✅ | SMAA anti-aliasing |
+
+### Cubemap audit (`res/texcube/`)
+| Directory | Files | Used? | Notes |
+|---|---|---|---|
+| `city/`, `dim1/`, `dim3/`, `dim8/` | 24 | 🗑️ | 0 refs. Cubemaps are generated at runtime (GenUtil.ShaderToTexCube), not loaded from disk. |
+| `sunset.jpg` | 1 | 🗑️ | 0 refs. |
+
+### Other assets
+| Folder | Count | Used? | Notes |
+|---|---|---|---|
+| `res/mesh/` | 14 | ✅ | Stations, ships, asteroids (core assets) |
+| `res/sound/` | 42 | ✅ | All referenced by audio system |
+| `res/font/` | 68 | ✅ | All referenced by UI |
+| `res/grammar/` | 48 | ✅ | Name generation |
+| `res/gen/` | 1 | ✅ | tex2d_noise.lua |
+| `res/web/` | 1 | ✅ | Web UI assets |
+
+### Total unused asset candidates
+- **tex2d:** ~41 files (grass/ 6, stone/ 15, water/ 1, ice/01.jpg 1, metal/02+03 12, dev.png 1, 6 icons)
+- **texcube:** 25 files (city 6 + dim1 6 + dim3 6 + dim8 6 + sunset 1)
+- **Total: ~66 unused asset files**
+
+These are safe to delete (no code references them). Verify by running the game after deletion.
+
+---
+
 ## Summary of unused candidates (safe to delete)
 
 **Fragment filters:** bloom2, blurhdr, dither, fade, invert, log, madd, overlay, prebloom, radialminmax, tonemap2
