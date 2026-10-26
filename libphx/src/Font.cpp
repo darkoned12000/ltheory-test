@@ -119,6 +119,13 @@ static void Font_AtlasGrow (Font* self) {
   self->atlasSize *= 2;
   if (self->atlasSize > FONT_ATLAS_MAX)
     self->atlasSize = FONT_ATLAS_MAX;
+  /* The Tex2D was created at the old (smaller) size; Tex2D_SetData uses
+   * self->size (stale), so it would only upload the old-sized portion ->
+   * garbled text. Free it and let Font_AtlasUpload recreate at the new size. */
+  if (self->atlas) {
+    Tex2D_Free(self->atlas);
+    self->atlas = 0;
+  }
   MemFree(self->atlasBits);
   self->atlasBits = MemNewArray(Vec4f, (size_t)self->atlasSize * self->atlasSize);
   MemZero(self->atlasBits, (size_t)self->atlasSize * self->atlasSize * sizeof(Vec4f));
