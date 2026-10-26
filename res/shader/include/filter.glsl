@@ -1,3 +1,4 @@
+/* Filter pass helpers. */
 #ifndef include_filter
 #define include_filter
 

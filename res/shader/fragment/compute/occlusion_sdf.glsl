@@ -1,3 +1,4 @@
+/* occlusion_sdf shader. */
 #include math
 #include noise
 

@@ -1,3 +1,4 @@
+/* Vertex shader common (autovars, inputs). */
 #include common
 
 in vec3 vertex_position;

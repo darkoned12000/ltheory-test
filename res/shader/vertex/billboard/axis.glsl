@@ -1,3 +1,4 @@
+/* Axis-aligned billboard. */
 #include vertex
 #include math
 

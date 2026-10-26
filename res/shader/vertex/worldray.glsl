@@ -1,3 +1,4 @@
+/* World-ray reconstruction for volume passes. */
 #include vertex
 
 #autovar mat4 mViewInv

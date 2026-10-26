@@ -1,3 +1,4 @@
+/* explosion shader. */
 #include fragment
 #include math
 #include noise

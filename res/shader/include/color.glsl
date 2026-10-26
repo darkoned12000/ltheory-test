@@ -1,3 +1,4 @@
+/* Color space conversions. */
 #ifndef include_color
 #define include_color
 

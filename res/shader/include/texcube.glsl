@@ -1,3 +1,4 @@
+/* Cubemap sampling helpers. */
 #ifndef include_texcube
 #define include_texcube
 

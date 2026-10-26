@@ -1,3 +1,4 @@
+/* bloomcomposite shader. */
 #include filter
 #include color
 #include math

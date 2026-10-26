@@ -1,3 +1,4 @@
+/* 3D UI element transform. */
 #include vertex
 
 #autovar mat4 mView

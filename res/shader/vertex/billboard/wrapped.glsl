@@ -1,3 +1,4 @@
+/* Wrapped quad for dust cloud / god rays. */
 #include vertex
 #include math
 

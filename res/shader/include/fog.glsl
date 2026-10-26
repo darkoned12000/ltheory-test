@@ -1,3 +1,4 @@
+/* Fog helpers (legacy, fog filter removed). */
 #ifndef include_fog
 #define include_fog
 

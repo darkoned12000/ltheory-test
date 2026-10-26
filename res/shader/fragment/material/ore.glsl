@@ -1,3 +1,4 @@
+/* ore shader. */
 #include fragment
 #include deferred
 #include gamma

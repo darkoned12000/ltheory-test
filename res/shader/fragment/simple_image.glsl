@@ -1,3 +1,4 @@
+/* simple_image shader. */
 #include fragment
 
 

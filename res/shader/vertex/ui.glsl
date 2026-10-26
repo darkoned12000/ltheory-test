@@ -1,3 +1,4 @@
+/* UI vertex transform. */
 #include vertex
 
 #autovar mat4 mViewUI

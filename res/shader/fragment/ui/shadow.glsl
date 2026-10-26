@@ -1,3 +1,4 @@
+/* shadow shader. */
 #include fragment
 #include math
 

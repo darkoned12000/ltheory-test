@@ -1,3 +1,4 @@
+/* Quaternion math helpers. */
 #ifndef include_quat
 #define include_quat
 

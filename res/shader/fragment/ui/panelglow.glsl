@@ -1,3 +1,4 @@
+/* panelglow shader. */
 #include fragment
 #include math
 

@@ -1,3 +1,4 @@
+/* Fullscreen quad vertex shader (post-process passes). */
 #include vertex
 #include math
 

@@ -1,3 +1,4 @@
+/* nebula_absorb shader. */
 #include fragment
 #include color
 #include math

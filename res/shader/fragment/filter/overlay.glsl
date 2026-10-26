@@ -1,3 +1,4 @@
+/* UNUSED - candidate for removal (no references in script/). */
 #include filter
 
 layout(location = 0) out vec4 fragColor;

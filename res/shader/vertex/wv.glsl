@@ -1,3 +1,4 @@
+/* World-view transform. */
 #include vertex
 
 uniform mat4 mWorldView;

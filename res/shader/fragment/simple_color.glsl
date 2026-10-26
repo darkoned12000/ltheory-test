@@ -1,3 +1,4 @@
+/* simple_color shader. */
 #include fragment
 
 

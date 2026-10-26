@@ -1,3 +1,4 @@
+/* Brush helpers for procedural textures. */
 #include fragment
 
 uniform sampler2D canvas;

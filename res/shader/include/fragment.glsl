@@ -1,3 +1,4 @@
+/* Fragment shader common (autovars, inputs). */
 #include common
 
 in vec2 uv;

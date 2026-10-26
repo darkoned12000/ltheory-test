@@ -1,3 +1,4 @@
+/* tone shader. */
 #include brush
 #include noise
 

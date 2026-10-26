@@ -1,3 +1,4 @@
+/* logo shader. */
 #include fragment
 #include noise
 #include color

@@ -1,3 +1,4 @@
+/* circle shader. */
 #include fragment
 #include math
 

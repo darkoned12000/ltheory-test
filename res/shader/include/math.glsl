@@ -1,3 +1,4 @@
+/* Math helpers (noise, SDF, etc). */
 #ifndef common_math
 #define common_math
 

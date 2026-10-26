@@ -1,3 +1,4 @@
+/* skybox_dynamic shader. */
 
 layout(location = 0) out vec4 fragColor;
 in vec2 uv;

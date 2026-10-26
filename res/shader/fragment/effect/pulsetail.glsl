@@ -1,3 +1,4 @@
+/* pulsetail shader. */
 #include fragment
 #include color
 #include math

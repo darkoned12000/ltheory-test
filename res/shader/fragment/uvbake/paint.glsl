@@ -1,3 +1,4 @@
+/* paint shader. */
 #include fragment
 #include math
 

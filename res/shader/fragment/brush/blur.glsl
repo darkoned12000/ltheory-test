@@ -1,3 +1,4 @@
+/* blur shader. */
 #include brush
 #include noise
 

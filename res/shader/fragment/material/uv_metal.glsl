@@ -1,3 +1,4 @@
+/* UNUSED - candidate for removal (no references in script/). */
 #include fragment
 #include deferred
 #include gamma

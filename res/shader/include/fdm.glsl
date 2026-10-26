@@ -1,3 +1,4 @@
+/* Finite differences. */
 #ifndef include_fdm
 #define include_fdm
 

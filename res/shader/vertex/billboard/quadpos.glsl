@@ -1,3 +1,4 @@
+/* Positioned quad for UI 3D. */
 #include vertex
 #include math
 

@@ -1,3 +1,4 @@
+/* desat shader. */
 #include brush
 #include color
 #include math

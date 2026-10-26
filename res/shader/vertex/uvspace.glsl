@@ -1,3 +1,4 @@
+/* UV-space transform (uvbake). */
 #include vertex
 
 void main() {

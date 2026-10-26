@@ -1,3 +1,4 @@
+/* Deferred shading helpers (G-buffer layout). */
 #include math
 
 const float Material_SIZE       = 4.0;

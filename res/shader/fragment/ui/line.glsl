@@ -1,3 +1,4 @@
+/* line shader. */
 #include fragment
 #include math
 

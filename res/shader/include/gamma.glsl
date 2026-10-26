@@ -1,3 +1,4 @@
+/* Gamma correction helpers. */
 #ifndef include_gamme
 #define include_gamma
 

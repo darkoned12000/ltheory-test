@@ -1,3 +1,4 @@
+/* Widget vertex transform. */
 #autovar mat4 mViewUI
 #autovar mat4 mProjUI
 

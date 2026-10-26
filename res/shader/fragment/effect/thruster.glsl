@@ -1,3 +1,4 @@
+/* thruster shader. */
 #include fragment
 #include gamma
 #include math

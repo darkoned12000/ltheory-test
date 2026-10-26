@@ -1,3 +1,4 @@
+/* Passthrough identity transform. */
 #include vertex
 
 void main() {
