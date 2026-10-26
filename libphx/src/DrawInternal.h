@@ -21,4 +21,6 @@ void Draw_SetTexturedImm (bool textured);
 /* Draws verts as the given primitive (QUADS/POLYGON are CPU-expanded to
  * triangles, matching Draw_Flush). Chunks automatically, so count may exceed
  * the internal scratch-buffer capacity. */
-void Imm_Draw (ImmVert const* verts, int count, GLenum mode);
+#include <span>
+
+void Imm_Draw (std::span<const ImmVert> verts, GLenum mode);

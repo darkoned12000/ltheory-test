@@ -12,6 +12,7 @@
 #include "TexFormat.h"
 #include "Vec4.h"
 #include <cstring>
+#include <span>
 
 /* ----------------------------------------------------------------------------
  * Draw subsystem — modernized to VBO instead of deprecated immediate mode
@@ -261,8 +262,8 @@ int ImmBatch_KeyMatch (
 
 /* Queue src[0..count) into the deferred flat run, or take the legacy one-shot
  * path when an explicit program or texture blit is in flight. */
-static void Draw_Enqueue (DrawVert const* src, int count, GLenum mode) {
-  if (count <= 0) [[unlikely]] return;
+static void Draw_Enqueue (std::span<const DrawVert> src, GLenum mode) {
+  if (src.empty()) return;
 
   Draw_WidgetFlush();   /* Widgets queued earlier draw before this flat rect. */
 
@@ -271,13 +272,12 @@ static void Draw_Enqueue (DrawVert const* src, int count, GLenum mode) {
     s_batchTextured = s_lastTextured;
     s_batchR = color.x; s_batchG = color.y; s_batchB = color.z;
     s_batchA = Draw_CurrentAlpha();
-    while (count > 0) {
-      int n = count < DRAW_MAX_VERTS ? count : DRAW_MAX_VERTS;
-      memcpy(s_verts, src, (size_t)n * sizeof(DrawVert));
-      s_count = n;
+    for (size_t i = 0; i < src.size();) {
+      size_t n = std::min(src.size() - i, (size_t)DRAW_MAX_VERTS);
+      std::copy(src.begin() + i, src.begin() + i + n, s_verts);
+      s_count = (int)n;
       Draw_Emit(mode);
-      src += n;
-      count -= n;
+      i += n;
     }
     return;
   }
@@ -294,19 +294,18 @@ static void Draw_Enqueue (DrawVert const* src, int count, GLenum mode) {
     s_batchTextured = false;
   }
 
-  int in = 0;
-  while (in < count) {
+  size_t in = 0;
+  while (in < src.size()) {
     if (s_count >= DRAW_MAX_VERTS) {
       Draw_Commit();
       s_batchMode = mode;
       s_batchR = color.x; s_batchG = color.y; s_batchB = color.z; s_batchA = a;
       s_batchTextured = false;
     }
-    int room = DRAW_MAX_VERTS - s_count;
-    int c = count - in;
-    if (c > room) c = room;
-    memcpy(s_verts + s_count, src + in, (size_t)c * sizeof(DrawVert));
-    s_count += c;
+    size_t room = DRAW_MAX_VERTS - s_count;
+    size_t c = std::min(src.size() - in, room);
+    std::copy(src.begin() + in, src.begin() + in + c, s_verts + s_count);
+    s_count += (int)c;
     in += c;
   }
 }
@@ -321,20 +320,22 @@ void Imm_Unbind () {
 
 /* Raw vertex-stream blits (Tex1D/Tex2D/DebugMesh). Flushes any pending run
  * first so the blit lands in queue order, then emits the stream directly. */
-void Imm_Draw (ImmVert const* verts, int count, GLenum mode) {
-  if (!verts || count <= 0) [[unlikely]] return;
+void Imm_Draw (std::span<const ImmVert> verts, GLenum mode) {
+  if (verts.empty()) [[unlikely]] return;
+  /* Null-pointer guard: std::span with a null pointer and 0 size is technically
+   * UB in some implementations, even though empty() returns true. */
+  if (verts.data() == nullptr) [[unlikely]] return;
   Draw_WidgetFlush();   /* Textured blits (font/text) draw after queued widgets. */
   Draw_Commit();
   s_batchTextured = s_lastTextured;
   s_batchR = color.x; s_batchG = color.y; s_batchB = color.z;
   s_batchA = Draw_CurrentAlpha();
-  while (count > 0) {
-    int n = count < DRAW_MAX_VERTS ? count : DRAW_MAX_VERTS;
-    memcpy(s_verts, verts, (size_t)n * sizeof(DrawVert));
-    s_count = n;
+  for (size_t i = 0; i < verts.size();) {
+    size_t n = std::min(verts.size() - i, (size_t)DRAW_MAX_VERTS);
+    std::memcpy(s_verts, verts.data() + i, n * sizeof(ImmVert));
+    s_count = (int)n;
     Draw_Emit(mode);
-    verts += n;
-    count -= n;
+    i += n;
   }
 }
 
@@ -533,8 +534,8 @@ void Draw_Axes (
     { UNPACK3(*pos), 0, 0 }, { UNPACK3(forward), 0, 0 },
   };
   DrawVert center[1] = { { UNPACK3(*pos), 0, 0 } };
-  Draw_Enqueue(lines, 6, GL_LINES);
-  Draw_Enqueue(center, 1, GL_POINTS);
+  Draw_Enqueue(std::span(lines, 6), GL_LINES);
+  Draw_Enqueue(std::span(center, 1), GL_POINTS);
 }
 
 void Draw_Border (float s, float x, float y, float w, float h) {
@@ -577,7 +578,7 @@ void Draw_Box3 (Box3f const* self) {
     { self->upper.x, self->lower.y, self->upper.z, 0, 0 },
     { self->lower.x, self->lower.y, self->upper.z, 0, 0 },
   };
-  Draw_Enqueue(v, 24, GL_QUADS);
+  Draw_Enqueue(std::span(v, 24), GL_QUADS);
 }
 
 void Draw_Clear (float r, float g, float b, float a) {
@@ -604,12 +605,12 @@ void Draw_Flush () {
 
 void Draw_Line (float x1, float y1, float x2, float y2) {
   DrawVert v[2] = { { x1, y1, 0, 0, 0 }, { x2, y2, 0, 0, 0 } };
-  Draw_Enqueue(v, 2, GL_LINES);
+  Draw_Enqueue(std::span(v, 2), GL_LINES);
 }
 
 void Draw_Line3 (Vec3f const* p1, Vec3f const* p2) {
   DrawVert v[2] = { { UNPACK3(*p1), 0, 0 }, { UNPACK3(*p2), 0, 0 } };
-  Draw_Enqueue(v, 2, GL_LINES);
+  Draw_Enqueue(std::span(v, 2), GL_LINES);
 }
 
 void Draw_LineWidth (float width) {
@@ -631,17 +632,17 @@ void Draw_Plane (Vec3f const* p, Vec3f const* n, float scale) {
     { UNPACK3(p0), 0, 0 }, { UNPACK3(p1), 0, 0 },
     { UNPACK3(p2), 0, 0 }, { UNPACK3(p3), 0, 0 },
   };
-  Draw_Enqueue(v, 4, GL_QUADS);
+  Draw_Enqueue(std::span(v, 4), GL_QUADS);
 }
 
 void Draw_Point (float x, float y) {
   DrawVert v[1] = { { x, y, 0, 0, 0 } };
-  Draw_Enqueue(v, 1, GL_POINTS);
+  Draw_Enqueue(std::span(v, 1), GL_POINTS);
 }
 
 void Draw_Point3 (float x, float y, float z) {
   DrawVert v[1] = { { x, y, z, 0, 0 } };
-  Draw_Enqueue(v, 1, GL_POINTS);
+  Draw_Enqueue(std::span(v, 1), GL_POINTS);
 }
 
 void Draw_PointSize (float size) {
@@ -655,7 +656,7 @@ void Draw_Poly (Vec2f const* points, int count) {
   DrawVert v[DRAW_MAX_VERTS];
   for (int i = 0; i < count; ++i)
     v[i] = DrawVert{ UNPACK2(points[i]), 0, 0 };
-  Draw_Enqueue(v, count, GL_POLYGON);
+  Draw_Enqueue(std::span(v, count), GL_POLYGON);
 }
 
 void Draw_Poly3 (Vec3f const* points, int count) {
@@ -664,7 +665,7 @@ void Draw_Poly3 (Vec3f const* points, int count) {
   DrawVert v[DRAW_MAX_VERTS];
   for (int i = 0; i < count; ++i)
     v[i] = DrawVert{ UNPACK3(points[i]), 0, 0 };
-  Draw_Enqueue(v, count, GL_POLYGON);
+  Draw_Enqueue(std::span(v, count), GL_POLYGON);
 }
 
 void Draw_Quad (Vec2f const* p1, Vec2f const* p2, Vec2f const* p3, Vec2f const* p4) {
@@ -672,7 +673,7 @@ void Draw_Quad (Vec2f const* p1, Vec2f const* p2, Vec2f const* p3, Vec2f const* 
     { UNPACK2(*p1), 0, 0 }, { UNPACK2(*p2), 0, 1 },
     { UNPACK2(*p3), 1, 1 }, { UNPACK2(*p4), 1, 0 },
   };
-  Draw_Enqueue(v, 4, GL_QUADS);
+  Draw_Enqueue(std::span(v, 4), GL_QUADS);
 }
 
 void Draw_Quad3 (Vec3f const* p1, Vec3f const* p2, Vec3f const* p3, Vec3f const* p4) {
@@ -680,7 +681,7 @@ void Draw_Quad3 (Vec3f const* p1, Vec3f const* p2, Vec3f const* p3, Vec3f const*
     { UNPACK3(*p1), 0, 0 }, { UNPACK3(*p2), 0, 1 },
     { UNPACK3(*p3), 1, 1 }, { UNPACK3(*p4), 1, 0 },
   };
-  Draw_Enqueue(v, 4, GL_QUADS);
+  Draw_Enqueue(std::span(v, 4), GL_QUADS);
 }
 
 void Draw_Rect (float x1, float y1, float xs, float ys) {
@@ -690,7 +691,7 @@ void Draw_Rect (float x1, float y1, float xs, float ys) {
     { x1, y1, 0, 0, 0 }, { x1, y2, 0, 0, 1 },
     { x2, y2, 0, 1, 1 }, { x2, y1, 0, 1, 0 },
   };
-  Draw_Enqueue(v, 4, GL_QUADS);
+  Draw_Enqueue(std::span(v, 4), GL_QUADS);
 }
 
 /* NOTE : GL_LINE_SMOOTH / GL_POINT_SMOOTH are compatibility-only and were
@@ -735,7 +736,7 @@ void Draw_Sphere (Vec3f const* p, float r) {
       v[n++] = DrawVert{ UNPACK3(bl), 0, 0 };
       lastTheta = theta;
     }
-    Draw_Enqueue(v, n, GL_TRIANGLES);
+    Draw_Enqueue(std::span(v, n), GL_TRIANGLES);
   }
 
   /* Middle Rows */ {
@@ -760,7 +761,7 @@ void Draw_Sphere (Vec3f const* p, float r) {
       }
       lastPhi = phi;
     }
-    Draw_Enqueue(v, n, GL_QUADS);
+    Draw_Enqueue(std::span(v, n), GL_QUADS);
   }
 
   /* Bottom Row */ {
@@ -779,7 +780,7 @@ void Draw_Sphere (Vec3f const* p, float r) {
       v[n++] = DrawVert{ UNPACK3(bc), 0, 0 };
       lastTheta = theta;
     }
-    Draw_Enqueue(v, n, GL_TRIANGLES);
+    Draw_Enqueue(std::span(v, n), GL_TRIANGLES);
   }
 }
 
@@ -787,12 +788,12 @@ void Draw_Tri (Vec2f const* v1, Vec2f const* v2, Vec2f const* v3) {
   DrawVert v[3] = {
     { UNPACK2(*v1), 0, 0 }, { UNPACK2(*v2), 0, 1 }, { UNPACK2(*v3), 1, 1 },
   };
-  Draw_Enqueue(v, 3, GL_TRIANGLES);
+  Draw_Enqueue(std::span(v, 3), GL_TRIANGLES);
 }
 
 void Draw_Tri3 (Vec3f const* v1, Vec3f const* v2, Vec3f const* v3) {
   DrawVert v[3] = {
     { UNPACK3(*v1), 0, 0 }, { UNPACK3(*v2), 0, 1 }, { UNPACK3(*v3), 1, 1 },
   };
-  Draw_Enqueue(v, 3, GL_TRIANGLES);
+  Draw_Enqueue(std::span(v, 3), GL_TRIANGLES);
 }
