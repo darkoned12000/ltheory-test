@@ -56,23 +56,35 @@ Tex2D* Tex2D_Create (int sx, int sy, TexFormat format) {
 }
 
 Tex2D* Tex2D_ScreenCapture () {
-  Vec2i size; Viewport_GetSize(&size);
+  // Query the default framebuffer's actual dimensions. Viewport_GetSize
+  // can return a stale (render-target-sized) value if the viewport stack
+  // is unbalanced, which produces partial/tiled captures.
+  GLint fbW = 0, fbH = 0;
+  GLCALL(glBindFramebuffer(GL_READ_FRAMEBUFFER, 0))
+  GLCALL(glBindFramebuffer(GL_FRAMEBUFFER, 0))
+  GLCALL(glGetFramebufferParameteriv(GL_READ_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, &fbW))
+  GLCALL(glGetFramebufferParameteriv(GL_READ_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, &fbH))
+  Vec2i size;
+  if (fbW > 0 && fbH > 0) {
+    size.x = fbW;
+    size.y = fbH;
+  } else {
+    /* Fallback for drivers without GL 4.3 framebuffer params. */
+    GLint vp[4];
+    GLCALL(glGetIntegerv(GL_VIEWPORT, vp))
+    size.x = vp[2] > 0 ? vp[2] : 1;
+    size.y = vp[3] > 0 ? vp[3] : 1;
+  }
+
   Tex2D* self = Tex2D_Create(size.x, size.y, TexFormat_RGBA8);
   uint32* buf = MemNewArray(uint32, size.x * size.y);
   Metric_Inc(Metric_Flush);
-  // The capture races nothing and reads the right surface: the READ buffer
-  // of the default framebuffer is chosen EXPLICITLY (a frame that ended
-  // inside a bound render target would otherwise read THAT), and the read
-  // is fenced behind everything already in flight. On Wayland (SDL3's
-  // native backend) the swap-to-compositor handoff is asynchronous, and an
-  // unfenced glReadPixels after a swap intermittently returned tiled /
-  // sheared surfaces -- the "vertical lines" seen in captures.
-  // Make sure we read from the default framebuffer, not a leftover render
-  // target (FBO). The post-processing chain binds FBOs; if one is still
-  // bound, glReadPixels reads from its color attachment (or fails), producing
-  // tiled/sheared/vertical-line captures.
-  GLCALL(glBindFramebuffer(GL_READ_FRAMEBUFFER, 0))
-  GLCALL(glBindFramebuffer(GL_FRAMEBUFFER, 0))
+  // Fence the readback: on Wayland the swap handoff is async, and an
+  // unfenced glReadPixels after a swap can return tiled/sheared surfaces.
+  GLCALL(glPixelStorei(GL_PACK_ALIGNMENT, 1))
+  GLCALL(glPixelStorei(GL_PACK_ROW_LENGTH, 0))
+  GLCALL(glPixelStorei(GL_PACK_SKIP_PIXELS, 0))
+  GLCALL(glPixelStorei(GL_PACK_SKIP_ROWS, 0))
   GLCALL(glReadBuffer(GL_BACK))
   GLCALL(glFinish())
   GLCALL(glReadPixels(0, 0, size.x, size.y, GL_RGBA, GL_UNSIGNED_BYTE, buf))
