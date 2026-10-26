@@ -163,6 +163,13 @@ Note: `fog.glsl` still exists as an include even though the fog filter was remov
 
 ---
 
+## Modernization applied
+
+- **`include/fragment.glsl`**: added `layout(depth_greater) out float gl_FragDepth;`. Writing `gl_FragDepth` without a layout qualifier disables early-Z/hierarchical-Z for ALL fragments using this include (nearly every material shader). `depth_greater` is valid because the log-depth mapping only increases depth. This restores early-Z rejection for the entire deferred pipeline.
+- **No deprecated GLSL found**: all shaders use `texture()` (not `texture2D`), `in`/`out` (not `varying`/`attribute`), explicit outputs (not `gl_FragColor`). `gl_FragDepth` is still the modern way to write depth. No `#version` directives (engine prepends `#version 460 core`).
+- **No `discard` without layout**: shaders that use `discard` are fine (modern).
+- **SPIR-V / bindless textures**: not yet used; could be future work for reducing draw call overhead.
+
 ## Summary of unused candidates (safe to delete)
 
 **Fragment filters:** bloom2, blurhdr, dither, fade, invert, log, madd, overlay, prebloom, radialminmax, tonemap2

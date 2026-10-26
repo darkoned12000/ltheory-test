@@ -1,6 +1,11 @@
 /* Fragment shader common (autovars, inputs). */
 #include common
 
+/* Logarithmic depth: gl_FragDepth only ever increases relative to the
+ * interpolated (standard) depth, so declare depth_greater to re-enable
+ * early-Z / hierarchical-Z for fragments that don't change depth. */
+layout(depth_greater) out float gl_FragDepth;
+
 in vec2 uv;
 in vec3 pos;
 in vec3 normal;
