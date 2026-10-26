@@ -122,12 +122,17 @@ function Band:onDraw (focus, active)
   -- edge as a bright arc.
   DrawEx.Line(x + 40, y + sy - 1, x + sx - 40, y + sy - 1, screen.accent)
 
-  -- The title, centred. Its baseline sits ten pixels below the band's
-  -- vertical centre-line (the player asked for it lower), and the band is
-  -- tall enough (11% of the window) that the descenders stay clear of the
-  -- hairline under it. The centring is the framework's own
-  -- (Widget:drawTextRectCentered), which accounts for the descenders.
-  local font = Cache.Font('Exo2Black', Math.Round(sy * 0.52))
+  -- The title, centred. The font is cached on the band (not re-fetched
+  -- every frame) so the Font object -- and its glyph atlas texture --
+  -- stays alive for the screen's whole lifetime instead of being
+  -- dropped on a Cache.Clear() and re-created mid-flight (which left
+  -- the title drawing from a stale/freed atlas after a few opens).
+  local titleSize = Math.Round(sy * 0.52)
+  if self.titleFont == nil or self.titleFontSize ~= titleSize then
+    self.titleFont = Cache.Font('Exo2Black', titleSize)
+    self.titleFontSize = titleSize
+  end
+  local font = self.titleFont
   local bound = font:getSize(screen.title or '')
   local titleY = y + 0.5 * (sy + bound.y) - bound.y + 5
   font:draw(screen.title or '',
@@ -138,7 +143,12 @@ function Band:onDraw (focus, active)
   -- The subtitle, ABOVE the title by five pixels -- level with it, it
   -- sits in the title's ink.
   if screen.subtitle and screen.subtitle ~= '' then
-    local sfont = Cache.Font('Exo2', Math.Round(sy * 0.22))
+    local subSize = Math.Round(sy * 0.22)
+    if self.subFont == nil or self.subFontSize ~= subSize then
+      self.subFont = Cache.Font('Exo2', subSize)
+      self.subFontSize = subSize
+    end
+    local sfont = self.subFont
     local sb = sfont:getSize(screen.subtitle)
     sfont:draw(screen.subtitle,
       x + (sx - sb.z) * 0.5 - sb.x,

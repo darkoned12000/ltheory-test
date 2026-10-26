@@ -1165,9 +1165,11 @@ function LTheory:buildPlace (region, sectorName)
   -- so a player docking in the first minute (before any NPC has mined
   -- or any factory has run) sees something to buy and something to sell
   -- into, instead of two empty tables. The factory's working stock is
-  -- reserved so the asks do not strip the inputs.
-  place:addItem(Item.Isotopes, 20)
-  place:addItem(Item.Silver, 20)
+  -- reserved so the asks do not strip the inputs. Every raw is seeded so
+  -- that whichever industrial recipe the yard runs has its inputs.
+  for _, item in ipairs(Item.T1) do
+    place:addItem(item, 10)
+  end
   place:addItem(Item.Energy, 50)
   place:addItem(Item.Waste, 10)
   -- Gas demand only (no supply yet -- capture equipment is future).
@@ -1176,31 +1178,39 @@ function LTheory:buildPlace (region, sectorName)
     place.trader:addStandingBid(item, Item.Price[item] or 15, 100)
   end
 
-  -- THE PLANT, EVERYWHERE: a yard, a rig or a relay each run the NUCLEAR
-  -- recipe. The belt yields isotopes (the fuel) and silver (the rods);
-  -- the miners sell both into the bids; the plant eats them and makes
-  -- the ENERGY and the WASTE. That makes the place's sell side REAL --
-  -- its standing asks re-arm from what the shelf holds (Market tops the
-  -- ask book up to its stock at the curve price), and a drained depot
-  -- goes quiet rather than promising what it does not have. The old
-  -- flat 'sells Energy at a premium with no source' is gone: the far-
-  -- from-home premium is now the SCARCITY price that a bare shelf
-  -- produces on its own.
+  -- THE PLANT: every place runs a nuclear reactor for the universal
+  -- fuel (energy + waste) -- a mining outpost or relay always has
+  -- energy to sell, because every ship needs it. A YARD (an industrial
+  -- place) additionally runs a SECOND recipe so the sector's markets
+  -- do not all sell the same thing: machine parts, electronics, weapon
+  -- components or rations, depending on the seed. That is what makes
+  -- the BUY tab vary from dock to dock.
   do
     place:addFactory()
     place:addProduction(Productions.EnergyNuclear)
-    -- iterOutputs() is ipairs over the outputs, so it yields the INDEX
-    -- first; the list itself is the public field.
     for _, out in ipairs(Productions.EnergyNuclear.outputs) do
       place.market:addStandingSell(place, out.item, 200,
         Item.Price[out.item] or 20)
     end
-    -- The AI's caravan book for the shelf: the plant's outputs listed
-    -- as buyable asks, capped at 40 -- a shelf's worth, not a firehose
-    -- (this is what gives Jobs.Transport a real ask to buy against).
     for _, out in ipairs(Productions.EnergyNuclear.outputs) do
       place.trader:addStandingAsk(out.item, Item.Price[out.item] or 20, 40)
     end
+
+    if kind == 'yard' then
+      local industrial = { Productions.Refinery, Productions.Electronics,
+                           Productions.Weapons, Productions.Hydroponics }
+      local placeRng = Seed.rng('ltheory.place', region.index)
+      local prod = industrial[1 + (placeRng:get31() % #industrial)]
+      place:addProduction(prod)
+      for _, out in ipairs(prod.outputs) do
+        place.market:addStandingSell(place, out.item, 200,
+          Item.Price[out.item] or 20)
+      end
+      for _, out in ipairs(prod.outputs) do
+        place.trader:addStandingAsk(out.item, Item.Price[out.item] or 20, 40)
+      end
+    end
+
     -- ...and the raw shelf: place stock of T1 (what miners delivered)
     -- is buyable too -- but only BEYOND the plant's working reserve, so
     -- the ore that feeds the reactor cannot be hauled away from under

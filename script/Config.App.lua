@@ -294,7 +294,7 @@ Config.game = {
   aiUsesBoost            = true,
   aiFire                 = function (dt, rng) return rng:getExp() ^ 2 < dt end,
 
-  dockRange              = 50,
+  dockRange              = 500,
 
   -- THE AI POPULATION (the economy's participants): NPC capital ships
   -- whose Think action picks jobs by payout -- mining the belts into

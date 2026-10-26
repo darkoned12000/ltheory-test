@@ -4,7 +4,7 @@ local Seed = require('Game.Seed')
 local nextId = 0
 
 -- TODO : Dock range should be specified by the dockable component
-local kDockRange = 200
+local kDockRange = 500
 
 local function getTargetPos (e, target)
   local tp = target:getPos()

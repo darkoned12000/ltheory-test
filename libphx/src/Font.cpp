@@ -33,7 +33,7 @@ const float kGamma = 1.8f;
 const float kRcpGamma = 1.0f / kGamma;
 
 #define FONT_ATLAS_INIT (256)
-#define FONT_ATLAS_MAX  (1024)
+#define FONT_ATLAS_MAX  (4096)
 
 struct Glyph {
   int index;
