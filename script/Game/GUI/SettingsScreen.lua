@@ -30,6 +30,7 @@
   even if something else changed the setting while the page was open.
 ]]
 
+local ScrollView = require('UI.ScrollView')
 local Screen     = require('Game.GUI.Screen')
 local MenuPanelScreen = require('Game.GUI.MenuPanelScreen')
 local Grid       = require('UI.Grid')
@@ -107,11 +108,11 @@ end
 -- the same x. A row without a value readout still adds the third column
 -- (empty), so the control column lines up across ALL the rows.
 local CONTROL_WIDTH = 280
-local LABEL_WIDTH   = 180
+local LABEL_WIDTH   = 220
 
 local function buildRow (label, control, trailing)
   local row = Grid():setCols(3):setStretch(0, 0)
-  row:setPadCellX(24)
+  row:setPadCellX(32)
   label:setWidth(LABEL_WIDTH)
   label:setStretch(0, 0)
   control:setStretch(1, 0)
@@ -263,10 +264,27 @@ function SettingsScreen.Create (opts)
   -- column. The block sits slightly left of centre: it is a form, not a
   -- poster -- and it reads with the label column as the page's "spine",
   -- the way a settings list is usually laid out.
+  -- The form is wrapped in a SCROLL VIEW so the page grows as settings
+  -- are added (graphics + controls + future sections) without overflowing
+  -- the window. The scroll view's height is capped to the window so the
+  -- close button stays visible below it.
+  local body = Grid():setCols(1):setAlign(0.5, 0)
+  body:setStretch(0, 0)
+  local function line (text, color)
+    local l = Label():setText(text)
+    if color then l:setFontColor(color) end
+    body:add(l)
+  end
+
+  line('DISPLAY', Color(0.45, 0.80, 1.0, 1.0))
+  body:add(buildRow(Label('Window mode'), modeSlide))
+  body:add(buildRow(Label('Resolution'), resSlide))
+  line('')
+  line('GRAPHICS (advanced)', Color(0.45, 0.80, 1.0, 1.0))
   self:addLine('DISPLAY', Color(0.45, 0.80, 1.0, 1.0))
-  self.content:add(buildRow(Label('Window mode'), modeSlide))
-  self.content:add(buildRow(Label('Resolution'), resSlide))
-  self:addLine('')
+  body:add(buildRow(Label('Window mode'), modeSlide))
+  body:add(buildRow(Label('Resolution'), resSlide))
+  line('')
   self:addLine('GRAPHICS (advanced)', Color(0.45, 0.80, 1.0, 1.0))
   -- Toggles via OptionSlider; sliders for continuous values.
   local bloomToggle = OptionSlider.Create(
@@ -301,42 +319,50 @@ function SettingsScreen.Create (opts)
     function () return Config.gpu.colorContrast / 3 end,
     function (v) Config.gpu.colorContrast = Math.Clamp(v * 3, 0, 3); commit() end,
     0, 1)
-  self.content:add(buildRow(Label('Bloom'), bloomToggle))
-  self.content:add(buildRow(Label('Bloom intensity'), bloomInt))
-  self.content:add(buildRow(Label('Sharpen'), sharpenToggle))
-  self.content:add(buildRow(Label('Sharpen strength'), sharpenStr))
-  self.content:add(buildRow(Label('Tonemap (HDR)'), tonemapToggle))
-  self.content:add(buildRow(Label('Exposure (EV)'), exposureSlide))
-  self.content:add(buildRow(Label('Saturation'), satSlide))
-  self.content:add(buildRow(Label('Contrast'), contrastSlide))
-  self:addLine('')
-  self:addLine('AUDIO', Color(0.45, 0.80, 1.0, 1.0))
-  self.content:add(buildRow(Label('Music volume'), musicSlide))
-  self.content:add(buildRow(Label('Effects volume'),
+  body:add(buildRow(Label('Bloom'), bloomToggle))
+  body:add(buildRow(Label('Bloom intensity'), bloomInt))
+  body:add(buildRow(Label('Sharpen'), sharpenToggle))
+  body:add(buildRow(Label('Sharpen strength'), sharpenStr))
+  body:add(buildRow(Label('Tonemap (HDR)'), tonemapToggle))
+  body:add(buildRow(Label('Exposure (EV)'), exposureSlide))
+  body:add(buildRow(Label('Saturation'), satSlide))
+  body:add(buildRow(Label('Contrast'), contrastSlide))
+  line('')
+  line('AUDIO', Color(0.45, 0.80, 1.0, 1.0))
+  body:add(buildRow(Label('Music volume'), musicSlide))
+  body:add(buildRow(Label('Effects volume'),
     sfxSlide,
     Label():setMinWidth(60):setAlign(1, 0.5):setFormat('%.f%%')
       :setPollFn(function () return Math.Round(Config.audio.sfxVolume * 100) end)))
 
-  self:addLine('')
-  self:addLine('CONTROLS', Color(0.45, 0.80, 1.0, 1.0))
-  self.content:add(buildRow(Label('Thrust'), Label('WASD')))
-  self.content:add(buildRow(Label('Aim'), Label('Mouse (hold Space)')))
-  self.content:add(buildRow(Label('Boost'), Label('LShift')))
-  self.content:add(buildRow(Label('Fire'), Label('LMB')))
-  self.content:add(buildRow(Label('Dock'), Label('F')))
-  self.content:add(buildRow(Label('Target'), Label('T / G')))
-  self.content:add(buildRow(Label('Map'), Label('V / F10')))
-  self.content:add(buildRow(Label('Menu'), Label('Esc')))
-  self.content:add(buildRow(Label('Quicksave'), Label('F6')))
-  self.content:add(buildRow(Label('Quickload'), Label('F7')))
-  self.content:add(Label('Keybinding remapping is not yet available;')
+  line('')
+  line('CONTROLS', Color(0.45, 0.80, 1.0, 1.0))
+  body:add(buildRow(Label('Thrust'), Label('WASD')))
+  body:add(buildRow(Label('Aim'), Label('Mouse (hold Space)')))
+  body:add(buildRow(Label('Boost'), Label('LShift')))
+  body:add(buildRow(Label('Fire'), Label('LMB')))
+  body:add(buildRow(Label('Dock'), Label('F')))
+  body:add(buildRow(Label('Target'), Label('T / G')))
+  body:add(buildRow(Label('Map'), Label('V / F10')))
+  body:add(buildRow(Label('Menu'), Label('Esc')))
+  body:add(buildRow(Label('Quicksave'), Label('F6')))
+  body:add(buildRow(Label('Quickload'), Label('F7')))
+  body:add(Label('Keybinding remapping is not yet available;')
     :setFontColor(Color(0.62, 0.72, 0.86, 1.0)))
-  self.content:add(Label('both keyboard+mouse and gamepad are always active.')
+  body:add(Label('both keyboard+mouse and gamepad are always active.')
     :setFontColor(Color(0.62, 0.72, 0.86, 1.0)))
 
-  self:addLine('')
-  self:addLine('Changes apply right away.', Color(0.62, 0.72, 0.86, 1.0))
+  line('')
+  line('Changes apply right away.', Color(0.62, 0.72, 0.86, 1.0))
   self:addCloseButton()
+
+
+  local scrollView = ScrollView()
+    :setPadUniform(2)
+    :setScrollable(false, true)
+    :add(body)
+  if scrollView.setScrollSpeed then scrollView:setScrollSpeed(36) end
+  self.content:add(scrollView)
 
   self.content:setAlign(0.44, 0.05)
 
