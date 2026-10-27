@@ -17,10 +17,10 @@ function Entity:renderVisibleMesh (state)
   if state.pass == 'sunshadow' or state.pass == 'pointshadow' then
     if state.mode == BlendMode.Disabled and Shadow.isInMap(self, state) then
       local shadow = Material.Shadow()
-      shadow:start()
+      if not state.shadowActive then shadow:start() end
       shadow:setState(self)
       self.mesh:draw()
-      shadow:stop()
+      if not state.shadowActive then shadow:stop() end
     end
     return
   end

@@ -532,10 +532,10 @@ function Planet:render (state)
       -- into a depth-only target (and its logarithmic depth was not valid for an
       -- orthographic shadow map).
       local shadow = Material.Shadow()
-      shadow:start()
+      if not state.shadowActive then shadow:start() end
       shadow:setState(self)
       self.mesh:draw()
-      shadow:stop()
+      if not state.shadowActive then shadow:stop() end
     end
     return
   end

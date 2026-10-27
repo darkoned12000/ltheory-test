@@ -56,7 +56,7 @@ function Event.RemovedFromParent (parent)
   }
 end
 
-function Event.Render (mode, eye, pass, shadowCenter, shadowCullRadius, velocity)
+function Event.Render (mode, eye, pass, shadowCenter, shadowCullRadius, velocity, shadowBox)
   return {
     type = Event.Render,
     mode = mode,
@@ -64,6 +64,7 @@ function Event.Render (mode, eye, pass, shadowCenter, shadowCullRadius, velocity
     pass = pass,  -- 'gbuffer' | 'sunshadow' | 'pointshadow' | nil (alpha passes)
     shadowCenter = shadowCenter,
     shadowCullRadius = shadowCullRadius,
+    shadowBox = shadowBox,
     velocity = velocity,
   }
 end

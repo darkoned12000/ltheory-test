@@ -78,24 +78,26 @@ function HUD:drawTargets (a)
     if target ~= playerShip and target:isAlive() then
       local disp = target:getOwnerDisposition(player)
       local culled = false
+      local hasScratchPos = false
       if planes and disp >= 0 then
         local body = target.body
         if body then
           body:getPos(scratchPos)
+          hasScratchPos = true
           local radius = body:getBoundingRadius() * 1.15
           culled = not Frustum.sphereVisible(planes, scratchPos.x, scratchPos.y,
                                              scratchPos.z, radius)
         end
       end
       if not culled then
-        local pos = target:getPos()
+        local pos = hasScratchPos and scratchPos or target:getPos()
         local ndc = camera:worldToNDC(pos)
         local ndcMax = max(abs(ndc.x), abs(ndc.y))
 
-        local c = Disposition.GetColor(disp)
-        c.a = a * c.a
         if ndcMax <= 1.0 and ndc.z > 0 then
           if showTrackers then
+            local c = Disposition.GetColor(disp)
+            c.a = a * c.a
             do -- Draw rounded box corners
               local bx1, by1, bsx, bsy = camera:entityToScreenRect(target)
               local bx2, by2 = bx1 + bsx, by1 + bsy
@@ -130,7 +132,8 @@ function HUD:drawTargets (a)
             local x = ( ndc.x + 1)/2 * camera.sx
             local y = (-ndc.y + 1)/2 * camera.sy
             if disp < 0.0 then
-              c.a = c.a * 0.5
+              local c = Disposition.GetColor(disp)
+              c.a = a * c.a * 0.5
               UI.DrawEx.Point(x, y, 64, c)
             end
           end

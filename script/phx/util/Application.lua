@@ -379,6 +379,8 @@ function Application:run ()
         perfEma = mean
         perfSamples = {}
       end
+      local perfExit = tonumber(os.getenv('PHX_PERF_EXIT') or '')
+      if perfExit and perfN >= perfExit then self:quit() end
     end
 
     self:profiled('App.onDraw', function ()

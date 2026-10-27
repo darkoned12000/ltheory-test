@@ -33,7 +33,7 @@ local registries = setmetatable({}, { __mode = 'k' })
 local function registryFor (parent)
   local reg = registries[parent]
   if not reg then
-    reg = { entities = {}, index = {} }
+    reg = { entities = {}, index = {}, version = 1 }
     registries[parent] = reg
   end
   return reg
@@ -66,6 +66,7 @@ function Registry.register (entity)
   if reg.index[entity] then return end
   reg.entities[#reg.entities + 1] = entity
   reg.index[entity] = #reg.entities
+  reg.version = reg.version + 1
 end
 
 -- Called when an entity is added to a parent: register it if it carries an
@@ -95,6 +96,7 @@ function Registry.unregister (entity)
   reg.entities[last] = nil
   reg.index[entity] = nil
   if moved ~= entity then reg.index[moved] = i end
+  reg.version = reg.version + 1
 end
 
 -- The list of economy-relevant entities under `parent`, in registration order.
@@ -102,6 +104,15 @@ function Registry.entitiesFor (parent)
   local reg = registries[parent]
   if not reg then return {} end
   return reg.entities
+end
+
+-- Monotonic version counter bumped whenever an entity registers or unregisters
+-- under `parent`, so Economy:update can keep its cached entity lists and static
+-- mining jobs across frames without reallocating tens of thousands of tables.
+function Registry.versionFor (parent)
+  local reg = registries[parent]
+  if not reg then return 0 end
+  return reg.version
 end
 
 return Registry

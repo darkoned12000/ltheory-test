@@ -104,10 +104,10 @@ function Entity:renderVisibleLodMesh (state)
       if Shadow.isInMap(self, state, scratchPos) then
         local lod = state.eye:distanceSquared(scratchPos) / (self:getScale() ^ 2.0)
         local shadow = Material.Shadow()
-        shadow:start()
+        if not state.shadowActive then shadow:start() end
         shadow:setState(self)
         self.mesh:draw(lod)
-        shadow:stop()
+        if not state.shadowActive then shadow:stop() end
       end
     end
     return

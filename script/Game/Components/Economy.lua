@@ -15,37 +15,65 @@ local Economy = class(function (self, parent)
   self.markets = {}
   self.traders = {}
   self.yields = {}
+  self.registryVersion = -1
+  self.mineJobCount = 0
+  self.mineJobPool = {}
 end)
 
 -- TODO : Economy cache should be updated infrequently and the update should be
 --        spread over many frames.
 function Economy:update (dt)
   Profiler.Begin('Economy.Update')
-  table.clear(self.factories)
-  table.clear(self.flows)
-  table.clear(self.markets)
-  table.clear(self.jobs)
-  table.clear(self.traders)
-  table.clear(self.yields)
+  local regVersion = Registry.versionFor(self.parent)
+  if self.registryVersion ~= regVersion then
+    self.registryVersion = regVersion
+    table.clear(self.factories)
+    table.clear(self.flows)
+    table.clear(self.markets)
+    table.clear(self.jobs)
+    table.clear(self.traders)
+    table.clear(self.yields)
 
-  do -- Cache points-of-interest
-    -- From the REGISTRY, not by rescanning every child. See
-    -- Game/EconomyRegistry.lua: rescanning walked ~10,600 asteroid-field
-    -- children five times each, every frame, to find the one station.
-    for _, e in ipairs(Registry.entitiesFor(self.parent)) do
-      if e:hasFactory() then insert(self.factories, e) end
-      if e:hasFlows() then insert(self.flows, e) end
-      if e:hasMarket() then insert(self.markets, e) end
-      if e:hasTrader() then insert(self.traders, e) end
-      if e:hasYield() then insert(self.yields, e) end
-    end
-  end
-
-  do -- Cache mining jobs
-    for _, src in ipairs(self.yields) do
-      for _, dst in ipairs(self.markets) do
-        insert(self.jobs, Jobs.Mine(src, dst))
+    do -- Cache points-of-interest
+      -- From the REGISTRY, not by rescanning every child. See
+      -- Game/EconomyRegistry.lua: rescanning walked ~10,600 asteroid-field
+      -- children five times each, every frame, to find the one station.
+      for _, e in ipairs(Registry.entitiesFor(self.parent)) do
+        if e:hasFactory() then insert(self.factories, e) end
+        if e:hasFlows() then insert(self.flows, e) end
+        if e:hasMarket() then insert(self.markets, e) end
+        if e:hasTrader() then insert(self.traders, e) end
+        if e:hasYield() then insert(self.yields, e) end
       end
+    end
+
+    do -- Cache mining jobs
+      -- Only rebuild when the registry version changes (entity added/removed),
+      -- and reuse pooled Jobs.Mine instances so chunk streaming while flying
+      -- never triggers a 35,000-table allocation spike.
+      local pool = self.mineJobPool
+      local n = 0
+      for _, src in ipairs(self.yields) do
+        for _, dst in ipairs(self.markets) do
+          n = n + 1
+          local job = pool[n]
+          if job then
+            job.src = src
+            job.dst = dst
+          else
+            job = Jobs.Mine(src, dst)
+            pool[n] = job
+          end
+          self.jobs[n] = job
+        end
+      end
+      self.mineJobCount = n
+    end
+  else
+    -- Truncate only dynamic trade jobs from the tail; keep the static mine jobs
+    -- in slots [1..self.mineJobCount] untouched.
+    for i = #self.jobs, self.mineJobCount + 1, -1 do
+      self.jobs[i] = nil
     end
   end
 

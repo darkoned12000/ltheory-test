@@ -5,6 +5,8 @@ setmetatable(GameView, UI.Container)
 GameView.name = 'Game View'
 local rsTable = { 1.0, 0.85, 0.75, 0.67, 0.50 }
 local Batcher = require('Game.Batcher')
+local Material = require('Game.Material')
+local Shadow = require('Game.Shadow')
 local NebulaVolumes = require('Game.NebulaVolumes')
 local LightningStorm = require('Game.LightningStorm')
 local CaptureHarness = require('phx.util.CaptureHarness')
@@ -230,8 +232,13 @@ function GameView:renderShadows (world, lights)
 
     Draw.ClearDepth(1)
 
-    world:render(Event.Render(BlendMode.Disabled, eye, 'pointshadow',
-                              light.lp, 2.5 * halfSize))
+    local shadowMat = Material.Shadow()
+    shadowMat:start()
+    local state = Event.Render(BlendMode.Disabled, eye, 'pointshadow',
+                               light.lp, 2.5 * halfSize)
+    state.shadowActive = true
+    world:render(state)
+    shadowMat:stop()
 
     RenderState.PopDepthWritable()
     RenderState.PopDepthTest()
@@ -293,7 +300,15 @@ local function fitSunCascade (camera, sunDir, nearDepth, farDepth, mapSize)
   local cz = (z0 + z1) * 0.5
   local center = right:muls(cx) + up:muls(cy) + z:muls(cz)
   local depthExtent = math.max((z1 - z0) * 0.5, farDepth)
-  return center, halfSize, depthExtent
+  local box = {
+    rx = right.x, ry = right.y, rz = right.z,
+    ux = up.x,    uy = up.y,    uz = up.z,
+    zx = z.x,     zy = z.y,     zz = z.z,
+    cx = cx,      cy = cy,      cz = cz,
+    halfSize = halfSize,
+    depthExtent = depthExtent,
+  }
+  return center, halfSize, depthExtent, box
 end
 
 function GameView:renderSunShadow (world)
@@ -327,22 +342,36 @@ function GameView:renderSunShadow (world)
   self.sunCascadeSplit1 = split1
   self.sunCascadeBlend0 = math.min(split0 * 0.1, (split1 - split0) * 0.25)
   self.sunCascadeBlend1 = math.min((split1 - split0) * 0.1, (range - split1) * 0.25)
+  local boxes = {}
   for ci = 1, 3 do
     local mapSize = self.sunShadowTex0:getSize().x
-    local cascadeCenter, halfSize, depthExtent = fitSunCascade(
+    local cascadeCenter, halfSize, depthExtent, box = fitSunCascade(
       self.camera, sd, splits[ci], splits[ci + 1], mapSize)
     -- Extend toward the sun far enough to include off-screen occluders in
     -- front of this receiver slice. The slice fit controls XY resolution;
     -- depthExtent controls only the light-space near/far interval.
     depthExtent = math.max(depthExtent, range)
+    box.depthExtent = depthExtent
     local shadowEye = cascadeCenter + sd:muls(depthExtent)
     local proj = self:buildShadowFrustum(shadowEye, cascadeCenter, halfSize, depthExtent)
     local idx = ci - 1
     if self['sunShadowProj' .. idx] then self['sunShadowProj' .. idx]:free() end
     self['sunShadowProj' .. idx] = proj
     self['sunShadowCenter' .. idx] = cascadeCenter
-    self['sunShadowRadius' .. idx] = math.sqrt(halfSize * halfSize + depthExtent * depthExtent) * 2
+    self['sunShadowRadius' .. idx] = math.sqrt(2 * halfSize * halfSize + depthExtent * depthExtent)
+    self['sunShadowBox' .. idx] = box
+    boxes[ci] = box
   end
+
+  -- Pre-cull top-level children into the 3 cascades in a single pass instead of
+  -- walking ~10,000 entities three separate times via Event.Broadcast.
+  self.sunCasters0 = self.sunCasters0 or {}
+  self.sunCasters1 = self.sunCasters1 or {}
+  self.sunCasters2 = self.sunCasters2 or {}
+  Shadow.cullSunCascades(world, boxes, self.sunCasters0, self.sunCasters1, self.sunCasters2)
+  local casterLists = { self.sunCasters0, self.sunCasters1, self.sunCasters2 }
+  local shadowMat = Material.Shadow()
+  local camEye = self.camera.pos
 
   -- Render each cascade.
   for ci = 1, 3 do
@@ -351,6 +380,8 @@ function GameView:renderSunShadow (world)
     local proj = self['sunShadowProj' .. idx]
     local center = self['sunShadowCenter' .. idx]
     local radius = self['sunShadowRadius' .. idx]
+    local box = self['sunShadowBox' .. idx]
+    local casters = casterLists[ci]
     local shadowSize = tex:getSize()
     RenderTarget.Push(shadowSize.x, shadowSize.y)
     RenderTarget.BindTex2D(tex)
@@ -367,8 +398,20 @@ function GameView:renderSunShadow (world)
 
     Draw.ClearDepth(1)
 
-    world:render(Event.Render(BlendMode.Disabled, center, 'sunshadow',
-                              center, math.sqrt(3) * radius))
+    shadowMat:start()
+    local state = Event.Render(BlendMode.Disabled, camEye, 'sunshadow',
+                               center, radius, nil, box)
+    state.shadowActive = true
+    local bcast = Event.Broadcast(state)
+    for i = 1, #casters do
+      local e = casters[i]
+      if e.children then
+        e:send(bcast)
+      else
+        e:send(state)
+      end
+    end
+    shadowMat:stop()
 
     RenderState.PopDepthWritable()
     RenderState.PopDepthTest()

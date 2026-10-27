@@ -48,7 +48,18 @@ function LTheory:generate ()
   -- Resolve the world seed FIRST and publish it: everything created below --
   -- and later, by entities -- derives its randomness from it, so this boot's
   -- "Seed:" line reproduces the whole world, not just the sector (Game.Seed).
-  if Config.gen.seedGlobal then
+  --
+  -- [TEST HOOK] PHX_SEED=<16 hex digits>: force the world seed for headless
+  -- perf/visual captures, same discipline as PHX_FIXED_VIEW. Takes precedence
+  -- over Config.gen.seedGlobal so a capture never depends on local config,
+  -- and nothing needs editing to reproduce a specific boot-log seed (the hex
+  -- form of the decimal in the log line; 15556742952389292890ULL is
+  -- D7E4A74AC339B35A, the seed where the God Rays perf was profiled).
+  local envSeed = os.getenv('PHX_SEED')
+  if envSeed then
+    self.seed = seedFromHex(envSeed)
+    if not self.seed then Fatal('PHX_SEED: expected 1-16 hex digits, got "%s"', envSeed) end
+  elseif Config.gen.seedGlobal then
     self.seed = Config.gen.seedGlobal
   else
     self.seed = RNG.FromTime():managed():get64()
@@ -1354,6 +1365,15 @@ function LTheory:onUpdate (dt)
   if os.getenv('PHX_DUMP_SETTINGS') and not self.__dumped then
     self.__dumped = true
     require('Game.GUI.DebugWindow').DumpSettings()
+  end
+
+  -- [TEST HOOK] PHX_NOGODRAYS=1: force God Rays off at boot. Settings live
+  -- only for the session (nothing persists), so an unattended perf A/B
+  -- cannot get the "off" arm from the panel; this is the PHX_NOBLOOM pattern.
+  if os.getenv('PHX_NOGODRAYS') and not self.__noGodraysSet then
+    self.__noGodraysSet = true
+    Settings.set('postfx.godrays.enable', false)
+    printf('[HOOK] PHX_NOGODRAYS: postfx.godrays.enable -> false')
   end
 
   -- [TEST HOOK] PHX_UITEST=1: automated UI smoke test. Drives the main
