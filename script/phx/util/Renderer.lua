@@ -135,9 +135,9 @@ local SETTINGS = {
   -- God-rays (fog-nebula Phase 3, independent A/B product) ---------------
   { kind = 'bool',  key = 'postfx.godrays.enable',   label = 'God Rays',      default = true, gpu = 'godraysEnabled' },
   { kind = 'float', key = 'postfx.godrays.strength', label = ' - Strength',   default = 1, min = 0, max = 32, gpu = 'godraysStrength' },
-  { kind = 'float', key = 'postfx.godrays.g',        label = ' - Anisotropy', default = 0.7, min = 0, max = 0.98, gpu = 'godraysG' },
+  { kind = 'float', key = 'postfx.godrays.g',        label = ' - Anisotropy', default = 0.715, min = 0, max = 0.98, gpu = 'godraysG' },
   { kind = 'float', key = 'postfx.godrays.ceiling',   label = ' - Soft Ceiling', default = 2, min = 0, max = 12, gpu = 'godraysCeiling' },
-  { kind = 'float', key = 'postfx.godrays.wrap',      label = ' - Edge Wrap',  default = 0.25, min = 0, max = 1, gpu = 'godraysWrap' },
+  { kind = 'float', key = 'postfx.godrays.wrap',      label = ' - Edge Wrap',  default = 0.085, min = 0, max = 1, gpu = 'godraysWrap' },
   { kind = 'enum',  key = 'postfx.godrays.debug',    label = ' - Debug View', default = 1,
     options = { 'Off', 'Shaft', 'Raw Shaft', 'Depth Key', 'Dither', 'Center Only' }, gpu = 'godraysDebug' },
 
@@ -1336,7 +1336,7 @@ local volCount = med.anchors and #med.anchors or 0
       Shader.SetFloat2('sunUV', med.sunUv.x, med.sunUv.y)
       Shader.SetFloat('godStrength', strength * (med.sunFade or 1.0))
       Shader.SetFloat('godCeiling', Settings.get('postfx.godrays.ceiling') or 2.0)
-      Shader.SetFloat('godWrap',    Settings.get('postfx.godrays.wrap') or 0.25)
+      Shader.SetFloat('godWrap',    Settings.get('postfx.godrays.wrap') or 0.085)
       Draw.Color(1, 1, 1, 1)
       Draw.Rect(0, 0, self.sx, self.sy)
     shaderF:stop()
