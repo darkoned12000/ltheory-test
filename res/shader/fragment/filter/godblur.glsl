@@ -105,6 +105,19 @@ void main () {
   float centerDepth = texelFetch(texDepth, depthPixel, 0).r;
   float centerLogDepth = log2(max(centerDepth, 1.0));
   float t0 = texture(texNoise, uv).x * (1.0 / float(N));  /* sub-tap dither */
+
+  /* The pixel's OWN ray shaft value -- the physically correct answer for this
+   * pixel. Doubles as the i==0 tap and as a FLOOR for the gathered streaks
+   * on sky receivers: the radial crawl crosses the occluder holes the march
+   * correctly left in the shaft buffer, and averaging them drags sky pixels
+   * DOWN into dark radial smears -- the original detached 'ghost shadows'
+   * (they were crawl dips, not silhouette leaks, which is why depth gating
+   * the taps never fully killed them). max() restores the own-ray fog
+   * brightness without ever exceeding what the march itself produced.
+   * Object receivers keep the strict behind-gate and stay dark instead. */
+  vec3 centerV = sampleShaftDepthAware(uv, centerLogDepth, true);
+  bool isSkyReceiver = centerDepth >= 900000.0;
+
   for (int i = 0; i < N; ++i) {
     float t = t0 + float(i) / float(N);     /* 0..~1, crawl toward the sun */
     vec2 sp = uv + dir * d * t;             /* crawl toward the sun */
@@ -114,12 +127,13 @@ void main () {
      * Only the center tap may take the small-occluder wrap so structures
      * finer than the quarter-res grid still receive a smooth glow; the
      * distant crawl taps keep strict occlusion. */
-    vec3 v = sampleShaftDepthAware(sp, centerLogDepth, i == 0);
+    vec3 v = (i == 0) ? centerV : sampleShaftDepthAware(sp, centerLogDepth, false);
     float w = exp2(-2.0 * float(i)); /* near-sun taps dominate */
     acc += v * w;
     wsum += w;
   }
   acc /= max(1e-6, wsum);
+  if (isSkyReceiver) acc = max(acc, centerV);
 
   if (godMode == 1) {
     fragData0 = vec4(max(acc * 8.0, vec3(0.0)), 1.0);
