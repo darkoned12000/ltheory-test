@@ -138,7 +138,7 @@ local SETTINGS = {
   { kind = 'float', key = 'postfx.godrays.g',        label = ' - Anisotropy', default = 0.7, min = 0, max = 0.98, gpu = 'godraysG' },
   { kind = 'float', key = 'postfx.godrays.ceiling',   label = ' - Soft Ceiling', default = 2, min = 0, max = 12, gpu = 'godraysCeiling' },
   { kind = 'enum',  key = 'postfx.godrays.debug',    label = ' - Debug View', default = 1,
-    options = { 'Off', 'Shaft' }, gpu = 'godraysDebug' },
+    options = { 'Off', 'Shaft', 'Raw Shaft', 'Depth Key' }, gpu = 'godraysDebug' },
 
   -- Lightning storm flash (fog-nebula Phase 4, local volumetric point-light) ----
   { kind = 'bool',  key = 'lightning.enable',        label = 'Lightning',    default = false, gpu = 'lightningEnable' },

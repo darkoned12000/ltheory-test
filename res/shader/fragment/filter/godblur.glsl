@@ -118,6 +118,26 @@ void main () {
   vec3 centerV = sampleShaftDepthAware(uv, centerLogDepth, true);
   bool isSkyReceiver = centerDepth >= 900000.0;
 
+  if (godMode == 2) {
+    /* Raw quarter-res shaft, hardware-bilinear-upsampled, before any gather
+     * or depth gating. If the staircase edges and rim fringe show here, they
+     * are already in the quarter-res pass; if this view is clean and mode 1
+     * shows them, the radial gather creates them. */
+    fragData0 = vec4(max(texture(texVol, uv).rgb, vec3(0.0)) * 8.0, 1.0);
+    return;
+  }
+  if (godMode == 3) {
+    /* Depth-key mismatch map: |texVol.a - receiver log2 depth|, scaled so a
+     * thin bright line along silhouettes is EXPECTED (occluders legitimately
+     * disagree with the fog behind them). A WIDE bright band means the
+     * stored log-depth key is smeared across edges and the gate is keying
+     * on garbage. */
+    vec4 vol = texture(texVol, uv);
+    float dd = abs(vol.a - centerLogDepth);
+    fragData0 = vec4(vec3(clamp(dd * 0.25, 0.0, 1.0)), 1.0);
+    return;
+  }
+
   for (int i = 0; i < N; ++i) {
     float t = t0 + float(i) / float(N);     /* 0..~1, crawl toward the sun */
     vec2 sp = uv + dir * d * t;             /* crawl toward the sun */
