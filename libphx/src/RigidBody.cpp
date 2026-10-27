@@ -112,7 +112,7 @@ inline static RigidBody* RigidBody_Create (CollisionShape* shape) {
 /* --- Implementation ------------------------------------------------------- */
 
 RigidBody* RigidBody_CreateBox () {
-  Vec3f halfExtents = { 1, 1, 1 };
+  Vec3f halfExtents = { .x = 1, .y = 1, .z = 1 };
   CollisionShape* shape = CollisionShape_CreateBox(&halfExtents);
   return RigidBody_Create(shape);
 }

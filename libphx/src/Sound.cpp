@@ -34,7 +34,7 @@ inline static void Sound_EnsureLoadedImpl (Sound* self, cstr func) {
     Sound_SetState(self, SoundState_Paused);
 
     if (Sound_Get3D(self)) {
-      Vec3f zero = { 0, 0, 0 };
+      Vec3f zero = { .x = 0, .y = 0, .z = 0 };
       Sound_Set3DPos(self, &zero, &zero);
     }
   }
@@ -209,7 +209,7 @@ void Sound_Set3DMinMaxDistance (Sound* self, float minDist, float maxDist) {
 
 void Sound_Set3DPos (Sound* self, Vec3f const* pos, Vec3f const* vel) {
   Sound_EnsureState(self);
-  Vec3f zero = { 0, 0, 0 };
+  Vec3f zero = { .x = 0, .y = 0, .z = 0 };
   Vec3f p = pos ? *pos : zero;
   Vec3f v = vel ? *vel : zero;
   ma_sound_set_position(self->handle, p.x, p.y, p.z);

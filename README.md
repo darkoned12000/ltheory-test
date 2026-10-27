@@ -1,5 +1,7 @@
 # Limit Theory
 
+> **Disclaimer:** This is a community resurrection/fork of Limit Theory (original work © Josh Parnell). Original code and assets remain under their original license; modifications are provided "as is", without warranty. See `LICENSE` for details.
+
 Limit Theory is a now-cancelled open world space simulation game.
 
 This repository is the game (not engine) code for the second generation of LT's development, when all work was migrated to C and Lua. For the older, C++/LTSL Limit Theory, see https://github.com/JoshParnell/ltheory-old.
@@ -18,7 +20,7 @@ To build Limit Theory, you'll need a few standard developer tools. All of them a
 
 **Linux users:** You'll also need these system libraries for the engine to run:
 ```bash
-sudo apt install libglu1-mesa-dev libglew-dev libsdl2-dev libfreetype6-dev liblz4-dev libluajit-5.1-dev libbullet-dev
+sudo apt install libglew-dev libsdl3-dev libfreetype6-dev liblz4-dev libluajit-5.1-dev libbullet-dev
 ```
 
 # Building
@@ -37,7 +39,7 @@ You should see `Git LFS initialized` or a similar message. **Important**: if you
 
 Now, you can download the repository:
 
-- `git clone --recursive https://github.com/JoshParnell/ltheory.git ltheory`
+- `git clone --recursive https://github.com/darkoned12000/ltheory-test.git ltheory-test`
 
 ## Compiling
 
@@ -65,23 +67,23 @@ to run a specific script. All top-level scripts are in the `script/App` director
 
 # Resurrection Progress & How to Run on Linux
 
-This repository has been resurrected and is now running on Linux with modernized GLSL 130 shaders (upgraded from the original GLSL 120), a refactored G-buffer, fog re-enabled, ambient lighting added, and the full deferred rendering pipeline operational. The main game app (`LTheory`) boots, generates a world, spawns ships, and runs the full game loop (rendering, physics, AI) without crashing. (Note: shaders are still `#version 130` — the planned bump to GLSL 330 has **not** yet been done; see "What Was Fixed" and "Recommended Roadmap".)
+This repository has been resurrected and runs on Linux with a modernized rendering pipeline: **OpenGL 4.6 core** with GLSL 460 shaders, a deferred renderer with GTAO/SSAO, HDR tonemapping, bloom, TAA, point-light and directional (sun) shadow maps, a volumetric nebula, and the full game loop (rendering, physics, AI) running without crashing. The main game app (`LTheory`) boots, generates a world, spawns ships, asteroids, planets, and stations, and runs the economy. Audio is handled by miniaudio (WAV/MP3/OGG), windowing/input by SDL3.
 
 ## Prerequisites for Linux
 
 In addition to the standard prerequisites above, you need these system libraries:
 
-- `libglu1-mesa-dev` — OpenGL Utility Library (GLU) bindings; required by CMake for some OpenGL functions.
-- `libglew-dev` — GL Extension Wrangler; provides modern OpenGL function pointers and extension loading.
-- `libsdl2-dev` — Simple DirectMedia Layer; handles windows, input devices, audio, and timing.
-- `libfreetype6-dev` — FreeType font rendering library; used for text display in the UI.
-- `liblz4-dev` — LZ4 compression library; used by the engine to compress assets at runtime.
-- `libluajit-5.1-dev` — LuaJIT 5.1 interpreter and FFI bindings; the scripting language Limit Theory uses.
-- `libbullet-dev` — Bullet physics engine (system version 3.x); handles rigid body dynamics, collisions, etc.
+- `libglew-dev` (2.3+) — GL Extension Wrangler; loads OpenGL 4.6 entry points.
+- `libsdl3-dev` — SDL3; windowing, GL context, input (keyboard/mouse/gamepad).
+- `libfreetype6-dev` (2.14+) — FreeType font rasterization.
+- `liblz4-dev` (1.10+) — LZ4 compression for serialized asset data.
+- `libluajit-5.1-dev` (OpenResty LuaJIT 2.1) — scripting runtime (Lua 5.1 ABI).
+- `libbullet-dev` (3.24+) — Bullet physics: rigid bodies, collisions, swept asteroid fields.
+- A working OpenGL 4.6 driver (Mesa llvmpipe works for software rendering).
 
 Install them with:
 ```bash
-sudo apt install libglu1-mesa-dev libglew-dev libsdl2-dev libfreetype6-dev liblz4-dev libluajit-5.1-dev libbullet-dev
+sudo apt install libglew-dev libsdl3-dev libfreetype6-dev liblz4-dev libluajit-5.1-dev libbullet-dev
 ```
 
 ## Building on Linux
@@ -146,7 +148,7 @@ Replace the path with your actual project location. The `lt64r` executable is th
 
 The gameplay is pure Lua in `script/`. A few starting points:
 
-- **Spawn a field of asteroids** (in `script/App/LTheory.lua:generate()` or any app):
+- **Spawn a field of asteroids** (in `script/App/LTheory.lua` or any app):
   ```lua
   self.system:spawnAsteroidField(2000, 20)   -- count, oreCount
   ```
@@ -154,7 +156,7 @@ The gameplay is pure Lua in `script/`. A few starting points:
   ```lua
   local a = Entities.Asteroid(seed, scale)
   a:setPos(Vec3f(x, y, z))
-  self.system:addChild(a)                     -- addChild = put it in the live world
+  self.system:addChild(a)
   ```
 - **Make something destructible** (pattern in `script/Game/Entities/Asteroid.lua`):
   ```lua
@@ -164,51 +166,27 @@ The gameplay is pure Lua in `script/`. A few starting points:
   end)
   ```
   Damage is applied via `entity:damage(amount, source)`; at 0 health it fires `Event.Destroyed`.
-- **Shaders** live in `res/shader/` (vertex + fragment `.glsl`), loaded at runtime via `Cache.Shader(vs, fs)`. The engine prepends `#version 130` and runs a custom preprocessor (`#include`, `#autovar`). Draw UI with `UI.DrawEx.*` (`Rect`, `TextAdditive`, `Tri`, `Arrow`, `Wedge`, ...). See `AGENTS.md` → "Gameplay Systems" and "Shader Portability Rules" for the full conventions.
-- **Documentation for contributors:** see `AGENTS.md` — it tracks build state, the LuaJIT/Bullet notes, and the gameplay-system internals (asteroids, damage, targeting, ramming, entity GC).
+- **Shaders** live in `res/shader/` (vertex + fragment `.glsl`), loaded at runtime via `Cache.Shader(vs, fs)`. The engine prepends `#version 460 core` and runs a custom preprocessor (`#include`, `#autovar`). See `AGENTS.md` for conventions.
+- **Documentation for contributors:** see `AGENTS.md` — it tracks build state, LuaJIT/Bullet notes, and gameplay-system internals (asteroids, damage, targeting, ramming, entity GC, economy).
 
 ## Recommended Roadmap
 
-Based on current state and next steps:
-
-1. **Bump GLSL version to 330** — **NOT done yet.** `Shader.cpp` still prepends `#version 130`, and the G-buffer uses `out vec4 fragData0/1/2` (not `layout(location = N)`). All shaders were modernized GLSL 120→130 and the 330 bump is the next step (see "What We Want to Try to Update").
-2. **Replace corrupted texture assets** — Nearly all textures in `res/` are corrupted placeholder files. Replace with real assets or procedural generation. The engine already handles missing textures gracefully with magenta fallbacks.
-3. **Clean up `common.glsl` dead code** — `HIGHQ` is always force-defined, making `LOWQ` branches dead code. Either remove the `#ifdef HIGHQ` guards entirely (always use the HIGHQ path) or add a runtime toggle. This eliminates confusing GLSL warnings about unused uniforms.
-4. **Extend the engine** for Freelancer-style 3D space environments — procedural nebulae, dust clouds, sector transitions, and more. The rendering pipeline is solid; this would be pure content creation.
-5. **Update documentation** — Add proper license file (MIT or similar), update `AGENTS.md` with current state, and create a CONTRIBUTING guide for anyone wanting to help extend the engine.
+- Procedural content: ice/metallic asteroid variants, nebula gas capture, loot on destruction.
+- Save/load format: full game-state serialization.
+- Streaming + LOD crossfade for smoother asteroid-field streaming at range.
+- Graphics-options parity: motion blur, shadow-quality master, PCF radius.
+- Documentation: CONTRIBUTING guide, license file.
 
 ## What Was Fixed to Get It Running
 
-- **Bullet Physics ABI mismatch**: The engine was compiling with Bullet 2.87 headers but linking against system Bullet 3.24, causing heap corruption on every physics object allocation. This was fixed by removing the old bullet include path and using system Bullet 3 headers.
-- **Texture resilience**: Nearly all texture assets are corrupted placeholder files. The engine now creates magenta fallback textures instead of crashing with `Fatal()`.
-- **Shader fixes**: Removed unused `#autovar` declarations that were causing warnings, refactored the G-buffer to use `out vec4` output variables instead of deprecated `gl_FragData[]`, and modernized shaders from GLSL 120 to GLSL 130 syntax. (The engine still hardcodes `#version 130` in `Shader.cpp`; the planned bump to GLSL 330 is **not done**.)
-- **G-buffer refactor**: Changed the deferred rendering pipeline to use explicit `out vec4 fragData0/1/2` variables instead of deprecated `gl_FragData[]`.
-- **Fog re-enabled**: The composite shader now properly applies fog effects (was previously disabled).
-- **Ambient lighting added**: Added ambient light contribution to improve overall scene brightness and realism.
-- **ui.glsl fix**: Updated the UI vertex shader to use explicit `mProj`/`mView` matrices instead of deprecated built-ins (`gl_ProjectionMatrix`, `gl_ModelViewMatrix`).
-- **LuaJIT runtime errors resolved**: A prior refactor broke `Game.SocketType`/`Game.Socket` (introducing a `SocketType.LTheory_SocketType` `nil` access and an undefined `GameSocket` global). Fixed by using the module tables directly. Also renamed `Game/SocketType.lua` → `Game/SocketKind.lua` and `Game/Socket.lua` → `Game/SocketObj.lua` so `Namespace.LoadInline('Game')` no longer shadows the `PHX.FFI.SocketType`/`PHX.FFI.Socket` globals (the "shadowing" warnings).
-- **LuaJIT 2.1 (not 2.0.1)**: On Linux the engine links the system `luajit-5.1` package, which is **LuaJIT 2.1.1761786044** (OpenResty-maintained branch, Lua 5.1 ABI). The bundled `lua51.dll`/headers under `libphx/ext` are Windows-only (and are 2.1.0-beta3). No Linux LuaJIT `.so` is bundled. If 2.0.1 was used originally it was a Windows-only binary; nothing in the current tree pins 2.0.1. The `dump2.lua` version assertion was disabled as a stopgap. See `AGENTS.md` → "LuaJIT Status" for the reproducible-build note.
-- **No more `LD_LIBRARY_PATH`**: Added `$ORIGIN`-based rpath to `lt64r` and `libphx64r.so` (CMake `BUILD_RPATH`/`INSTALL_RPATH`), and made `ffi.load` resolve `libphx64.so` by absolute path from the script location. Also patched the bundled `libfmod.so` executable-stack flag (`GNU_STACK` `RWE` → `RW`) that modern kernels reject on `dlopen`. Added `run.sh` (launcher) and `bootstrap.sh` (one-command setup). Bumped `cmake_minimum_required` to 3.16 and C++ standard to C++17.
-- **Build script fixes**: `configure.py` + CMake now produce a relocatable Linux build; FMOD symlinks and `libphx64.so` symlink are already tracked in git.
-- **Mesh degenerate-geometry warnings fixed**: Added `Shape:cleanup()` (welds coincident vertices and drops degenerate/bowtie polys) and call it from `Shape:finalize()`. This eliminates the `Bad normal at poly` and `BSP Incoming Mesh Error: Vertex Position Degenerate` warnings at their source. Ships build and display cleanly.
-- **Asteroids are now destructible**: Added health + an `Event.Destroyed` handler (`fragment`) in `script/Game/Entities/Asteroid.lua` that breaks a destroyed asteroid into 2–4 smaller asteroids (cascading) plus an explosion/dust burst. Previously asteroids had no health, so shooting them did nothing.
-- **Entity GC added**: `System:sweepDestroyed` (`script/Game/Entities/System.lua`) removes destroyed/deleted entities each frame, pulling their rigid bodies out of physics — so dead asteroids no longer linger in the world (and you can't crash into a corpse).
-- **Ramming damage**: `System:handleRamming` deals symmetric collision damage based on relative impact speed, so ramming an asteroid can destroy it too.
-- **Targeting / lock fixed**: `HUD:drawTargets` now always computes the lock candidate (it was previously gated behind `Config.ui.showTrackers`, which is `false` in `Config.Local.lua`, so pressing `T` did nothing). `HUD:drawLock` draws a health bar over the locked target and clears the lock when the target dies.
-- **UI triangle shader bug fixed**: `res/shader/fragment/ui/triangle.glsl` wrote to read-only `uniform` variables and mixed `vec3`/`vec2` math, causing a GLSL compile error that crashed the game whenever a UI triangle was drawn (e.g. the lock arrow). Now fixed; pressing `T` no longer aborts.
-- **Balance**: `pulseDamage` raised (5 → 40) and asteroid health lowered (`scale*10`) so a few shots actually destroy a rock. `RigidBody_SetLinearVelocity` added so fragments get an outward kick.
-- **Console damage log**: set `Config.debug.damageLog = true` in `script/Config.App.lua` to print every hit as `[DAMAGE] entity#id took X ...`.
+- **Bullet Physics ABI mismatch**: removed old Bullet 2.87 include path; now uses system Bullet 3 headers/libs.
+- **Texture resilience**: missing textures fall back to magenta instead of crashing.
+- **Shader pipeline**: GLSL 460 core, deferred G-buffer with explicit `out vec4 fragData0/1/2`, GTAO/SSAO, HDR tonemapping, bloom, TAA, shadow maps.
+- **Audio**: migrated from FMOD to miniaudio (WAV/MP3/OGG).
+- **Windowing/input**: migrated from SDL2 to SDL3.
+- **Asteroids destructible**: health + `Event.Destroyed` shatters into 2-4 smaller asteroids + explosion.
+- **Entity GC**: `System:sweepDestroyed` removes dead entities and their rigid bodies.
+- **Ramming damage**: symmetric collision damage based on relative impact speed.
+- **Targeting/lock**: `T` locks nearest entity, `G` clears; health bar drawn over target.
+- **LuaJIT 2.1** (OpenResty) on Linux; build is relocatable via `$ORIGIN` rpath; `run.sh`/`bootstrap.sh` provided.
 
-## What We Want to Try to Update/Add
-
-- **Bump GLSL version to 330** — The engine currently uses `#version 130`. GLSL 330 gives proper `in`/`out` support and better compiler support on modern GPUs. All shaders are now GLSL 130+ compatible, so this should be straightforward.
-- **Replace corrupted texture assets** — Nearly all textures in `res/` are corrupted 130-byte placeholder files (the original asset archive was incomplete). Replace with real assets or procedural generation. The engine already handles missing textures gracefully with magenta fallbacks.
-- **Clean up `common.glsl` dead code** — `HIGHQ` is always force-defined, making `LOWQ` branches dead code. Either remove the `#ifdef HIGHQ` guards entirely (always use the HIGHQ path) or add a runtime toggle. This eliminates confusing GLSL warnings about unused uniforms.
-- **Complete GLSL 130 cleanup** — Replace remaining ~55 `texture2D` calls and `gl_FragColor` usage in filter/UI/compute shaders (deprecated but functional in GLSL 130).
-- No sound or music is working
-- Modify the control scheme a little to allow freelancer style controls and controller use
-- There is a 'dock' option flying close to the station, would like to actually dock and see what happens
-- Figure out how to add NPC ships 
-- Figure out how to blow up things (ie: asteriods)
-- Need to get some documentation for the engine so we can learn how to use it
-- Investigate the 'old Limit Theory' code to see if those examples can be converted to this code

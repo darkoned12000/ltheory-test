@@ -485,9 +485,9 @@ Matrix* Matrix_FromQuat (Quat const* q) {
 
 void Matrix_ToQuat (Matrix const* self, Quat* q) {
   float const* m = (float const*) self;
-  Vec3f x = { m[0], m[4], m[ 8] };
-  Vec3f y = { m[1], m[5], m[ 9] };
-  Vec3f z = { m[2], m[6], m[10] };
+  Vec3f x = { .x = m[0], .y = m[4], .z = m[ 8] };
+  Vec3f y = { .x = m[1], .y = m[5], .z = m[ 9] };
+  Vec3f z = { .x = m[2], .y = m[6], .z = m[10] };
   Quat_FromBasis(&x, &y, &z, q);
 }
 

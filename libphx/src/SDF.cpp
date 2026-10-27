@@ -65,7 +65,7 @@ Mesh* SDF_ToMesh (SDF* self) {
 
       for (int x = 0; x < cells.x; ++x) {
         float x0 = (float)x / (float)cells.x;
-        Vec3i cell = { x, y, z };
+        Vec3i cell = { .x = x, .y = y, .z = z };
         int cellIndex = Vec3i_Dots(cellStride, x, y, z);
 
         Cell const* base = self->data + Vec3i_Dots(stride, x, y, z);
@@ -96,8 +96,8 @@ Mesh* SDF_ToMesh (SDF* self) {
         }
 
         float tw = 0.0f;
-        Vec3f offset = { 0, 0, 0 };
-        Vec3f n = { 0, 0, 0 };
+        Vec3f offset = { .x = 0, .y = 0, .z = 0 };
+        Vec3f n = { .x = 0, .y = 0, .z = 0 };
 
         /* Generate vertex. */
         for (int i = 0; i < 12; ++i) {

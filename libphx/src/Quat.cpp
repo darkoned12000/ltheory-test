@@ -201,8 +201,8 @@ void Quat_ILerp (Quat* q, Quat const* p, float t) {
     a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z))
 */
 void Quat_Mul (Quat const* q, Quat const* p, Quat* out) {
-  Vec3f qv = { q->x, q->y, q->z };
-  Vec3f pv = { p->x, p->y, p->z };
+  Vec3f qv = { .x = q->x, .y = q->y, .z = q->z };
+  Vec3f pv = { .x = p->x, .y = p->y, .z = p->z };
   Vec3f rv = Vec3f_Add(
     Vec3f_Add(
       Vec3f_Muls(qv, p->w),
@@ -216,8 +216,8 @@ void Quat_Mul (Quat const* q, Quat const* p, Quat* out) {
 }
 
 void Quat_IMul (Quat* q, Quat const* p) {
-  Vec3f qv = { q->x, q->y, q->z };
-  Vec3f pv = { p->x, p->y, p->z };
+  Vec3f qv = { .x = q->x, .y = q->y, .z = q->z };
+  Vec3f pv = { .x = p->x, .y = p->y, .z = p->z };
   Vec3f rv = Vec3f_Add(
     Vec3f_Add(
       Vec3f_Muls(qv, p->w),
@@ -231,7 +231,7 @@ void Quat_IMul (Quat* q, Quat const* p) {
 }
 
 void Quat_MulV (Quat const* q, Vec3f const* v, Vec3f* out) {
-  Vec3f u = { q->x, q->y, q->z };
+  Vec3f u = { .x = q->x, .y = q->y, .z = q->z };
   float w = q->w;
   Vec3f t = Vec3f_Cross(u, *v);
   *out = Vec3f_Add(

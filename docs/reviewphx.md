@@ -53,7 +53,7 @@ Audio, Bit, BlendMode, BoxMesh, BoxTree, BSP, Button, Bytes, ClipRect, Collision
 - ✅ Fixed: atlas growth now recreates Tex2D at new size (was stale size → garbled text).
 - ✅ Fixed: insertion order recorded before packing (grow now repacks new glyph).
 - ✅ Fixed: Font_AtlasPlace returns early after grow (no clobber of position).
-- ⚠️ `FONT_ATLAS_MAX = 4096` (bumped from 1024). At 78px font size, ~52 glyphs per shelf × ~52 shelves = 2700 glyphs. Sufficient.
+- ✅ `FONT_ATLAS_MAX` bumped 4096 → 8192 (deferreditems branch) to double glyph capacity for large font sizes.
 - ⚠️ Glyph nodes leak (TODO in Font_Free: "Free glyphs! (the Glyph nodes themselves still leak)"). Minor — fonts are cached for process lifetime.
 - ⚠️ `ordered` array doubles capacity but never shrinks. Fine for cached fonts.
 - ✅ Gamma correction (1.8) applied during rasterization. Good.
@@ -231,7 +231,7 @@ Audio, Bit, BlendMode, BoxMesh, BoxTree, BSP, Button, Bytes, ClipRect, Collision
 - ⚠️ VR support (unclear if used).
 
 ### Modernization opportunities
-1. **Font atlas max size** — bumped to 4096. Could use 8192 on high-end (GL_MAX_TEXTURE_SIZE). Deferred: 4096 is sufficient for current font sizes (2700 glyphs at 78px). Bump only if profiling shows atlas overflow.
+1. **Font atlas max size** — bumped 4096 → 8192 (deferreditems branch). Could query GL_MAX_TEXTURE_SIZE for an even higher ceiling; current 8192 matches typical max texture size.
 2. **Anisotropic filtering** — applied per-texture via Cache.Texture(filtered=true). Could be a global setting (Config.gpu.anisotropy). Deferred: per-texture control is more flexible.
 3. **GPU particle pool** — 131072 capacity. Could be dynamic based on VRAM. Deferred: VRAM querying is platform-specific and complex. Current fixed capacity is predictable.
 4. **Thread pool cap** — increased from 8 to 16 to better utilize high-core-count machines. Still capped to avoid oversubscription.
@@ -242,8 +242,8 @@ Audio, Bit, BlendMode, BoxMesh, BoxTree, BSP, Button, Bytes, ClipRect, Collision
 Applied `[[likely]]`/`[[unlikely]]` annotations to hot paths (Draw, Font, Shader).
 Applied `std::span` to Draw.cpp (Draw_Enqueue, Imm_Draw) -- bounds safety on the immediate-draw path.
 
-### Option 2 status
-- **Option 2 (designated initializers):** Deferred. Would clean up `Vec3f self = { x, y, z }` to `{.x=x, .y=y, .z=z}`, but requires changing the macro layer in `Vec3.h` (100+ call sites). High effort, marginal readability. Deferred.
+### Option 2 status (deferreditems branch)
+- **Option 2 (designated initializers):** APPLIED. Macro layer in `Vec3.h` (all generated operations) plus 6 manual C++ call sites now use `{ .x = ..., .y = ..., .z = ... }`. Improves readability/safety at construction sites.
 - **Option 3 (std::span):** Partially applied. Draw.cpp (Draw_Enqueue, Imm_Draw) now use `std::span`. Tex2D_Load left as-is (stbi owns the memory, span is just a view -- low value).
 & 3 (documented, not applied)
 - **Option 2 (designated initializers):** Would clean up `Vec3f self = { x, y, z }` → `{.x=x, .y=y, .z=z}`. Requires changing the macro layer in `Vec3.h` (100+ call sites). High effort, marginal readability benefit. Deferred.
@@ -334,3 +334,8 @@ The Gen pipeline (SDF.cpp, Mesh_FromSDF.cpp, etc.) uses many intermediate buffer
 - Upgraded: C++17 → C++20
 - Fixed: Font atlas corruption (3 bugs: stale Tex2D size, glyph position clobber, missing glyph in ordered list)
 - Documented: reviewphx.md (comprehensive engine review)
+
+### Summary of changes on deferreditems branch
+- Font atlas max size: 4096 → 8192 (`libphx/src/Font.cpp`).
+- Designated initializers applied to `Vec3.h` macro layer (all generated operations) and 6 manual C++ call sites.
+- Full build + configure test suite verified (UI integration test passed).

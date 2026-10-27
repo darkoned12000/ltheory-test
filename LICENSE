@@ -1,24 +1,19 @@
-This is free and unencumbered software released into the public domain.
+Limit Theory (original work)
+Copyright (c) Josh Parnell
 
-Anyone is free to copy, modify, publish, use, compile, sell, or
-distribute this software, either in source code form or as a compiled
-binary, for any purpose, commercial or non-commercial, and by any
-means.
+This repository is a community resurrection/fork of Limit Theory. The original
+source code and assets remain the property of their original author (Josh Parnell)
+and are distributed under the terms of the original license that accompanied
+them. See the original repository for the full license text:
+    https://github.com/JoshParnell/ltheory
 
-In jurisdictions that recognize copyright laws, the author or authors
-of this software dedicate any and all copyright interest in the
-software to the public domain. We make this dedication for the benefit
-of the public at large and to the detriment of our heirs and
-successors. We intend this dedication to be an overt act of
-relinquishment in perpetuity of all present and future rights to this
-software under copyright law.
+Modifications
+Copyright (c) 2026, contributors to https://github.com/darkoned12000/ltheory-test
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-OTHER DEALINGS IN THE SOFTWARE.
+Modifications and additions made to this fork are provided "as is", without
+warranty of any kind, express or implied. The original license terms continue
+to apply to the original portions of the codebase.
 
-For more information, please refer to <https://unlicense.org>
+NOTE: This is a placeholder. Replace with the exact original license text and
+your chosen terms for new code before publishing. Consult the original
+repository's LICENSE file and, if in doubt, legal counsel.

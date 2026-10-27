@@ -83,7 +83,7 @@ void ShaderVar_PushFloat2 (cstr name, float x, float y) {
 }
 
 void ShaderVar_PushFloat3 (cstr name, float x, float y, float z) {
-  Vec3f value = { x, y, z };
+  Vec3f value = { .x = x, .y = y, .z = z };
   ShaderVar_Push(name, ShaderVarType_Float3, &value);
 }
 

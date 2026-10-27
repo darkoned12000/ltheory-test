@@ -19,19 +19,19 @@ struct Vec3d { double x, y, z; };
 struct Vec3f { float x, y, z; };
 
 #define Vec3_Create(T, sub) inline T T##_Create(sub x, sub y, sub z) { \
-  T self = { x, y, z }; return self; }
+  T self = { .x = x, .y = y, .z = z }; return self; }
 
 #define Vec3_Rep(T, sub) inline T T##_Rep(sub r) { \
-  T self = { r, r, r }; return self; }
+  T self = { .x = r, .y = r, .z = r }; return self; }
 
 #define Vec3_Add(T) inline T T##_Add(T a, T b) { \
-  T self = { a.x + b.x, a.y + b.y, a.z + b.z }; return self; }
+  T self = { .x = a.x + b.x, .y = a.y + b.y, .z = a.z + b.z }; return self; }
 #define Vec3_Div(T) inline T T##_Div(T a, T b) { \
-  T self = { a.x / b.x, a.y / b.y, a.z / b.z }; return self; }
+  T self = { .x = a.x / b.x, .y = a.y / b.y, .z = a.z / b.z }; return self; }
 #define Vec3_Mul(T) inline T T##_Mul(T a, T b) { \
-  T self = { a.x * b.x, a.y * b.y, a.z * b.z }; return self; }
+  T self = { .x = a.x * b.x, .y = a.y * b.y, .z = a.z * b.z }; return self; }
 #define Vec3_Sub(T) inline T T##_Sub(T a, T b) { \
-  T self = { a.x - b.x, a.y - b.y, a.z - b.z }; return self; }
+  T self = { .x = a.x - b.x, .y = a.y - b.y, .z = a.z - b.z }; return self; }
 
 #define Vec3_IAdd(T) inline void T##_IAdd(T* a, T b) { \
   a->x += b.x; a->y += b.y; a->z += b.z; }
@@ -43,13 +43,13 @@ struct Vec3f { float x, y, z; };
   a->x -= b.x; a->y -= b.y; a->z -= b.z; }
 
 #define Vec3_Adds(T, sub) inline T T##_Adds(T a, sub b) { \
-  T self = { a.x + b, a.y + b, a.z + b }; return self; }
+  T self = { .x = a.x + b, .y = a.y + b, .z = a.z + b }; return self; }
 #define Vec3_Divs(T, sub) inline T T##_Divs(T a, sub b) { \
-  T self = { a.x / b, a.y / b, a.z / b }; return self; }
+  T self = { .x = a.x / b, .y = a.y / b, .z = a.z / b }; return self; }
 #define Vec3_Muls(T, sub) inline T T##_Muls(T a, sub b) { \
-  T self = { a.x * b, a.y * b, a.z * b }; return self; }
+  T self = { .x = a.x * b, .y = a.y * b, .z = a.z * b }; return self; }
 #define Vec3_Subs(T, sub) inline T T##_Subs(T a, sub b) { \
-  T self = { a.x - b, a.y - b, a.z - b }; return self; }
+  T self = { .x = a.x - b, .y = a.y - b, .z = a.z - b }; return self; }
 
 #define Vec3_IAdds(T, sub) inline void T##_IAdds(T* a, sub b) { \
   a->x += b; a->y += b; a->z += b; }
@@ -89,7 +89,7 @@ Vec3_IMuls(Vec3i, int) Vec3_IMuls(Vec3d, double) Vec3_IMuls(Vec3f, float)
 Vec3_ISubs(Vec3i, int) Vec3_ISubs(Vec3d, double) Vec3_ISubs(Vec3f, float)
 
 #define Vec3_Abs(T) inline T T##_Abs(T v) { \
-  T self = { Abs(v.x), Abs(v.y), Abs(v.z) }; return self; }
+  T self = { .x = Abs(v.x), .y = Abs(v.y), .z = Abs(v.z) }; return self; }
 
 Vec3_Abs(Vec3i)
 Vec3_Abs(Vec3f)
@@ -193,10 +193,10 @@ Vec3_Lerp(Vec3f, float)
 Vec3_Lerp(Vec3d, double)
 
 #define Vec3_Max(T) inline T T##_Max(T a, T b) { \
-  T self = { Max(a.x, b.x), Max(a.y, b.y), Max(a.z, b.z) }; return self; }
+  T self = { .x = Max(a.x, b.x), .y = Max(a.y, b.y), .z = Max(a.z, b.z) }; return self; }
 
 #define Vec3_Min(T) inline T T##_Min(T a, T b) { \
-  T self = { Min(a.x, b.x), Min(a.y, b.y), Min(a.z, b.z) }; return self; }
+  T self = { .x = Min(a.x, b.x), .y = Min(a.y, b.y), .z = Min(a.z, b.z) }; return self; }
 
 Vec3_Max(Vec3i)
 Vec3_Max(Vec3f)
@@ -207,11 +207,11 @@ Vec3_Min(Vec3d)
 
 #define Vec3_Normalize(T, sub) inline T T##_Normalize(T v) { \
   sub l = T##_Length(v); \
-  T self = { v.x / l, v.y / l, v.z / l }; return self; }
+  T self = { .x = v.x / l, .y = v.y / l, .z = v.z / l }; return self; }
 
 #define Vec3_SNormalize(T, sub) inline T T##_SNormalize(T v) { \
   sub l = T##_Length(v); \
-  if (l > 0) { T self = { v.x / l, v.y / l, v.z / l }; return self; } \
+  if (l > 0) { T self = { .x = v.x / l, .y = v.y / l, .z = v.z / l }; return self; } \
   return v; }
 
 Vec3_Normalize(Vec3f, float)
@@ -220,9 +220,9 @@ Vec3_SNormalize(Vec3f, float)
 Vec3_SNormalize(Vec3d, double)
 
 #define Vec3_Pow(T) inline T T##_Pow(T a, T b) { \
-  T self = { Pow(a.x, b.x), Pow(a.y, b.y), Pow(a.z, b.z) }; return self; }
+  T self = { .x = Pow(a.x, b.x), .y = Pow(a.y, b.y), .z = Pow(a.z, b.z) }; return self; }
 #define Vec3_Pows(T, sub) inline T T##_Pows(T a, sub b) { \
-  T self = { Pow(a.x, b), Pow(a.y, b), Pow(a.z, b) }; return self; }
+  T self = { .x = Pow(a.x, b), .y = Pow(a.y, b), .z = Pow(a.z, b) }; return self; }
 
 Vec3_Pow(Vec3d)
 Vec3_Pow(Vec3f)
@@ -231,7 +231,7 @@ Vec3_Pows(Vec3f, float)
 
 #define Vec3_Project(T, sub) inline T T##_Project(T a, T b) { \
   sub d = T##_Dot(a, b); \
-  T self = { d * b.x, d * b.y, d * b.z }; return self; }
+  T self = { .x = d * b.x, .y = d * b.y, .z = d * b.z }; return self; }
 
 Vec3_Project(Vec3i, int)
 Vec3_Project(Vec3f, float)
@@ -251,14 +251,14 @@ Vec3_Rcp(Vec3f, float)
 
 #define Vec3_Reject(T, sub) inline T T##_Reject(T a, T b) { \
   sub d = T##_Dot(a, b); \
-  T self = { a.x - d * b.x, a.y - d * b.y, a.z - d * b.z }; return self; }
+  T self = { .x = a.x - d * b.x, .y = a.y - d * b.y, .z = a.z - d * b.z }; return self; }
 
 Vec3_Reject(Vec3i, int)
 Vec3_Reject(Vec3f, float)
 Vec3_Reject(Vec3d, double)
 
 #define Vec3_To(T, TSub, CSub) inline TSub T##_To##TSub(T a) { \
-  TSub self = { (CSub) a.x, (CSub) a.y, (CSub) a.z, }; return self; }
+  TSub self = { .x = (CSub) a.x, .y = (CSub) a.y, .z = (CSub) a.z }; return self; }
 
 Vec3_To(Vec3i, Vec3f, float)
 Vec3_To(Vec3i, Vec3d, double)

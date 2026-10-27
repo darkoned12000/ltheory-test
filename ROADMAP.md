@@ -4,6 +4,21 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
 
 **This file is the ONLY tracker.** The finished design and implementation records live in `docs/` (`docs/ltheory-planets.md`, `docs/procedural-space-environment.md`, `docs/ssao-gtao-implementation.md`, `docs/fog-nebula-implementation.md`, `docs/multithreading.md`, `docs/debug-panel-update.md`, `docs/SDL_Migration.md`, `docs/ltheory-node-ui.md`, `docs/ltheory-ui-gui-research.md`) — those are the *why*, and they stay exactly as they were written. Anything still open is listed **here**, so nothing hides in a 165 KB file.
 
+## Open (genuinely remaining, as of 2026-10-27)
+The roadmap above is largely complete. What is actually still unimplemented:
+
+1. **Graphics-options parity (#14)** — motion blur, shadow-quality master + PCF radius, SSR, anamorphic lens flares, AMD CAS. (FXAA/SMAA already shipped via `postfx.fxaa`.)
+2. **Economy's last mile** — energy cells have no use (ship capacitor not wired, no upgrades); old game's **market escrow** (per-owner storage lockers, midpoint settlement) not ported (current port does instant trades).
+3. **Three SpaceField channels with no consumer** — `starVisibility` (medium's extinction of stars), `turbulence` (plume warp), `radiation` (region hazard).
+4. **Gas giants (W7d) + atmosphere entry/landing (W7e)** — explicitly deferred 2026-10-14; design in `docs/ltheory-planets.md` §11.3.
+5. **Save format phase 2** — market/belt state, destroyed-asteroid memory, missions.
+6. **Procedural content (#7/#8)** — L-system stations, biome terrain, NPC ships, main menu/settings screens (main menu done; settings screen still open).
+
+## Completed (recent, 2026-10-27)
+- **cascadedmaps merged to main** — single-pass CSM box culling + cached/pooled economy mining jobs (commit `bd7d5e0`).
+- **Deferred cleanup (branch `deferreditems`)** — Font atlas max 4096→8192; designated initializers across `Vec3.h` + 6 call sites; ~26 unused shaders/includes removed; dead `Renderer:colorGrade` removed; billboard edge guards in `axis.glsl`/`wrapped.glsl`; new `tools/validate_billboard_math.lua` wired into `configure.py test`.
+- **Licensing/disclaimer** — placeholder `LICENSE` + README disclaimer for the fork (replace placeholder before publishing).
+
 ## Completed
 - **HDR + tonemapping (#1)** — done & **visually signed off 2026-09-09** (exposure meter on-target: `max` ~1.5–3, `lit` ~0.2–0.5, `over` ~1–5%; ACES validated in-game). RGBA16F deferred+post chain; Karis-weighted mip bloom (additive pre-tonemap); selectable AgX/ACES/Filmic/Khronos operators + `2^EV` exposure + sRGB dither in one `filter/tonemap` pass (`res/shader/include/tonemapping.glsl`); grain/vignette/aberration/radialblur re-wired onto the chain. Includes the exposure **meter** (`Renderer:meter`/`filter/exposure.glsl`, now opt-in via
   `postfx.exposure.meter`) that makes the tuning repeatable. **Auto-exposure was removed 2026-10-14**
