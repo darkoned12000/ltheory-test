@@ -587,8 +587,8 @@ Config.gpu = {
   sunWarmth       = 0.7568,--   1 = warm orange (matching starColor), 0 = white
   sunMarker       = false, --   draw a crosshair where starDir projects (analysis aid)
   sunShadows      = true,  -- directional shadow map from the sun
-  sunShadowRange  = 8000,  --   half-size of the ortho shadow box (world units)
-  sunShadowSize   = '1024',--   shadow map resolution (256/512/1024/2048)
+  sunShadowRange  = 5000,  --   half-size of the ortho shadow box (world units)
+  sunShadowSize   = '2048',--   shadow map resolution (256/512/1024/2048)
   shadowMaxLights = 2,     -- max point lights that cast shadows (nearest to camera)
   shadowPeriod    = 2,     -- update shadow maps every N frames (1 = every frame)
 
