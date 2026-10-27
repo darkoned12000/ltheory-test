@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-rm -f screenshot/*
+rm -rf screenshot/*
 timeout 120 env PHX_MUTE=1 PHX_WINDOWED=1 PHX_FIXED_SIZE=1024,768 \
   PHX_FIXED_DT=0.016 PHX_AUDIOTEST=1 ./run.sh LTheory > /tmp/opencode/audio_test.log 2>&1 || true
 if grep -q "\[AUDIOTEST\] FAIL:" /tmp/opencode/audio_test.log; then

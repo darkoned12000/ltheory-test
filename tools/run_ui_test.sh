@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-rm -f screenshot/*
+rm -rf screenshot/*
 timeout 120 env PHX_MUTE=1 PHX_WINDOWED=1 PHX_FIXED_SIZE=1024,768 \
   PHX_FIXED_DT=0.016 PHX_UITEST=1 ./run.sh LTheory > /tmp/opencode/ui_test.log 2>&1 || true
 

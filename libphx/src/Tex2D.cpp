@@ -14,6 +14,7 @@
 #include "Tex2D.h"
 #include "TexFormat.h"
 #include "Vec2.h"
+#include "SDL.h"
 #include "Viewport.h"
 
 extern uchar* Tex2D_LoadRaw(cstr path, int* sx, int* sy, int* components);
@@ -56,25 +57,31 @@ Tex2D* Tex2D_Create (int sx, int sy, TexFormat format) {
 }
 
 Tex2D* Tex2D_ScreenCapture () {
-  // Query the default framebuffer's actual dimensions. Viewport_GetSize
-  // can return a stale (render-target-sized) value if the viewport stack
-  // is unbalanced, which produces partial/tiled captures.
+  // Get the window size from SDL (most reliable source). The viewport stack
+  // and framebuffer params can be stale after FBO/render-target use.
+  SDL_Window* win = SDL_GL_GetCurrentWindow();
+  int winW = 0, winH = 0;
+  if (win) SDL_GetWindowSize(win, &winW, &winH);
+
   GLint fbW = 0, fbH = 0;
   GLCALL(glBindFramebuffer(GL_READ_FRAMEBUFFER, 0))
   GLCALL(glBindFramebuffer(GL_FRAMEBUFFER, 0))
-  GLCALL(glGetFramebufferParameteriv(GL_READ_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, &fbW))
-  GLCALL(glGetFramebufferParameteriv(GL_READ_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, &fbH))
-  Vec2i size;
-  if (fbW > 0 && fbH > 0) {
-    size.x = fbW;
-    size.y = fbH;
+  if (winW > 0 && winH > 0) {
+    fbW = winW;
+    fbH = winH;
   } else {
-    /* Fallback for drivers without GL 4.3 framebuffer params. */
-    GLint vp[4];
-    GLCALL(glGetIntegerv(GL_VIEWPORT, vp))
-    size.x = vp[2] > 0 ? vp[2] : 1;
-    size.y = vp[3] > 0 ? vp[3] : 1;
+    GLCALL(glGetFramebufferParameteriv(GL_READ_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, &fbW))
+    GLCALL(glGetFramebufferParameteriv(GL_READ_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, &fbH))
+    if (fbW <= 0 || fbH <= 0) {
+      GLint vp[4];
+      GLCALL(glGetIntegerv(GL_VIEWPORT, vp))
+      fbW = vp[2] > 0 ? vp[2] : 1;
+      fbH = vp[3] > 0 ? vp[3] : 1;
+    }
   }
+  Vec2i size;
+  size.x = fbW > 0 ? fbW : 1;
+  size.y = fbH > 0 ? fbH : 1;
 
   Tex2D* self = Tex2D_Create(size.x, size.y, TexFormat_RGBA8);
   uint32* buf = MemNewArray(uint32, size.x * size.y);
