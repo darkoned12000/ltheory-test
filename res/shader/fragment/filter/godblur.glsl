@@ -20,6 +20,7 @@ uniform sampler2D texNoise;  /* 64x64 blue-noise LUT (crawl dither)   */
 uniform vec2      sunUV;     /* sun screen uv, normalized [0..1]      */
 uniform float     godStrength;
 uniform float     godCeiling; /* soft ceiling on the added shaft (0 = linear) */
+uniform float     godWrap;   /* light-wrap blend at depth edges (0 = strict) */
 uniform int       godMode;   /* 0 composite, 1 debug                  */
 
 /* Bilateral upsample: manually gather the quarter-res shaft texels around
@@ -87,9 +88,10 @@ vec3 sampleShaftDepthAware (vec2 sampleUv, float receiverLogDepth, bool smallOcc
    * and bloom turns the bright side into a rim. Blend a bounded fraction of
    * the un-gated value back in, scaled by how much the gate rejected, so
    * only the +/-1 texel band at silhouettes feathers. Deep sky and the
-   * interior of large objects have ~0 rejected mass and are untouched. */
+   * interior of large objects have ~0 rejected mass and are untouched.
+   * godWrap is a live setting (0 = strict cut, ~0.2 subtle, 0.45 soft). */
   float rejectedFrac = 1.0 - min(1.0, gateWeightSum / spatial);
-  return mix(gatedSum / spatial, plainSum / spatial, 0.45 * rejectedFrac);
+  return mix(gatedSum / spatial, plainSum / spatial, godWrap * rejectedFrac);
 }
 
 void main () {
@@ -104,7 +106,14 @@ void main () {
   ivec2 depthPixel = clamp(ivec2(gl_FragCoord.xy), ivec2(0), depthSize - 1);
   float centerDepth = texelFetch(texDepth, depthPixel, 0).r;
   float centerLogDepth = log2(max(centerDepth, 1.0));
-  float t0 = texture(texNoise, uv).x * (1.0 / float(N));  /* sub-tap dither */
+  /* Per-pixel blue-noise sub-tap dither. This used to be texture(texNoise,
+   * uv), which stretched the 64x64 LUT ~30x across the screen: the sub-tap
+   * offset was nearly constant over whole regions, so the 8 radial taps
+   * aligned coherently and printed stepped copies of silhouettes crossed by
+   * the crawl. Per-pixel fetch breaks the alignment into fine grain. */
+  ivec2 nzSize = textureSize(texNoise, 0);
+  ivec2 nzPx = ivec2(mod(gl_FragCoord.xy, vec2(max(nzSize.x, 1), max(nzSize.y, 1))));
+  float t0 = texelFetch(texNoise, nzPx, 0).x * (1.0 / float(N));
 
   /* The pixel's OWN ray shaft value -- the physically correct answer for this
    * pixel. Doubles as the i==0 tap and as a FLOOR for the gathered streaks
