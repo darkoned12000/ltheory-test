@@ -49,6 +49,7 @@ vec3 sampleShaftDepthAware (vec2 sampleUv, float receiverLogDepth, bool smallOcc
   vec3 gatedSum = vec3(0.0);
   vec3 plainSum = vec3(0.0);
   float spatialWeightSum = 0.0;
+  float gateWeightSum = 0.0;
   float minTapLog = 1e20;
 
   for (int j = 0; j < 2; ++j) {
@@ -68,15 +69,27 @@ vec3 sampleShaftDepthAware (vec2 sampleUv, float receiverLogDepth, bool smallOcc
       float w = bilinear * exp(-4.0 * behind * behind);
       gatedSum += tap.rgb * w;
       spatialWeightSum += bilinear;
+      gateWeightSum += w;
     }
   }
+
+  float spatial = max(1e-6, spatialWeightSum);
 
   /* Quarter-res support too coarse to see this occluder at all: every tap
    * disagrees (much farther). Wrap it smoothly rather than cutting it out. */
   if (smallOccluderFallback && receiverLogDepth + 2.0 < minTapLog) {
-    return plainSum / max(1e-6, spatialWeightSum);
+    return plainSum / spatial;
   }
-  return gatedSum / max(1e-6, spatialWeightSum);
+
+  /* Light wrap (compositing discipline): right AT a depth edge the strict
+   * gate switches the glow from "scatter up to the occluder" to "scatter up
+   * to the sky" between adjacent texels. In dense fog that is a razor cut,
+   * and bloom turns the bright side into a rim. Blend a bounded fraction of
+   * the un-gated value back in, scaled by how much the gate rejected, so
+   * only the +/-1 texel band at silhouettes feathers. Deep sky and the
+   * interior of large objects have ~0 rejected mass and are untouched. */
+  float rejectedFrac = 1.0 - min(1.0, gateWeightSum / spatial);
+  return mix(gatedSum / spatial, plainSum / spatial, 0.45 * rejectedFrac);
 }
 
 void main () {
