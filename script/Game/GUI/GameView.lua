@@ -253,63 +253,76 @@ end
 function GameView:renderSunShadow (world)
   local sizes = { '256', '512', '1024', '2048' }
   local target = tonumber(sizes[Settings.get('render.sun.shadowSize') or 4]) or 2048
-  local key = target .. 'x' .. self.sx .. 'x' .. self.sy
+  local key = target .. 'x' .. self.sx .. 'x' .. self.sy .. 'x2'
   if key ~= self.sunShadowSizeKey then
-    if self.sunShadowTex then self.sunShadowTex:free() end
+    if self.sunShadowTex0 then self.sunShadowTex0:free() end
+    if self.sunShadowTex1 then self.sunShadowTex1:free() end
     local sw, sh = sunShadowSize(self.sx, self.sy, target)
-    self.sunShadowTex = Tex2D.Create(sw, sh, TexFormat.Depth32F)
-    self.sunShadowTex:setMinFilter(TexFilter.Linear)
-    self.sunShadowTex:setMagFilter(TexFilter.Linear)
+    self.sunShadowTex0 = Tex2D.Create(sw, sh, TexFormat.Depth32F)
+    self.sunShadowTex0:setMinFilter(TexFilter.Linear)
+    self.sunShadowTex0:setMagFilter(TexFilter.Linear)
+    self.sunShadowTex1 = Tex2D.Create(sw, sh, TexFormat.Depth32F)
+    self.sunShadowTex1:setMinFilter(TexFilter.Linear)
+    self.sunShadowTex1:setMagFilter(TexFilter.Linear)
     self.sunShadowSizeKey = key
   end
 
   local range = Settings.get('render.sun.shadowRange') or 8000
   local sd = Vec3f(world.starDir.x, world.starDir.y, world.starDir.z):normalize()
   self.sunShadowCenter = self.camera.pos
-  -- Put the orthographic camera one range UPSTREAM, on the sun side, and look
-  -- through the camera centre along the incoming-light direction. A camera at
-  -- the receiver centre clips all potential occluders on the sunward half-space,
-  -- which made the map look unresponsive as range/resolution were adjusted.
-  local shadowEye = self.sunShadowCenter + sd:muls(range)
-  local proj = self:buildShadowFrustum(shadowEye, self.sunShadowCenter, range)
-  if self.sunShadowProj then self.sunShadowProj:free() end
-  self.sunShadowProj = proj
+  -- Cascade split: near covers 0-2000, far covers 2000-range.
+  -- Two concentric shadow boxes centered on the camera, looking along sun.
+  local splits = { 2000 }
+  local ranges = { 2000, range }
+  for ci = 1, 2 do
+    local r = ranges[ci]
+    local shadowEye = self.sunShadowCenter + sd:muls(r)
+    local proj = self:buildShadowFrustum(shadowEye, self.sunShadowCenter, r)
+    if ci == 1 then
+      if self.sunShadowProj0 then self.sunShadowProj0:free() end
+      self.sunShadowProj0 = proj
+    else
+      if self.sunShadowProj1 then self.sunShadowProj1:free() end
+      self.sunShadowProj1 = proj
+    end
+  end
 
-  -- The viewport MUST match the shadow map's own resolution. It used to be pushed
-  -- at the full window size (self.sx x self.sy), so a 512x512 map was being
-  -- rasterized through a 3840x2160 viewport: every shadow fragment was shaded
-  -- 8.3 MILLION pixels wide and then thrown away by the 512x512 attachment.
-  -- That is the entire cost of the sun-shadow pass (measured 1.74 ms/frame, the
-  -- second-largest item in the frame) and it is pure waste.
-  local shadowSize = self.sunShadowTex:getSize()
-  RenderTarget.Push(shadowSize.x, shadowSize.y)
-  RenderTarget.BindTex2D(self.sunShadowTex)
+  -- Render each cascade.
+  for ci = 1, 2 do
+    local r = ranges[ci]
+    local tex = (ci == 1) and self.sunShadowTex0 or self.sunShadowTex1
+    local proj = (ci == 1) and self.sunShadowProj0 or self.sunShadowProj1
+    local shadowSize = tex:getSize()
+    RenderTarget.Push(shadowSize.x, shadowSize.y)
+    RenderTarget.BindTex2D(tex)
 
-  ShaderVar.PushMatrix('mView', proj)
-  local identity = Matrix.Identity()
-  ShaderVar.PushMatrix('mProj', identity)
-  identity:free()
-  ShaderVar.PushFloat3('eye', self.sunShadowCenter.x, self.sunShadowCenter.y, self.sunShadowCenter.z)
-  BlendMode.PushDisabled()
-  CullFace.Push(CullFace.Back)
-  RenderState.PushDepthTest(true)
-  RenderState.PushDepthWritable(true)
+    ShaderVar.PushMatrix('mView', proj)
+    local identity = Matrix.Identity()
+    ShaderVar.PushMatrix('mProj', identity)
+    identity:free()
+    ShaderVar.PushFloat3('eye', self.sunShadowCenter.x, self.sunShadowCenter.y, self.sunShadowCenter.z)
+    BlendMode.PushDisabled()
+    CullFace.Push(CullFace.Back)
+    RenderState.PushDepthTest(true)
+    RenderState.PushDepthWritable(true)
 
-  Draw.ClearDepth(1)
+    Draw.ClearDepth(1)
 
-  world:render(Event.Render(BlendMode.Disabled, self.sunShadowCenter, 'sunshadow',
-                            self.sunShadowCenter, math.sqrt(3) * range))
+    world:render(Event.Render(BlendMode.Disabled, self.sunShadowCenter, 'sunshadow',
+                              self.sunShadowCenter, math.sqrt(3) * r))
 
-  RenderState.PopDepthWritable()
-  RenderState.PopDepthTest()
-  CullFace.Pop()
-  BlendMode.Pop()
-  ShaderVar.Pop('mView')
-  ShaderVar.Pop('mProj')
-  ShaderVar.Pop('eye')
-  RenderTarget.Pop()
+    RenderState.PopDepthWritable()
+    RenderState.PopDepthTest()
+    CullFace.Pop()
+    BlendMode.Pop()
+    ShaderVar.Pop('mView')
+    ShaderVar.Pop('mProj')
+    ShaderVar.Pop('eye')
+    RenderTarget.Pop()
+  end
 end
 
+-- GTAO chain: aoview -> ao -> aoblur
 -- GTAO chain: aoview -> ao -> aoblur
 function GameView:renderAO ()
   local r = self.renderer
@@ -651,7 +664,7 @@ function GameView:draw (focus, active)
             self:renderSunShadow(world)
             Profiler.End()
           end
-          local shadowEnabled = sunShadows and self.sunShadowTex ~= nil
+          local shadowEnabled = sunShadows and self.sunShadowTex0 ~= nil
           self.renderer.buffer2:push()
           BlendMode.PushAdditive()
           shader:start()
@@ -661,14 +674,18 @@ function GameView:draw (focus, active)
           Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
           Shader.SetFloat('shadowEnable', shadowEnabled and 1 or 0)
           if shadowEnabled then
-            Shader.SetTex2D('texShadow', self.sunShadowTex)
-            Shader.SetMatrix ('sShadowProj', self.sunShadowProj)
+            Shader.SetTex2D('texShadow', self.sunShadowTex0)
+            Shader.SetTex2D('texShadow1', self.sunShadowTex1)
+            Shader.SetMatrix ('sShadowProj', self.sunShadowProj0)
+            Shader.SetMatrix ('sShadowProj1', self.sunShadowProj1)
             Shader.SetFloat  ('sShadowBias',   Settings.get('render.shadow.bias') or 0.001)
             Shader.SetFloat  ('sShadowScale',  Settings.get('render.shadow.scale') or 0.0005)
             Shader.SetFloat  ('sShadowRadius', Settings.get('render.shadow.radius') or 2.0)
+            Shader.SetFloat  ('sCascadeSplit', 2000.0)
           else
             -- Bind a valid texture even though the branch skips sampling.
             Shader.SetTex2D('texShadow', self.renderer.zBufferL)
+            Shader.SetTex2D('texShadow1', self.renderer.zBufferL)
           end
           Draw.Rect(-1, -1, 2, 2)
           shader:stop()
