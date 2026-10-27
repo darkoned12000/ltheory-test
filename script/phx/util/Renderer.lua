@@ -509,12 +509,7 @@ function Renderer:grain (strength)
   end)
 end
 
-function Renderer:colorGrade (curve1, curve2)
-  self:applyFilter('colorgrade', function ()
-    Shader.SetTex1D('curve1', curve1)
-    Shader.SetTex1D('curve2', curve2)
-  end)
-end
+
 
 function Renderer:blur (dst, src, dx, dy, radius)
   local shader = Cache.Shader('ui', 'filter/blur')

@@ -5,7 +5,6 @@
 #include fdm
 #include color
 #include math
-#include fog
 
 #autovar vec3 eye
 #autovar samplerCube envMap
@@ -26,7 +25,7 @@ void main() {
   vec3 env = textureLod(envMap, R, 0.0).xyz;
 
   c = sqrt(max(vec3(0.0), c * env * env));
-  c = applyFog(c, V);
+
 
   if (isnan(c.r) || isnan(c.g) || isnan(c.b)) {
     c = vec3(0.0);

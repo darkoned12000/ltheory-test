@@ -5,7 +5,6 @@
 #include texturing
 #include color
 #include math
-#include fog
 
 #autovar vec3 eye
 

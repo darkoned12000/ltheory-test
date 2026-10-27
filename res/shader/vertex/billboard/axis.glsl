@@ -13,7 +13,8 @@ void main() {
   vec4 wp = mWorld * vec4(vertPos, 1.0);
   vec3 toCam = normalize(eye - wp.xyz);
   vec3 look = normalize((mWorld * vec4(0, 0, 1, 0)).xyz);
-  vec3 right = normalize(cross(toCam, look));
+  vec3 crossVec = cross(toCam, look);
+  vec3 right = (length(crossVec) > 1e-6) ? normalize(crossVec) : vec3(1.0, 0.0, 0.0);
   wp.xyz += size.x * uv.x * right;
   wp.xyz += size.y * uv.y * look;
   pos = wp.xyz;

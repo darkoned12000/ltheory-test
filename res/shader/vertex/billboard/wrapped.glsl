@@ -19,10 +19,12 @@ void main() {
 
   vec4 wp = mWorld * vec4(vertPos, 1.0);
   vec3 toCam = eye - wp.xyz;
-  toCam = 2.0 * mod(toCam, vec3(kWrapDistance)) - vec3(kWrapDistance);
+  toCam = 2.0 * (fract(toCam / kWrapDistance) * kWrapDistance) - vec3(kWrapDistance);
   wp.xyz = eye - toCam;
   vec3 up = normalize(axis);
-  vec3 right = cross(normalize(toCam), up);
+  vec3 toCamDir = normalize(toCam + vec3(1e-6));
+  vec3 crossVec = cross(toCamDir, up);
+  vec3 right = (length(crossVec) > 1e-6) ? normalize(crossVec) : vec3(1.0, 0.0, 0.0);
   wp.xyz += size.x * uv.x * right;
   wp.xyz += size.y * uv.y * up;
 

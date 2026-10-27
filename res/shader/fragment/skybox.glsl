@@ -2,7 +2,6 @@
 #include deferred
 #include gamma
 #include color
-#include fog
 
 #autovar samplerCube envMap
 
