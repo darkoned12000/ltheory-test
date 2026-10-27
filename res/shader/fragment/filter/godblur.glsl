@@ -24,15 +24,32 @@ uniform int       godMode;   /* 0 composite, 1 debug                  */
 
 /* Bilateral upsample: manually gather the quarter-res shaft texels around
  * uv, weighting by bilinear footprint AND agreement with the full-res
- * receiver depth. Never use a plain texture() fallback at silhouettes: that
- * can bleed bright background shafts across foreground geometry. */
-vec3 sampleShaftDepthAware (vec2 sampleUv, float receiverLogDepth) {
+ * receiver depth.
+ *
+ * The gate is ASYMMETRIC. Light behind the receiver (tap logical depth
+ * greater than the receiver's) must be rejected, or it leaks shafts through
+ * foreground silhouettes. Light in front of the receiver (a closer occluder's
+ * texel, or the truncated march its side of the silhouette) is legitimate —
+ * it is scatter between the camera and the receiver — so those taps keep
+ * full weight and the occluder boundary becomes a soft feather instead of
+ * a hard binary cut in the glow.
+ *
+ * smallOccluderFallback: rocks narrower than a quarter-res texel own no texel
+ * whose depth agrees with the receiver, so a strict gate zeroes their glow
+ * and leaves a dark cut-out ringed by clamped-bright sky — the residual
+ * edge highlight. When EVERY tap is >=4x farther than the receiver, fall
+ * back to the plain bilinear blend: the glow wraps the tiny occluder the
+ * way bloom already does. Radial taps pass false, so large silhouettes keep
+ * their occlusion while their gathered streaks still land behind them. */
+vec3 sampleShaftDepthAware (vec2 sampleUv, float receiverLogDepth, bool smallOccluderFallback) {
   ivec2 size = textureSize(texVol, 0);
   vec2 p = sampleUv * vec2(size) - 0.5;
   ivec2 base = ivec2(floor(p));
   vec2 f = fract(p);
-  vec3 sum = vec3(0.0);
+  vec3 gatedSum = vec3(0.0);
+  vec3 plainSum = vec3(0.0);
   float spatialWeightSum = 0.0;
+  float minTapLog = 1e20;
 
   for (int j = 0; j < 2; ++j) {
     for (int i = 0; i < 2; ++i) {
@@ -41,18 +58,25 @@ vec3 sampleShaftDepthAware (vec2 sampleUv, float receiverLogDepth) {
       vec4 tap = texelFetch(texVol, q, 0);
       float bilinear = (i == 0 ? 1.0 - f.x : f.x)
                      * (j == 0 ? 1.0 - f.y : f.y);
-      float depthDelta = abs(tap.a - receiverLogDepth);
-      float gatedDelta = max(0.0, depthDelta - 0.08);
-      float w = bilinear * exp(-4.0 * gatedDelta * gatedDelta);
-      sum += tap.rgb * w;
-      /* Normalize only the spatial footprint, NOT the depth weights. If all
-       * taps disagree in depth, preserving their small weights suppresses
-       * the leak instead of renormalizing a rejected shaft back to full power. */
+      plainSum += tap.rgb * bilinear;
+      minTapLog = min(minTapLog, tap.a);
+      /* Only taps FARTHER than the receiver are occluded light. Normalize by
+       * the spatial footprint, not the depth weights: preserving the small
+       * weights of rejected taps suppresses the leak instead of renormalizing
+       * a rejected shaft back to full power. */
+      float behind = max(0.0, tap.a - receiverLogDepth - 0.08);
+      float w = bilinear * exp(-4.0 * behind * behind);
+      gatedSum += tap.rgb * w;
       spatialWeightSum += bilinear;
     }
   }
 
-  return sum / max(1e-6, spatialWeightSum);
+  /* Quarter-res support too coarse to see this occluder at all: every tap
+   * disagrees (much farther). Wrap it smoothly rather than cutting it out. */
+  if (smallOccluderFallback && receiverLogDepth + 2.0 < minTapLog) {
+    return plainSum / max(1e-6, spatialWeightSum);
+  }
+  return gatedSum / max(1e-6, spatialWeightSum);
 }
 
 void main () {
@@ -73,8 +97,11 @@ void main () {
     vec2 sp = uv + dir * d * t;             /* crawl toward the sun */
     /* Depth-aware upsample each radial tap at this receiver's depth. Keep
      * radial weights independent from depth rejection: dividing by a sum of
-     * depth-gated weights would restore rejected shafts to full strength. */
-    vec3 v = sampleShaftDepthAware(sp, centerLogDepth);
+     * depth-gated weights would restore rejected shafts to full strength.
+     * Only the center tap may take the small-occluder wrap so structures
+     * finer than the quarter-res grid still receive a smooth glow; the
+     * distant crawl taps keep strict occlusion. */
+    vec3 v = sampleShaftDepthAware(sp, centerLogDepth, i == 0);
     float w = exp2(-2.0 * float(i)); /* near-sun taps dominate */
     acc += v * w;
     wsum += w;
