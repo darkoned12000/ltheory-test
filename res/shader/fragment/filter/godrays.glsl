@@ -39,7 +39,12 @@ void main () {
   vec3 ro = worldOrigin;
   vec3 rd = normalize(worldDir);
 
-  float dist = textureLod(texDepth, uv, 0.0).r;
+  /* Use a point depth at this shaft texel. Linear-filtering the full-res
+   * depth at a quarter-res fragment averages foreground geometry with sky,
+   * producing a fictitious mid-distance march length at silhouettes. */
+  ivec2 depthSize = textureSize(texDepth, 0);
+  ivec2 depthPixel = clamp(ivec2(uv * vec2(depthSize)), ivec2(0), depthSize - 1);
+  float dist = texelFetch(texDepth, depthPixel, 0).r;
   if (dist < 1e-4) {
     /* Alpha carries log2(eyeDepth) for godblur's depth-aware radial gather. */
     fragData0 = vec4(0.0, 0.0, 0.0, log2(1.0e6));
