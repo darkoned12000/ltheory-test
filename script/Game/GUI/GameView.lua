@@ -253,45 +253,42 @@ end
 function GameView:renderSunShadow (world)
   local sizes = { '256', '512', '1024', '2048' }
   local target = tonumber(sizes[Settings.get('render.sun.shadowSize') or 4]) or 2048
-  local key = target .. 'x' .. self.sx .. 'x' .. self.sy .. 'x2'
+  local key = target .. 'x' .. self.sx .. 'x' .. self.sy .. 'x3'
   if key ~= self.sunShadowSizeKey then
-    if self.sunShadowTex0 then self.sunShadowTex0:free() end
-    if self.sunShadowTex1 then self.sunShadowTex1:free() end
+    for i = 0, 2 do
+      local t = self['sunShadowTex' .. i]
+      if t then t:free() end
+    end
     local sw, sh = sunShadowSize(self.sx, self.sy, target)
-    self.sunShadowTex0 = Tex2D.Create(sw, sh, TexFormat.Depth32F)
-    self.sunShadowTex0:setMinFilter(TexFilter.Linear)
-    self.sunShadowTex0:setMagFilter(TexFilter.Linear)
-    self.sunShadowTex1 = Tex2D.Create(sw, sh, TexFormat.Depth32F)
-    self.sunShadowTex1:setMinFilter(TexFilter.Linear)
-    self.sunShadowTex1:setMagFilter(TexFilter.Linear)
+    for i = 0, 2 do
+      local tex = Tex2D.Create(sw, sh, TexFormat.Depth32F)
+      tex:setMinFilter(TexFilter.Linear)
+      tex:setMagFilter(TexFilter.Linear)
+      self['sunShadowTex' .. i] = tex
+    end
     self.sunShadowSizeKey = key
   end
 
   local range = Settings.get('render.sun.shadowRange') or 8000
   local sd = Vec3f(world.starDir.x, world.starDir.y, world.starDir.z):normalize()
   self.sunShadowCenter = self.camera.pos
-  -- Cascade split: near covers 0-2000, far covers 2000-range.
-  -- Two concentric shadow boxes centered on the camera, looking along sun.
-  local splits = { 2000 }
-  local ranges = { 2000, range }
-  for ci = 1, 2 do
+  -- 3 cascades: near (0-1000), mid (1000-3000), far (3000-range).
+  local ranges = { 1000, 3000, range }
+  for ci = 1, 3 do
     local r = ranges[ci]
     local shadowEye = self.sunShadowCenter + sd:muls(r)
     local proj = self:buildShadowFrustum(shadowEye, self.sunShadowCenter, r)
-    if ci == 1 then
-      if self.sunShadowProj0 then self.sunShadowProj0:free() end
-      self.sunShadowProj0 = proj
-    else
-      if self.sunShadowProj1 then self.sunShadowProj1:free() end
-      self.sunShadowProj1 = proj
-    end
+    local idx = ci - 1
+    if self['sunShadowProj' .. idx] then self['sunShadowProj' .. idx]:free() end
+    self['sunShadowProj' .. idx] = proj
   end
 
   -- Render each cascade.
-  for ci = 1, 2 do
+  for ci = 1, 3 do
     local r = ranges[ci]
-    local tex = (ci == 1) and self.sunShadowTex0 or self.sunShadowTex1
-    local proj = (ci == 1) and self.sunShadowProj0 or self.sunShadowProj1
+    local idx = ci - 1
+    local tex = self['sunShadowTex' .. idx]
+    local proj = self['sunShadowProj' .. idx]
     local shadowSize = tex:getSize()
     RenderTarget.Push(shadowSize.x, shadowSize.y)
     RenderTarget.BindTex2D(tex)
@@ -322,6 +319,7 @@ function GameView:renderSunShadow (world)
   end
 end
 
+-- GTAO chain: aoview -> ao -> aoblur
 -- GTAO chain: aoview -> ao -> aoblur
 -- GTAO chain: aoview -> ao -> aoblur
 function GameView:renderAO ()
@@ -676,16 +674,20 @@ function GameView:draw (focus, active)
           if shadowEnabled then
             Shader.SetTex2D('texShadow', self.sunShadowTex0)
             Shader.SetTex2D('texShadow1', self.sunShadowTex1)
+            Shader.SetTex2D('texShadow2', self.sunShadowTex2)
             Shader.SetMatrix ('sShadowProj', self.sunShadowProj0)
             Shader.SetMatrix ('sShadowProj1', self.sunShadowProj1)
+            Shader.SetMatrix ('sShadowProj2', self.sunShadowProj2)
             Shader.SetFloat  ('sShadowBias',   Settings.get('render.shadow.bias') or 0.001)
             Shader.SetFloat  ('sShadowScale',  Settings.get('render.shadow.scale') or 0.0005)
             Shader.SetFloat  ('sShadowRadius', Settings.get('render.shadow.radius') or 2.0)
-            Shader.SetFloat  ('sCascadeSplit', 2000.0)
+            Shader.SetFloat  ('sCascadeSplit0', 1000.0)
+            Shader.SetFloat  ('sCascadeSplit1', 3000.0)
           else
             -- Bind a valid texture even though the branch skips sampling.
             Shader.SetTex2D('texShadow', self.renderer.zBufferL)
             Shader.SetTex2D('texShadow1', self.renderer.zBufferL)
+            Shader.SetTex2D('texShadow2', self.renderer.zBufferL)
           end
           Draw.Rect(-1, -1, 2, 2)
           shader:stop()
@@ -721,7 +723,7 @@ function GameView:draw (focus, active)
             Shader.SetFloat  ('shadowEnable', 1)
           else
             -- Keep a valid 2D texture bound; shadowEnable=0 makes the shader skip it.
-            Shader.SetTex2D('texShadow', self.sunShadowTex or self.renderer.zBufferL)
+            Shader.SetTex2D('texShadow', self.sunShadowTex0 or self.renderer.zBufferL)
             Shader.SetFloat  ('shadowEnable', 0)
           end
           Shader.SetTex2D('texDepth', self.renderer.zBufferL)

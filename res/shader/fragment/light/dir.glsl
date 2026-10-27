@@ -16,9 +16,12 @@ uniform sampler2D texNormalMat;
 uniform sampler2D texDepth;
 uniform sampler2D texShadow;
 uniform sampler2D texShadow1;
+uniform sampler2D texShadow2;
 uniform mat4       sShadowProj;
 uniform mat4       sShadowProj1;
-uniform float      sCascadeSplit;
+uniform mat4       sShadowProj2;
+uniform float      sCascadeSplit0;
+uniform float      sCascadeSplit1;
 uniform float      sShadowBias;
 uniform float      sShadowScale;
 uniform float      sShadowRadius;
@@ -88,18 +91,24 @@ void main () {
   if (shadowEnable > 0.5) {
     float viewDist = length(pos - eye);
     float bias = sShadowBias + sShadowScale * (1.0 - max(NdL, 0.0));
-    if (viewDist < sCascadeSplit) {
+    if (viewDist < sCascadeSplit0) {
       vec4 sp = sShadowProj * vec4(pos, 1.0);
       vec3 projCoords = sp.xyz / max(sp.w, 1e-6);
       vec2 suv = (projCoords.xy * 0.5) + 0.5;
       float receiverDepth = projCoords.z * 0.5 + 0.5;
       light *= PCFSamplePoisson(texShadow, suv, receiverDepth, bias, sShadowRadius);
-    } else {
+    } else if (viewDist < sCascadeSplit1) {
       vec4 sp = sShadowProj1 * vec4(pos, 1.0);
       vec3 projCoords = sp.xyz / max(sp.w, 1e-6);
       vec2 suv = (projCoords.xy * 0.5) + 0.5;
       float receiverDepth = projCoords.z * 0.5 + 0.5;
       light *= PCFSamplePoisson(texShadow1, suv, receiverDepth, bias, sShadowRadius);
+    } else {
+      vec4 sp = sShadowProj2 * vec4(pos, 1.0);
+      vec3 projCoords = sp.xyz / max(sp.w, 1e-6);
+      vec2 suv = (projCoords.xy * 0.5) + 0.5;
+      float receiverDepth = projCoords.z * 0.5 + 0.5;
+      light *= PCFSamplePoisson(texShadow2, suv, receiverDepth, bias, sShadowRadius);
     }
   }
 
