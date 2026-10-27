@@ -396,12 +396,8 @@ for _, s in ipairs(SETTINGS) do
   end
 end
 
--- Capture-only supersampling. Not listed in SETTINGS, so it is intentionally
--- absent from the normal debug panel. Application temporarily requests 2x for
--- the Screenshot key; interactive AA is TAA and the live 2x/4x controls invited
--- accidental quadratic pixel costs.
-Settings.addEnum('render.superSample', 'Screenshot SSAA', 1, { 'Off', '2x' })
-
+-- SSAA removed entirely: screenshots capture at native resolution. Interactive
+-- AA is TAA. The render.superSample setting no longer exists.
 local function seedFromGpu (gpu)
   for _, s in ipairs(SETTINGS) do
     if s.gpu and Settings.exists(s.key) then
@@ -1065,13 +1061,10 @@ function Renderer:volume (med)
   local shaderF = Cache.Shader('worldray', 'filter/volblur')
   if not (shaderH and shaderF) then return end
 
-  -- Volume march resolution is relative to the BASE render size, not the
-  -- supersampled one. `superSample` scales the whole internal buffer
-  -- (Renderer:start: sx = ss*resX), so sizing this off self.sx made SSAA
-  -- inflate the march 4x as well -- the exact cost supersampling is supposed to
-  -- avoid. The medium is low-frequency and is upsampled through volblur anyway,
-  -- so the march gains nothing from the extra pixels.
-  -- At ss = 1 self.resX == self.sx and this is unchanged, bit for bit.
+  -- Volume march resolution is relative to the BASE render size (self.resX),
+  -- not the internal buffer (self.sx). The medium is low-frequency and is
+  -- upsampled through volblur anyway, so the march gains nothing from
+  -- extra pixels. At ss = 1 self.resX == self.sx and this is unchanged.
   local volW = math.max(1, math.floor(self.resX / 2))
   local volH = math.max(1, math.floor(self.resY / 2))
   local volMip = 1.0

@@ -3,7 +3,6 @@ GameView.__index = GameView
 setmetatable(GameView, UI.Container)
 
 GameView.name = 'Game View'
-local ssTable = { 1, 2 }
 local rsTable = { 1.0, 0.85, 0.75, 0.67, 0.50 }
 local Batcher = require('Game.Batcher')
 local NebulaVolumes = require('Game.NebulaVolumes')
@@ -464,7 +463,6 @@ function GameView:draw (focus, active)
   end
   self.camera:push()
 
-  local ss = ssTable[Settings.get('render.superSample')] or 1
   local rs = rsTable[Settings.get('render.resolutionScale') or 1] or 1.0
   local x, y, sx, sy = self:getRectGlobal()
   ClipRect.PushDisabled()
@@ -564,7 +562,7 @@ function GameView:draw (focus, active)
   Profiler.Begin('Render.Submit')
   do -- Opaque Pass
     Profiler.Begin('Render.Opaque')
-    self.renderer:start(math.max(1, math.floor(self.sx * rs)), math.max(1, math.floor(self.sy * rs)), ss)
+    self.renderer:start(math.max(1, math.floor(self.sx * rs)), math.max(1, math.floor(self.sy * rs)), 1)
     Batcher.begin()
     RenderState.PushWireframe(Settings.get('render.wireframe'))
     world:render(Event.Render(BlendMode.Disabled, eye, 'gbuffer'))
@@ -998,7 +996,7 @@ function GameView:draw (focus, active)
     self.renderer:compositeUI(true)
     Profiler.Begin('Render.Present')
     local tPres = TimeStamp.Get()
-    self.renderer:present(x, y, sx, sy, ss > 2)
+    self.renderer:present(x, y, sx, sy, false)
     rtl.present = TimeStamp.GetElapsedMs(tPres)
     Profiler.End()
   end
