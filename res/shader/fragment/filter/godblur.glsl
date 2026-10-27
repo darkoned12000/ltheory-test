@@ -146,6 +146,20 @@ void main () {
     fragData0 = vec4(vec3(clamp(dd * 0.25, 0.0, 1.0)), 1.0);
     return;
   }
+  if (godMode == 4) {
+    /* Dither grain check: should be fine per-pixel noise. A flat colour or a
+     * smooth gradient means texNoise is not bound (GameView must pass
+     * med.noise) and the crawl taps are coherent -- the stepped-band
+     * artifact. */
+    fragData0 = vec4(vec3(t0 * float(N)), 1.0);
+    return;
+  }
+  if (godMode == 5) {
+    /* Center-only: the depth-matched upsample with NO radial taps. If the
+     * bands vanish here but show in Shaft, the radial taps produce them. */
+    fragData0 = vec4(max(centerV * 8.0, vec3(0.0)), 1.0);
+    return;
+  }
 
   for (int i = 0; i < N; ++i) {
     float t = t0 + float(i) / float(N);     /* 0..~1, crawl toward the sun */

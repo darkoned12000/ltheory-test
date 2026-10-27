@@ -1024,6 +1024,7 @@ function GameView:draw (focus, active)
             sunColor = sunCol,
             sunUv    = sunUv,
             sunFade  = sunFade,
+            noise    = self:getAoNoise(),
             anchors  = self.volumes,
             strength = strength,
           })
