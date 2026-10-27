@@ -91,25 +91,56 @@ void main () {
   if (shadowEnable > 0.5) {
     float viewDist = length(pos - eye);
     float bias = sShadowBias + sShadowScale * (1.0 - max(NdL, 0.0));
-    if (viewDist < sCascadeSplit0) {
+    // Cascade selection with smooth blending at boundaries.
+    // Transition band: ~10% of the split distance.
+    const float blend0 = 200.0;  // 0<->1 transition
+    const float blend1 = 500.0;  // 1<->2 transition
+
+    float shadow0 = 1.0, shadow1 = 1.0, shadow2 = 1.0;
+    bool has0 = false, has1 = false, has2 = false;
+
+    // Cascade 0 (near): always sample if within range
+    if (viewDist < sCascadeSplit0 + blend0) {
       vec4 sp = sShadowProj * vec4(pos, 1.0);
       vec3 projCoords = sp.xyz / max(sp.w, 1e-6);
       vec2 suv = (projCoords.xy * 0.5) + 0.5;
       float receiverDepth = projCoords.z * 0.5 + 0.5;
-      light *= PCFSamplePoisson(texShadow, suv, receiverDepth, bias, sShadowRadius);
-    } else if (viewDist < sCascadeSplit1) {
+      shadow0 = PCFSamplePoisson(texShadow, suv, receiverDepth, bias, sShadowRadius);
+      has0 = true;
+    }
+    // Cascade 1 (mid)
+    if (viewDist > sCascadeSplit0 - blend0 && viewDist < sCascadeSplit1 + blend1) {
       vec4 sp = sShadowProj1 * vec4(pos, 1.0);
       vec3 projCoords = sp.xyz / max(sp.w, 1e-6);
       vec2 suv = (projCoords.xy * 0.5) + 0.5;
       float receiverDepth = projCoords.z * 0.5 + 0.5;
-      light *= PCFSamplePoisson(texShadow1, suv, receiverDepth, bias, sShadowRadius);
-    } else {
+      shadow1 = PCFSamplePoisson(texShadow1, suv, receiverDepth, bias, sShadowRadius);
+      has1 = true;
+    }
+    // Cascade 2 (far)
+    if (viewDist > sCascadeSplit1 - blend1) {
       vec4 sp = sShadowProj2 * vec4(pos, 1.0);
       vec3 projCoords = sp.xyz / max(sp.w, 1e-6);
       vec2 suv = (projCoords.xy * 0.5) + 0.5;
       float receiverDepth = projCoords.z * 0.5 + 0.5;
-      light *= PCFSamplePoisson(texShadow2, suv, receiverDepth, bias, sShadowRadius);
+      shadow2 = PCFSamplePoisson(texShadow2, suv, receiverDepth, bias, sShadowRadius);
+      has2 = true;
     }
+
+    // Blend at boundaries
+    float shadow = shadow0;
+    if (viewDist > sCascadeSplit0 - blend0 && viewDist < sCascadeSplit0 + blend0 && has0 && has1) {
+      float t = smoothstep(sCascadeSplit0 - blend0, sCascadeSplit0 + blend0, viewDist);
+      shadow = mix(shadow0, shadow1, t);
+    } else if (viewDist >= sCascadeSplit0 + blend0 && viewDist < sCascadeSplit1 - blend1) {
+      shadow = shadow1;
+    } else if (viewDist > sCascadeSplit1 - blend1 && viewDist < sCascadeSplit1 + blend1 && has1 && has2) {
+      float t = smoothstep(sCascadeSplit1 - blend1, sCascadeSplit1 + blend1, viewDist);
+      shadow = mix(shadow1, shadow2, t);
+    } else if (viewDist >= sCascadeSplit1 + blend1) {
+      shadow = shadow2;
+    }
+    light *= shadow;
   }
 
   if (isnan(light.r) || isnan(light.g) || isnan(light.b)) {
