@@ -86,15 +86,25 @@ Tex2D* Tex2D_ScreenCapture () {
   Tex2D* self = Tex2D_Create(size.x, size.y, TexFormat_RGBA8);
   uint32* buf = MemNewArray(uint32, size.x * size.y);
   Metric_Inc(Metric_Flush);
-  // Fence the readback: on Wayland the swap handoff is async, and an
-  // unfenced glReadPixels after a swap can return tiled/sheared surfaces.
+  // Fence everything before reading: the multi-threaded render submit may
+  // still be processing draws. On Wayland the swap handoff is async, and an
+  // unfenced glReadPixels can return tiled/sheared/partial surfaces.
+  GLCALL(glFinish())
+  GLCALL(glBindFramebuffer(GL_READ_FRAMEBUFFER, 0))
+  GLCALL(glBindFramebuffer(GL_FRAMEBUFFER, 0))
   GLCALL(glPixelStorei(GL_PACK_ALIGNMENT, 1))
   GLCALL(glPixelStorei(GL_PACK_ROW_LENGTH, 0))
   GLCALL(glPixelStorei(GL_PACK_SKIP_PIXELS, 0))
   GLCALL(glPixelStorei(GL_PACK_SKIP_ROWS, 0))
-  GLCALL(glReadBuffer(GL_BACK))
+  // Copy the framebuffer to a texture first (avoids glReadPixels races),
+  // then read from the texture.
+  GLCALL(glBindTexture(GL_TEXTURE_2D, self->handle))
+  GLCALL(glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, size.x, size.y))
+  GLCALL(glBindTexture(GL_TEXTURE_2D, 0))
   GLCALL(glFinish())
-  GLCALL(glReadPixels(0, 0, size.x, size.y, GL_RGBA, GL_UNSIGNED_BYTE, buf))
+  GLCALL(glBindTexture(GL_TEXTURE_2D, self->handle))
+  GLCALL(glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf))
+  GLCALL(glBindTexture(GL_TEXTURE_2D, 0))
   for (int y = 0; y < size.y / 2; ++y)
   for (int x = 0; x < size.x; ++x)
     Swap(buf[size.x * y + x], buf[size.x * (size.y - y - 1) + x]);
