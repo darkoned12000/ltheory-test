@@ -20,8 +20,11 @@ uniform sampler2D texShadow2;
 uniform mat4       sShadowProj;
 uniform mat4       sShadowProj1;
 uniform mat4       sShadowProj2;
+uniform vec3       cameraForward;
 uniform float      sCascadeSplit0;
 uniform float      sCascadeSplit1;
+uniform float      sCascadeBlend0;
+uniform float      sCascadeBlend1;
 uniform float      sShadowBias;
 uniform float      sShadowScale;
 uniform float      sShadowRadius;
@@ -89,12 +92,12 @@ void main () {
   }
 
   if (shadowEnable > 0.5) {
-    float viewDist = length(pos - eye);
+    /* CSM splits are camera view-space depth, not radial distance. */
+    float viewDist = max(0.0, dot(pos - eye, cameraForward));
     float bias = sShadowBias + sShadowScale * (1.0 - max(NdL, 0.0));
     // Cascade selection with smooth blending at boundaries.
-    // Transition band: ~10% of the split distance.
-    const float blend0 = 200.0;  // 0<->1 transition
-    const float blend1 = 500.0;  // 1<->2 transition
+    float blend0 = sCascadeBlend0;
+    float blend1 = sCascadeBlend1;
 
     float shadow0 = 1.0, shadow1 = 1.0, shadow2 = 1.0;
     bool has0 = false, has1 = false, has2 = false;

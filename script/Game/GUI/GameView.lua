@@ -145,7 +145,7 @@ local function shadowSize (sx, sy)
   return math.max(256, math.floor(sx * scale)), math.max(256, math.floor(sy * scale))
 end
 
-function GameView:buildShadowFrustum (lightPos, eye, halfSize)
+function GameView:buildShadowFrustum (lightPos, eye, halfSize, depthExtent)
   -- Camera at lightPos looking toward eye; +Z is its back axis. The old code
   -- accidentally used a constant +Y axis for every shadow map.
   local z = (lightPos - eye):normalize()
@@ -157,7 +157,8 @@ function GameView:buildShadowFrustum (lightPos, eye, halfSize)
   local inverseBasis = basis:inverse()
   local translation = Matrix.Translation(-lightPos.x, -lightPos.y, -lightPos.z)
   local view = inverseBasis:product(translation)
-  local proj = Matrix.Ortho(-halfSize, halfSize, -halfSize, halfSize, 0.1, 2 * halfSize)
+  local depth = depthExtent or halfSize
+  local proj = Matrix.Ortho(-halfSize, halfSize, -halfSize, halfSize, 0.1, 2 * depth)
   local viewProj = proj:product(view)
   basis:free()
   inverseBasis:free()
@@ -250,6 +251,51 @@ local function sunShadowSize (sx, sy, target)
   return math.max(256, math.floor(sx * scale)), math.max(256, math.floor(sy * scale))
 end
 
+-- Fit one sun-shadow orthographic box to a slice of the CAMERA FRUSTUM.
+-- CSM split selection is view-depth based, so each map covers that same slice.
+-- Fit a light-space square to the slice's XY bounds (rather than a camera-
+-- centered sphere), then snap its center to shadow texels to prevent shimmer.
+local function fitSunCascade (camera, sunDir, nearDepth, farDepth, mapSize)
+  local corners = {}
+  for _, zNdc in ipairs({ -1, 1 }) do
+    for _, yNdc in ipairs({ -1, 1 }) do
+      for _, xNdc in ipairs({ -1, 1 }) do
+        local p4 = camera.mProjInv:mulVec(Vec4f(xNdc, yNdc, -1, 1))
+        local ray = p4:divs(p4.w):toVec3f()
+        for _, depth in ipairs({ nearDepth, farDepth }) do
+          local pView = ray:muls(depth / math.max(1e-5, -ray.z))
+          local pWorld = camera.mViewInv:mulPoint(pView)
+          corners[#corners + 1] = pWorld
+        end
+      end
+    end
+  end
+
+  local z = sunDir:normalize()
+  local ref = (math.abs(z.y) < 0.999) and Vec3f(0, 1, 0) or Vec3f(1, 0, 0)
+  local right = ref:cross(z):normalize()
+  local up = z:cross(right):normalize()
+
+  local x0, x1 = math.huge, -math.huge
+  local y0, y1 = math.huge, -math.huge
+  local z0, z1 = math.huge, -math.huge
+  for _, p in ipairs(corners) do
+    local x, y, d = p:dot(right), p:dot(up), p:dot(z)
+    x0, x1 = math.min(x0, x), math.max(x1, x)
+    y0, y1 = math.min(y0, y), math.max(y1, y)
+    z0, z1 = math.min(z0, d), math.max(z1, d)
+  end
+
+  local halfSize = math.max((x1 - x0) * 0.5, (y1 - y0) * 0.5, 64) * 1.02
+  local texel = (2.0 * halfSize) / math.max(1, mapSize)
+  local cx = Math.Round(((x0 + x1) * 0.5) / texel) * texel
+  local cy = Math.Round(((y0 + y1) * 0.5) / texel) * texel
+  local cz = (z0 + z1) * 0.5
+  local center = right:muls(cx) + up:muls(cy) + z:muls(cz)
+  local depthExtent = math.max((z1 - z0) * 0.5, farDepth)
+  return center, halfSize, depthExtent
+end
+
 function GameView:renderSunShadow (world)
   local sizes = { '256', '512', '1024', '2048' }
   local target = tonumber(sizes[Settings.get('render.sun.shadowSize') or 4]) or 2048
@@ -272,23 +318,39 @@ function GameView:renderSunShadow (world)
   local range = Settings.get('render.sun.shadowRange') or 8000
   local sd = Vec3f(world.starDir.x, world.starDir.y, world.starDir.z):normalize()
   self.sunShadowCenter = self.camera.pos
-  -- 3 cascades: near (0-1000), mid (1000-3000), far (3000-range).
-  local ranges = { 1000, 3000, range }
+  -- Three practical splits. These are view-space depths, not radial camera
+  -- distances: every cascade is fitted to its corresponding frustum slice.
+  local split0 = math.min(1000, range / 3)
+  local split1 = math.min(3000, range * 2 / 3)
+  local splits = { 0.1, split0, split1, range }
+  self.sunCascadeSplit0 = split0
+  self.sunCascadeSplit1 = split1
+  self.sunCascadeBlend0 = math.min(split0 * 0.1, (split1 - split0) * 0.25)
+  self.sunCascadeBlend1 = math.min((split1 - split0) * 0.1, (range - split1) * 0.25)
   for ci = 1, 3 do
-    local r = ranges[ci]
-    local shadowEye = self.sunShadowCenter + sd:muls(r)
-    local proj = self:buildShadowFrustum(shadowEye, self.sunShadowCenter, r)
+    local mapSize = self.sunShadowTex0:getSize().x
+    local cascadeCenter, halfSize, depthExtent = fitSunCascade(
+      self.camera, sd, splits[ci], splits[ci + 1], mapSize)
+    -- Extend toward the sun far enough to include off-screen occluders in
+    -- front of this receiver slice. The slice fit controls XY resolution;
+    -- depthExtent controls only the light-space near/far interval.
+    depthExtent = math.max(depthExtent, range)
+    local shadowEye = cascadeCenter + sd:muls(depthExtent)
+    local proj = self:buildShadowFrustum(shadowEye, cascadeCenter, halfSize, depthExtent)
     local idx = ci - 1
     if self['sunShadowProj' .. idx] then self['sunShadowProj' .. idx]:free() end
     self['sunShadowProj' .. idx] = proj
+    self['sunShadowCenter' .. idx] = cascadeCenter
+    self['sunShadowRadius' .. idx] = math.sqrt(halfSize * halfSize + depthExtent * depthExtent) * 2
   end
 
   -- Render each cascade.
   for ci = 1, 3 do
-    local r = ranges[ci]
     local idx = ci - 1
     local tex = self['sunShadowTex' .. idx]
     local proj = self['sunShadowProj' .. idx]
+    local center = self['sunShadowCenter' .. idx]
+    local radius = self['sunShadowRadius' .. idx]
     local shadowSize = tex:getSize()
     RenderTarget.Push(shadowSize.x, shadowSize.y)
     RenderTarget.BindTex2D(tex)
@@ -297,7 +359,7 @@ function GameView:renderSunShadow (world)
     local identity = Matrix.Identity()
     ShaderVar.PushMatrix('mProj', identity)
     identity:free()
-    ShaderVar.PushFloat3('eye', self.sunShadowCenter.x, self.sunShadowCenter.y, self.sunShadowCenter.z)
+    ShaderVar.PushFloat3('eye', center.x, center.y, center.z)
     BlendMode.PushDisabled()
     CullFace.Push(CullFace.Back)
     RenderState.PushDepthTest(true)
@@ -305,8 +367,8 @@ function GameView:renderSunShadow (world)
 
     Draw.ClearDepth(1)
 
-    world:render(Event.Render(BlendMode.Disabled, self.sunShadowCenter, 'sunshadow',
-                              self.sunShadowCenter, math.sqrt(3) * r))
+    world:render(Event.Render(BlendMode.Disabled, center, 'sunshadow',
+                              center, math.sqrt(3) * radius))
 
     RenderState.PopDepthWritable()
     RenderState.PopDepthTest()
@@ -672,17 +734,21 @@ function GameView:draw (focus, active)
           Shader.SetTex2D('texNormalMat', self.renderer.buffer1)
           Shader.SetFloat('shadowEnable', shadowEnabled and 1 or 0)
           if shadowEnabled then
+            local cameraForward = self.camera.mViewInv:mulDir(Vec3f(0, 0, -1)):normalize()
             Shader.SetTex2D('texShadow', self.sunShadowTex0)
             Shader.SetTex2D('texShadow1', self.sunShadowTex1)
             Shader.SetTex2D('texShadow2', self.sunShadowTex2)
             Shader.SetMatrix ('sShadowProj', self.sunShadowProj0)
             Shader.SetMatrix ('sShadowProj1', self.sunShadowProj1)
             Shader.SetMatrix ('sShadowProj2', self.sunShadowProj2)
+            Shader.SetFloat3 ('cameraForward', cameraForward.x, cameraForward.y, cameraForward.z)
             Shader.SetFloat  ('sShadowBias',   Settings.get('render.shadow.bias') or 0.001)
             Shader.SetFloat  ('sShadowScale',  Settings.get('render.shadow.scale') or 0.0005)
             Shader.SetFloat  ('sShadowRadius', Settings.get('render.shadow.radius') or 2.0)
-            Shader.SetFloat  ('sCascadeSplit0', 1000.0)
-            Shader.SetFloat  ('sCascadeSplit1', 3000.0)
+            Shader.SetFloat  ('sCascadeSplit0', self.sunCascadeSplit0)
+            Shader.SetFloat  ('sCascadeSplit1', self.sunCascadeSplit1)
+            Shader.SetFloat  ('sCascadeBlend0', self.sunCascadeBlend0)
+            Shader.SetFloat  ('sCascadeBlend1', self.sunCascadeBlend1)
           else
             -- Bind a valid texture even though the branch skips sampling.
             Shader.SetTex2D('texShadow', self.renderer.zBufferL)
