@@ -8,13 +8,14 @@
  * bright anisotropic shafts bloom around the star while the base Nebula
  * layer keeps its own tuning. Outputs:
  *   rgb = shaft radiance   (sunColor * P(godA) * albedo, integrated *T)
- *   a   = transmittance T along the shaft ray (informational).
+ *   a   = log2(linear eye depth), consumed by godblur's bilateral gather.
  *
  * NOTE on the alpha: the same T is ALREADY folded into `shaft.rgb` by the
  * `tr *= stepTr` accumulation before each sample, so the composite must NOT
  * multiply by it again (that would double-occlude). It is written for parity
- * with volume.glsl's volView layout and reserved as the host of a future
- * 'transmittance' debug view; it is not consumed by godblur's composite.
+ * This depth key is required by godblur: without it the quarter-res shaft
+ * image is radially gathered across foreground silhouettes, painting a
+ * ghostly "shadow" of ships/rocks over the scene.
  *
  * Sky gate and depth behaviour mirror volume.glsl so geometry occludes
  * shafts naturally (tCap stops at the first surface).
@@ -40,7 +41,8 @@ void main () {
 
   float dist = textureLod(texDepth, uv, 0.0).r;
   if (dist < 1e-4) {
-    fragData0 = vec4(0.0, 0.0, 0.0, 1.0);
+    /* Alpha carries log2(eyeDepth) for godblur's depth-aware radial gather. */
+    fragData0 = vec4(0.0, 0.0, 0.0, log2(1.0e6));
     return;
   }
 
@@ -68,5 +70,7 @@ void main () {
     }
   }
 
-  fragData0 = vec4(max(shaft, vec3(0.0)), clamp(tr, 0.0, 1.0));
+  /* Alpha is unused by the composite; store log-depth so the full-res radial
+   * blur can reject taps from behind foreground geometry. */
+  fragData0 = vec4(max(shaft, vec3(0.0)), log2(max(dist, 1.0)));
 }

@@ -13,8 +13,9 @@
  *   mode 1 debug       shaft only (×8 so it shows pre-tonemap)
  */
 
-uniform sampler2D texVol;    /* godView, shaft buffer (quarter-res)   */
-uniform sampler2D texScene;  /* lit scene at this point (full-res)    */
+uniform sampler2D texVol;    /* godView, shaft + log-depth (quarter-res) */
+uniform sampler2D texScene;  /* lit scene at this point (full-res)       */
+uniform sampler2D texDepth;  /* full-res linear eye depth                */
 uniform sampler2D texNoise;  /* 64x64 blue-noise LUT (crawl dither)   */
 uniform vec2      sunUV;     /* sun screen uv, normalized [0..1]      */
 uniform float     godStrength;
@@ -29,16 +30,29 @@ void main () {
   const int N = 8;                          /* weights decay 2^-2i: taps 7+ < 0.4% */
   vec3 acc = vec3(0.0);
   float wsum = 0.0;
+  float centerDepth = textureLod(texDepth, uv, 0.0).r;
+  float centerLogDepth = log2(max(centerDepth, 1.0));
   float t0 = texture(texNoise, uv).x * (1.0 / float(N));  /* sub-tap dither */
   for (int i = 0; i < N; ++i) {
     float t = t0 + float(i) / float(N);     /* 0..~1, crawl toward the sun */
     vec2 sp = uv + dir * d * t;             /* crawl toward the sun */
-    vec3 v = texture(texVol, sp).rgb;
-    float w = exp2(-2.0 * float(i));        /* near-sun taps dominate */
+    vec4 volume = texture(texVol, sp);
+    vec3 v = volume.rgb;
+    float tapLogDepth = volume.a;
+    /* Bilateral depth gate: radial blur must not drag a shaft from behind a
+     * foreground ship/asteroid across its silhouette. The quarter-res shaft
+     * pass stores log2(eyeDepth) in alpha; compare in log space so the gate
+     * behaves consistently from nearby geometry out to the far sky. */
+    float depthDelta = abs(tapLogDepth - centerLogDepth);
+    float depthWeight = exp(-1.5 * depthDelta * depthDelta);
+    float w = exp2(-2.0 * float(i)) * depthWeight; /* near-sun taps dominate */
     acc += v * w;
     wsum += w;
   }
-  acc /= max(1e-6, wsum);
+  /* If every radial tap crosses a depth edge, keep the local shaft sample
+   * rather than importing bright background shafts over an opaque object. */
+  if (wsum > 1e-6) acc /= wsum;
+  else acc = texture(texVol, uv).rgb;
 
   if (godMode == 1) {
     fragData0 = vec4(max(acc * 8.0, vec3(0.0)), 1.0);

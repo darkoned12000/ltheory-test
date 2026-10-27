@@ -53,6 +53,12 @@ across each split boundary.
 - The nebula volume shader does **not** sample these maps; this CSM only shadows
   opaque direct sunlight. Apparent dark nebula structures are the volume's own
   density/lighting, not ship/asteroid shadow projections.
+- God Rays are a separate effect: their quarter-resolution shaft image is
+  radially gathered toward the sun. It previously gathered across depth edges,
+  leaking shafts from behind ships/asteroids as ghostly shadow-like silhouettes.
+  The shaft image now stores log eye-depth and `godblur` uses a bilateral depth
+  gate to reject cross-silhouette taps (see `filter/godrays.glsl` and
+  `filter/godblur.glsl`).
 
 ### Cost and remaining validation
 

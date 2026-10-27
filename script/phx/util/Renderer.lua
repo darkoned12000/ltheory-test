@@ -1330,6 +1330,7 @@ local volCount = med.anchors and #med.anchors or 0
       Shader.SetInt('godMode', godMode)
       Shader.SetTex2D('texVol',   self.godView)
       Shader.SetTex2D('texScene', self.buffer0)
+      Shader.SetTex2D('texDepth', self.zBufferL)
       if med.noise then Shader.SetTex2D('texNoise', med.noise) end
       Shader.SetFloat2('sunUV', med.sunUv.x, med.sunUv.y)
       Shader.SetFloat('godStrength', strength * (med.sunFade or 1.0))
