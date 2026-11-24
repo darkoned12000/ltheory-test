@@ -456,6 +456,13 @@ function System:spawnAI (shipCount)
   -- was never added to the system -- its Think never ran, and every ship
   -- it owned sat idle forever (the whole AI economy was a no-op).
   self:addChild(player)
+  -- THE AI ECONOMY: Think gates on `root:hasEconomy()` -- without an economy
+  -- on the brain the whole AI economy is a no-op (the gate was the reason
+  -- the AI never started). The economy scans the SYSTEM's registry
+  -- (markets, traders, yields -- what NPC miners trade against); the brain
+  -- is the brain, so point the economy at the system.
+  player:addEconomy()
+  player.economy.parent = self
   for i = 1, shipCount do
     local ship = self:spawnShip()
     ship:setOwner(player) -- routes through addAsset: the capital's ship book
