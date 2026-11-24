@@ -1,6 +1,11 @@
-3|~bird
-2|~snake
-1|~shipprefix| |~bird
-1|~shipprefix| |~snake
-2|~color| |~snake
-2|~color| |~bird
+-- NPC cap ship names. Reader: script/Game/Grammar.lua (`weight|choice1|choice2`
+-- -- each line a weighted pick; `~ref` recursively picks from another table).
+-- Legacy: nothing in the game loaded these tables before the NPC-name work.
+-- shiptype = bare ship types (bird/snake/color combos); prefix/grade are
+-- added by NameGen.npcShipName.
+10|~bird
+8|~snake
+4|~color ~snake
+4|~color ~bird
+2|~adjective ~snake
+2|~adjective ~bird

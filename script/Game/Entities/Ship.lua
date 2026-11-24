@@ -24,7 +24,6 @@ local Ship = subclass(Entity, function (self, proto)
   end
 
   self:setDrag(0.75, 4.0)
-  self:setScale(proto.scale)
 
   local mass = 50.0 * (self:getRadius() ^ 3.0)
   self:setMass(mass)
@@ -39,6 +38,56 @@ end)
 -- do -- see ThrustController's thrust constants, which are what set it.
 function Ship:getTopSpeed ()
   return 500
+end
+
+-- Targeting for NPC caps (docs/npcwork.md): the ship queries the system for
+-- its caps (system:npcTargets) and the HUD calls these from ShipBindings
+-- (TargetNearestNpc, CycleNpcTarget, TargetNearestThreat).
+
+function Ship:getNpcs ()
+  local sys = self:getParent()
+  if not sys or not sys.npcTargets then return {} end
+  return sys:npcTargets(self)
+end
+
+function Ship:targetNearestNpc ()
+  local nps = self:getNpcs()
+  if #nps == 0 then return end
+  local p = self:getPos()
+  local best, bd = nil, math.huge
+  for _, e in ipairs(nps) do
+    local d = (e:getPos() - p):length()
+    if d < bd then bd, best = d, e end
+  end
+  if best then self:setTarget(best) end
+end
+
+function Ship:cycleNpcTarget ()
+  local nps = self:getNpcs()
+  if #nps == 0 then return end
+  local cur = self:getTarget()
+  local idx = -1
+  for i, e in ipairs(nps) do
+    if e == cur then idx = i; break end
+  end
+  if idx <= 0 then self:targetNearestNpc() return end
+  self:setTarget(nps[(idx % #nps) + 1])
+end
+
+-- Nearest cap with a hostile (negative) disposition toward the player, else
+-- the nearest cap (all caps are neutral today -- see Dispositions).
+function Ship:targetNearestThreat ()
+  local nps = self:getNpcs()
+  if #nps == 0 then return end
+  local p = self:getPos()
+  local best, bd = nil, math.huge
+  for _, e in ipairs(nps) do
+    if e:getOwnerDisposition(self) < 0.0 then
+      local d = (e:getPos() - p):length()
+      if d < bd then bd, best = d, e end
+    end
+  end
+  if not best then self:targetNearestNpc() end
 end
 
 return Ship

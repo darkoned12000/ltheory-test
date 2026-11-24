@@ -10,7 +10,10 @@ end
 
 function Entity:addProjectile (source)
   assert(self.projectiles)
-  local e = Pulse:new()
+  -- Pulse() runs the type initializer (allocates pulse.matrix and registers
+  -- destruction); Pulse:new() only allocates from the pool and leaves matrix
+  -- null, which crashes the first render in glUniformMatrix4fv.
+  local e = Pulse()
   e.source = IncRef(source)
   insert(self.projectiles, e)
   return e

@@ -1428,6 +1428,14 @@ function NodeGraph:onInput (state)
       self.focus = dn.id
       self.follow = dn.id -- ease the view onto the selection (§13)
       if self.inspector then self.inspector:show(dn) end
+      -- Open the NPC info panel (top-right, GameView.infoPanel) for NPC caps
+      -- clicked on the map (docs/npcwork.md) -- the map's NodeGraphInspector
+      -- already shows the raw entity data; the info panel gives the NPC view.
+      local gv = self.gameView
+      if gv and gv.infoPanel and dn.entity and dn.entity:getOwner() then
+        gv.infoPanel:setSubject(dn.entity)
+        gv.infoPanel:enable()
+      end
       -- CLICK = center the map on this node and zoom toward it. Centered
       -- anchor = no drift possible: scroll re-anchors at dead center every
       -- tick, so "works a little then moves" cannot happen. Also fixes the

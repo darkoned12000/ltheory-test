@@ -49,6 +49,14 @@ local self = {
     WIP.Control.GamepadButton(Button.Gamepad.B))
     :delta(),
 
+  -- NPC targeting (docs/npcwork.md): nearest NPC, cycle through, nearest threat.
+  TargetNearestNpc = WIP.Control.Key(Button.Keyboard.J)
+    :delta(),
+  CycleNpcTarget   = WIP.Control.Key(Button.Keyboard.K)
+    :delta(),
+  TargetNearestThreat = WIP.Control.Key(Button.Keyboard.U)
+    :delta(),
+
   Dock = WIP.Control.Or(
     WIP.Control.Key(Button.Keyboard.F),
     WIP.Control.GamepadButton(Button.Gamepad.Y))

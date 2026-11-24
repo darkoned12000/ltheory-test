@@ -59,10 +59,21 @@ function onDef_Math (t, mt)
     local a = dv:lengthSquared() - speed * speed
     local b = 2.0 * dv:dot(dp)
     local c = dp:lengthSquared()
+    if a == 0 then
+      -- Closing speed == projectile speed: the quadratic degenerates to a
+      -- linear equation. b == 0 with no displacement is the degenerate
+      -- overlap case (no finite solution).
+      if b == 0 then return nil end
+      return -c / b, pDst
+    end
     local d = b * b - 4.0 * a * c
     if d <= 0 then return nil end
     d = sqrt(d)
-    local t = max((-b - d) / (2.0 * a), (-b + d) / 2.0 * a)
+    -- NOTE: both roots use (2.0 * a) -- the original second root divided by
+    -- 2.0 and THEN by a, which is not the same quadratic (precedence).
+    local t1 = (-b - d) / (2.0 * a)
+    local t2 = (-b + d) / (2.0 * a)
+    local t = max(t1, t2)
     return t, pDst + dv:scale(t)
   end
 

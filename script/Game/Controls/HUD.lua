@@ -39,8 +39,21 @@ end
   Config.ui.showTrackers, but the `self.target` selection always runs so
   locking works even with brackets hidden.
 ]]
+-- Bluish clickable boxes for NPC caps near the player (docs/npcwork.md).
+-- The boxes are rebuilt every frame in drawTargets and consumed by the click
+-- handler in onInput: a click inside a box opens the NPC info panel
+-- (GameView.infoPanel) and sets its subject to the cap.
+function HUD:resetNpcBoxes ()
+  self.npcBoxes = {}
+end
+
+function HUD:addNpcBox (e, bx, by, bw, bh)
+  self.npcBoxes[#self.npcBoxes + 1] = { e = e, x = bx, y = by, w = bw, h = bh }
+end
+
 function HUD:drawTargets (a)
   local camera = self.gameView.camera
+  self:resetNpcBoxes()
 
   local cTarget = Color(1.0, 0.5, 0.1, 1.0 * a)
   local cLock = Color(1.0, 0.5, 0.1, 1.0 * a)
@@ -75,7 +88,7 @@ function HUD:drawTargets (a)
 
   for i = 1, #self.targets.tracked do
     local target = self.targets.tracked[i]
-    if target ~= playerShip and target:isAlive() then
+    if target ~= playerShip and target:isAlive() and target.body then
       local disp = target:getOwnerDisposition(player)
       local culled = false
       local hasScratchPos = false
@@ -121,6 +134,21 @@ function HUD:drawTargets (a)
 
           local ss = camera:ndcToScreen(ndc)
           local dist = ss:distance(center)
+          -- Bluish clickable boxes for NPC caps near the player (docs/npcwork.md).
+          -- The click handler is HUD:onInput; setSubject opens the info panel.
+          -- Passive boxes are range-gated to visual range; the player's own
+          -- target always shows them.
+          if target:getOwner() and (playerTarget == target or dist < 6000) then
+            local bx, by = ss.x - 6, ss.y - 8
+            local bw, bh = 20, 14
+            UI.DrawEx.Rect(bx, by, bw, bh, Color(0, 0.5, 1.0, 0.85))
+            self:addNpcBox(target, bx, by, bw, bh)
+          end
+          -- NPC cap names: draw near the bracket, above the box.
+          if target.name and (playerTarget == target or dist < 6000) then
+            UI.DrawEx.TextAdditive('NovaMono', target:getName(), 14,
+              ss.x + 8, ss.y - 8, 0, 0, 1, 1, 1, a, 0.0, 0.0)
+          end
           if disp < 0.5 and dist < minDist then
             closest = target
             minDist = dist
@@ -158,6 +186,13 @@ end
 function HUD:drawLock (a)
   local playerShip = self.player:getControlling()
   local target = self.player:getControlling():getTarget()
+  -- Dead or swept target: drop the stale lock. (A cap killed by
+  -- System:sweepDestroyed() gets its body invalidated on the same frame the
+  -- next draw runs -- see docs/npcwork.md.)
+  if target and (not target:isAlive() or not target.body) then
+    playerShip:setTarget(nil)
+    target = nil
+  end
   if not target or target:isDestroyed() then
     -- Target died (or was swept from the world): drop the lock.
     if target then playerShip:setTarget(nil) end
@@ -183,6 +218,11 @@ function HUD:drawLock (a)
       UI.DrawEx.TextAdditive('NovaMono',
         string.format('%d / %d', target:getHealth(), target.healthMax),
         14, bx, by - 16, bw, 16, 1, 1, 1, a, 0.0, 0.0)
+      -- The target's name above the bar (NPC caps are named -- docs/npcwork.md).
+      if target.name then
+        UI.DrawEx.TextAdditive('NovaMono', target:getName(), 14,
+          bx, by - 70, bw, 14, 1, 1, 1, a, 0.0, 0.0)
+      end
     end
   end
 
@@ -410,9 +450,37 @@ end
 function HUD:controlTargetLock (e)
   if ShipBindings.LockTarget:get() > 0.5 then e:setTarget(self.target) end
   if ShipBindings.ClearTarget:get() > 0.5 then e:setTarget(nil) end
+  -- NPC targeting keys (docs/npcwork.md).
+  if ShipBindings.TargetNearestNpc:get() > 0.5 then e:targetNearestNpc() end
+  if ShipBindings.CycleNpcTarget:get() > 0.5 then e:cycleNpcTarget() end
+  if ShipBindings.TargetNearestThreat:get() > 0.5 then e:targetNearestThreat() end
+
+  -- Open the NPC info panel on the player's selected target when it is a
+  -- cap (has an owner -- the AI brain -- see docs/npcwork.md).
+  local target = e:getTarget()
+  if target and target:getOwner() then
+    local panel = self.gameView.infoPanel
+    if panel then panel:setSubject(target); panel:enable() end
+  end
 end
 
 function HUD:onInput (state)
+  -- Click handling for the bluish NPC-cap boxes (docs/npcwork.md): open the
+  -- info panel for the clicked cap.
+  if Input.GetDown(Button.Mouse.Left) then
+    local mp = Input.GetMousePosition()
+    for _, b in ipairs(self.npcBoxes or {}) do
+      if mp.x >= b.x and mp.x <= b.x + b.w and mp.y >= b.y and mp.y <= b.y + b.h then
+        local panel = self.gameView.infoPanel
+        if panel then
+          panel:setSubject(b.e)
+          panel:enable()
+        end
+        break
+      end
+    end
+  end
+
   local camera = self.gameView.camera
   camera:push()
 

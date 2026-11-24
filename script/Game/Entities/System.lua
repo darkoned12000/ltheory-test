@@ -456,9 +456,17 @@ function System:spawnAI (shipCount)
   -- was never added to the system -- its Think never ran, and every ship
   -- it owned sat idle forever (the whole AI economy was a no-op).
   self:addChild(player)
+  -- THE AI ECONOMY: Think gates on `root:hasEconomy()` -- without an economy
+  -- on the brain the whole AI economy is a no-op (the gate was the reason
+  -- the AI never started). The economy scans the SYSTEM's registry
+  -- (markets, traders, yields -- what NPC miners trade against); the brain
+  -- is the brain, so point the economy at the system.
+  player:addEconomy()
+  player.economy.parent = self
   for i = 1, shipCount do
-    local ship = self:spawnShip()
+    local ship = self:spawnShip('capital')
     ship:setOwner(player) -- routes through addAsset: the capital's ship book
+    ship:setName(NameGen.npcShipName(self.rng)) -- NPC cap names (docs/npcwork.md)
   end
   player:addItem(Item.Credit, kStartCredits)
   player:pushAction(Actions.Think())
@@ -480,6 +488,23 @@ end
       a:setPos(someVec3f)
       self.system:addChild(a)
 ]]
+-- The NPC caps of this system: ships that have an owner (the brain -- see
+-- spawnAI). Used by the targeting keys (Ship:targetNearestNpc etc.) and the
+-- NPC info panel (GameView.infoPanel). docs/npcwork.md.
+function System:npcTargets (exclude)
+  local out = {}
+  for _, e in ipairs(self.children or {}) do
+    local owner = e:getOwner()
+    -- Filter dead/bodyless entities and the querying ship itself. The human
+    -- player's ship also has an owner, so without `exclude` J selects it at
+    -- distance zero and K/U cycle back onto it.
+    if e ~= exclude and owner and e:isAlive() and e.body and not e.deleted then
+      insert(out, e)
+    end
+  end
+  return out
+end
+
 function System:spawnAsteroidField (count, oreCount)
   local rng = self.rng
   local zone = Entities.Zone(format('%s Field', genName(rng)))
@@ -671,11 +696,17 @@ function System:spawnMoon (planet, index)
   return moon
 end
 
-function System:spawnShip ()
-  if not self.shipType then
-    self.shipType = ShipType(self.rng:get31(), Gen.Ship.ShipFighter, 4)
+function System:spawnShip (kind)
+  kind = kind or 'fighter'
+  local cacheKey = kind .. 'Type'
+  if not self[cacheKey] then
+    if kind == 'capital' then
+      self[cacheKey] = ShipType(self.rng:get31(), Gen.Ship.ShipCapital, 64)
+    else
+      self[cacheKey] = ShipType(self.rng:get31(), Gen.Ship.ShipFighter, 4)
+    end
   end
-  local ship = self.shipType:instantiate()
+  local ship = self[cacheKey]:instantiate()
   ship:setInventoryCapacity(kInventory)
   ship:setPos(self.rng:getDir3():scale(kSystemScale * (1.0 + self.rng:getExp())))
   self:addChild(ship)

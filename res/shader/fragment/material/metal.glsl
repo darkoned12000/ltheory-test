@@ -73,9 +73,16 @@ void main() {
     c = vec3(0.0);
   }
 
+  // Fresnel edge highlight: keeps dark-metal hulls visibly silhouetted
+  // against empty space when they face away from the star (see
+  // docs/npcwork.md).
+  vec3 rim = pow(1.0 - max(dot(N, -V), 0.0), 3.0) * diff * 0.15;
+
+  // All metals slightly brighter -- aimed at NPC caps, whose ships are small
+  // and dark-metal against the starfield (see docs/npcwork.md).
   FRAGMENT_CORRECT_DEPTH;
 
-  setAlbedo(c);
+  setAlbedo(c * 1.35 + rim);
   setAlpha(1.0);
   setDepth();
   setNormal(N);

@@ -142,6 +142,14 @@ end
 -- into a Depth32F texture using an ortho frustum centered on the light and
 -- aligned with the light->camera direction, then sample it in point.glsl with a
 -- PCF test. Cached per entity so the texture is built once per frame.
+local SHADOW_QUALITY_RADIUS = { [1]=0, [2]=1, [3]=2, [4]=4, [5]=nil } -- Off/Low/Med/High/Custom
+function GameView:shadowPcfRadius ()
+  local q = Settings.get('render.shadow.quality') or 3
+  local r = SHADOW_QUALITY_RADIUS[q]
+  if r == nil then return Settings.get('render.shadow.radius') or 2.0 end
+  return r
+end
+
 local function shadowSize (sx, sy)
   local scale = math.min(1024 / sx, 1024 / sy)
   return math.max(256, math.floor(sx * scale)), math.max(256, math.floor(sy * scale))
@@ -787,7 +795,7 @@ function GameView:draw (focus, active)
             Shader.SetFloat3 ('cameraForward', cameraForward.x, cameraForward.y, cameraForward.z)
             Shader.SetFloat  ('sShadowBias',   Settings.get('render.shadow.bias') or 0.001)
             Shader.SetFloat  ('sShadowScale',  Settings.get('render.shadow.scale') or 0.0005)
-            Shader.SetFloat  ('sShadowRadius', Settings.get('render.shadow.radius') or 2.0)
+            Shader.SetFloat  ('sShadowRadius', self:shadowPcfRadius())
             Shader.SetFloat  ('sCascadeSplit0', self.sunCascadeSplit0)
             Shader.SetFloat  ('sCascadeSplit1', self.sunCascadeSplit1)
             Shader.SetFloat  ('sCascadeBlend0', self.sunCascadeBlend0)
@@ -828,7 +836,7 @@ function GameView:draw (focus, active)
             Shader.SetMatrix ('sShadowProj', sproj)
             Shader.SetFloat  ('sShadowBias',   Settings.get('render.shadow.bias') or 0.001)
             Shader.SetFloat  ('sShadowScale',  Settings.get('render.shadow.scale') or 0.0005)
-            Shader.SetFloat  ('sShadowRadius', Settings.get('render.shadow.radius') or 2.0)
+            Shader.SetFloat  ('sShadowRadius', self:shadowPcfRadius())
             Shader.SetFloat  ('shadowEnable', 1)
           else
             -- Keep a valid 2D texture bound; shadowEnable=0 makes the shader skip it.
@@ -1116,6 +1124,25 @@ function GameView:draw (focus, active)
         Settings.get('postfx.sharpen.radius') or 2,
         (Settings.get('postfx.sharpen.radius') or 2) * 0.5,
         Settings.get('postfx.sharpen.strength') or 1)
+    end
+    if Settings.get('postfx.cas.enable') then
+      self.renderer:cas(Settings.get('postfx.cas.strength') or 1)
+    end
+    if Settings.get('postfx.anamorphic.enable') then
+      self.renderer:anamorphic(
+        Settings.get('postfx.anamorphic.strength') or 1,
+        Settings.get('postfx.anamorphic.threshold') or 1,
+        Settings.get('postfx.anamorphic.radius') or 32)
+    end
+    if Settings.get('postfx.motionblur.enable') then
+      local speed = self.eyeVel and self.eyeVel:length() or 0
+      local s = math.min(1, speed / 1000) * (Settings.get('postfx.motionblur.strength') or 1)
+      if s > 0.01 then
+        self.renderer:applyFilter('radialblur', function ()
+          Shader.SetFloat('strength', s)
+          Shader.SetFloat('scanlines', 0)
+        end)
+      end
     end
     if Settings.get('postfx.fxaa.enable') then self.renderer:fxaa() end
     if Settings.get('postfx.grain.enable') then

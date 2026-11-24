@@ -57,9 +57,20 @@ local SETTINGS = {
   { kind = 'float', key = 'postfx.sharpen.strength',    label = ' - Strength',  default = 1, min = 0, max = 3, gpu = 'sharpenStrength' },
   { kind = 'float', key = 'postfx.sharpen.radius',      label = ' - Radius',    default = 2, min = 1, max = 6, gpu = 'sharpenRadius' },
 
-  { kind = 'bool',  key = 'postfx.radialblur.enable',    label = 'RadialBlur',   default = false, gpu = 'radialblur' },
-  { kind = 'float', key = 'postfx.radialblur.strength',  label = ' - Strength',  default = 1, min = 0, max = 1, gpu = 'radialblurStrength' },
-  { kind = 'float', key = 'postfx.radialblur.scanlines', label = ' - Scanlines', default = 1, min = 0, max = 1, gpu = 'radialblurScanlines' },
+  { kind = 'bool',  key = 'postfx.cas.enable',         label = 'CAS Sharpen', default = true, gpu = 'cas' },
+  { kind = 'float', key = 'postfx.cas.strength',       label = ' - Strength',  default = 0.25, min = 0, max = 2, gpu = 'casStrength' },
+
+  { kind = 'bool',  key = 'postfx.anamorphic.enable',  label = 'Anamorphic Flares', default = false, gpu = 'anamorphic' },
+  { kind = 'float', key = 'postfx.anamorphic.strength',label = ' - Strength',  default = 1, min = 0, max = 4, gpu = 'anamorphicStrength' },
+  { kind = 'float', key = 'postfx.anamorphic.threshold',label=' - Threshold',  default = 1, min = 0, max = 4, gpu = 'anamorphicThreshold' },
+  { kind = 'float', key = 'postfx.anamorphic.radius',  label = ' - Radius',    default = 32, min = 4, max = 128, gpu = 'anamorphicRadius' },
+
+  { kind = 'bool',  key = 'postfx.radialblur.enable',    label = 'RadialBlur',   default = true, gpu = 'radialblur' },
+  { kind = 'float', key = 'postfx.radialblur.strength',  label = ' - Strength',  default = 0.333, min = 0, max = 1, gpu = 'radialblurStrength' },
+  { kind = 'float', key = 'postfx.radialblur.scanlines', label = ' - Scanlines', default = 0.33, min = 0, max = 1, gpu = 'radialblurScanlines' },
+
+  { kind = 'bool',  key = 'postfx.motionblur.enable',   label = 'Motion Blur',  default = false, gpu = 'motionblur' },
+  { kind = 'float', key = 'postfx.motionblur.strength', label = ' - Strength',  default = 1, min = 0, max = 4, gpu = 'motionblurStrength' },
 
   { kind = 'bool',  key = 'postfx.tonemap.enable',    label = 'Tonemap',       default = true, gpu = 'tonemap' },
   { kind = 'enum',  key = 'postfx.tonemap.operator',  label = ' - Operator',   default = 2,
@@ -236,8 +247,9 @@ local SETTINGS = {
       if v == 'Aniso' or v == 'Anisotropic' then return 'Trilinear + Aniso' end
       return v
     end },
-  { kind = 'float', key = 'render.shadow.radius', label = 'Shadow Radius (PCF)', default = 2, min = 0, max = 8 },
-  { kind = 'float', key = 'render.shadow.bias',   label = 'Shadow Bias',         default = 0.001, min = -0.01, max = 0.1 },
+  { kind = 'enum',  key = 'render.shadow.quality', label = 'Shadow Quality', default = 3,
+    options = { 'Off', 'Low', 'Medium', 'High', 'Custom' }, gpu = nil },
+  { kind = 'float', key = 'render.shadow.radius', label = 'Shadow Radius (PCF)', default = 2, min = 0, max = 8 },  { kind = 'float', key = 'render.shadow.bias',   label = 'Shadow Bias',         default = 0.001, min = -0.01, max = 0.1 },
   { kind = 'float', key = 'render.shadow.scale',  label = 'Shadow Slope Bias',   default = 0.0005, min = 0, max = 0.01 },
 
   { kind = 'bool',  key = 'render.sun.enable',    label = 'Sun Light',       default = true, gpu = 'sunLight' },
@@ -454,6 +466,12 @@ function Renderer:applyFilter (frag, onSetVars)
   self.buffer1:pushLevel(self.level)
   shader:start()
     Shader.SetTex2D('src', self.buffer0)
+    -- `size` is a standard filter uniform (see include/filter.glsl, declared
+    -- by every filter in fragment/filter/*.glsl). Upload it here so new
+    -- filters don't have to remember it -- the other filters that upload
+    -- `size` themselves in onSetVars (grain/blur/sharpen/exposure) upload the
+    -- same value again; the last write wins, so they can be dropped.
+    Shader.SetFloat2('size', self.sx, self.sy)
     if onSetVars then onSetVars() end
     Draw.Color(1, 1, 1, 1)
     Draw.Rect(0, 0, self.sx, self.sy)
@@ -664,6 +682,22 @@ function Renderer:sharpen (radius, sigma, strength)
   end
 
   self:swap()
+end
+
+function Renderer:cas (strength)
+  Draw.Color(1, 1, 1, 1)
+  self:applyFilter('cas', function ()
+    Shader.SetFloat('strength', strength or 1)
+  end)
+end
+
+function Renderer:anamorphic (strength, threshold, radius)
+  Draw.Color(1, 1, 1, 1)
+  self:applyFilter('anamorphic', function ()
+    Shader.SetFloat('strength', strength or 1)
+    Shader.SetFloat('threshold', threshold or 1)
+    Shader.SetInt('radius', radius or 32)
+  end)
 end
 
 function Renderer:bloom (radius)

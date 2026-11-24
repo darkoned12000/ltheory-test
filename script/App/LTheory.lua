@@ -115,8 +115,9 @@ function LTheory:generate ()
   -- the belts into the stations' standing bids, riding the flows. The
   -- count is opt-in until play-tested (the asteroid field's rule):
   -- Config.game.aiShips, 0 = no AI.
+  local aiBrain
   if (Config.game.aiShips or 0) > 0 then
-    self.system:spawnAI(Config.game.aiShips)
+    aiBrain = self.system:spawnAI(Config.game.aiShips)
   end
 
   -- Spawn 60 procedural asteroids 3,000 units directly in front of player
@@ -174,6 +175,23 @@ function LTheory:generate ()
         center.x + nx * clear,
         center.y + ny * clear,
         center.z + nz * clear))
+    end
+  end
+
+  -- Place two AI capitals in the player's forward hemisphere after the
+  -- player's final planet stand-off is known. NPC generation still uses the
+  -- seeded capital prototype; this only prevents the demo from spawning every
+  -- hull 10-30 km away/off-screen where only fixed-size HUD names are visible.
+  if aiBrain and ship then
+    local assets = aiBrain:getAssets()
+    local forward = ship:getForward()
+    local right = ship:getRight()
+    local up = ship:getUp()
+    for i = 1, math.min(2, #assets) do
+      local offset = forward:scale(4500 + i * 1200)
+                 + right:scale(i == 1 and -1400 or 1800)
+                 + up:scale(i == 1 and 500 or -350)
+      assets[i]:setPos(ship:getPos() + offset)
     end
   end
 
@@ -284,6 +302,13 @@ function LTheory:onInit ()
   self.debugWindow = GUI.DebugWindow(self)
   self.gameView.debugWindow = self.debugWindow
   self.gameView:add(self.debugWindow:setStretch(0, 1), Config.debug.window)
+
+  -- The NPC info panel: small window, shown on demand (HUD box click or map
+  -- click) with the subject's name/health/job/disposition/distance.
+  -- docs/npcwork.md. Hidden by default so the game screen is unchanged.
+  self.infoPanel = GUI.NpcInfoPanel(self)
+  self.gameView.infoPanel = self.infoPanel
+  self.gameView:add(self.infoPanel:setStretch(0, 0), false)
 
   -- The screens: full-screen UI layers over the world (see
   -- script/Game/GUI/Screen.lua). The main menu is the first one, and it
@@ -608,6 +633,10 @@ function LTheory:onInit ()
     -- The sector state, shared with the HUD's panel.
     getSectorState = function () return self.sectorState end,
   })
+  -- Back-reference used by NodeGraph:onInput when a map node is clicked: it
+  -- sets the NPC info panel subject for caps (see docs/npcwork.md). Without
+  -- this the panel doesn't open on first-session map clicks.
+  self.nodeGraph.gameView = self.gameView
   -- PHX_GALAXY=1 opens the map on the GALAXY LEVEL (the sectors and the
   -- gates between them), for a headless capture.
   if os.getenv('PHX_GALAXY') then self.nodeGraph.galaxyLevel = true end
@@ -763,6 +792,9 @@ function LTheory:settleAfterGenerate ()
   Toast.Clear()
   if self.nodeGraph then
     self.nodeGraph.system = self.system
+  -- Back-references for map-click handling: NodeGraph:onInput sets the NPC
+  -- info panel's subject for NPC caps clicked on the map (docs/npcwork.md).
+  self.nodeGraph.gameView = self.gameView
     self.nodeGraph.focusEntity = self.player and self.player:getControlling()
   end
 

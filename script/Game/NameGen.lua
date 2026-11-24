@@ -35,6 +35,8 @@
 
 local NameGen = {}
 
+local Grammar = require('Game.Grammar')
+
 -- The syllable tables. VERBATIM from System.lua's genName -- see the header.
 --
 -- These are written out as plain weighted lists rather than using the
@@ -222,6 +224,30 @@ function NameGen.mine (seed, index)
   local word = genName(rng)
   local nouns = CATEGORY_NOUNS.mine
   return word .. ' ' .. nouns[rng:getInt(1, #nouns)] .. ' ' .. rng:getInt(1, 99)
+end
+
+-- ---------------------------------------------------------------------------
+-- NPC names (docs/npcwork.md)
+-- ---------------------------------------------------------------------------
+
+-- NPC cap ship name: a shiptype name with occasional prefix/grade weight
+-- (grammar tables: shiptype.txt + shipprefix.txt + grade.txt).
+function NameGen.npcShipName (rng)
+  local function capFirst (s) return (s:gsub('^%l', string.upper)) end
+  local name = capFirst(Grammar.generate(Grammar.get('shiptype'), rng))
+  if rng:getUniform() < 0.15 then
+    name = Grammar.generate(Grammar.get('shipprefix'), rng) .. ' ' .. name
+  end
+  if rng:getUniform() < 0.10 then
+    name = name .. ' ' .. Grammar.generate(Grammar.get('grade'), rng)
+  end
+  return name
+end
+
+-- NPC person name ("Euler", "Newton" -- person.txt), capitalized for display.
+function NameGen.npcPersonName (rng)
+  local n = Grammar.generate(Grammar.get('person'), rng)
+  return (n:gsub('^%l', string.upper))
 end
 
 return NameGen

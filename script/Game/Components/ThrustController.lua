@@ -79,24 +79,34 @@ function ThrustController:update (e, dt)
 
   local mult = 1.0 + (boostMult - 1.0) * boost
 
+  -- The constants above were tuned for the player's ~5e4-mass, ~10-unit
+  -- fighter. Capital hulls are much larger and their mass grows with volume;
+  -- using the same fixed force would leave them effectively immobile. Scale
+  -- force by mass and torque by mass*radius^2 so handling stays consistent in
+  -- ship-lengths across prototypes.
+  local mass = e:getMass()
+  local radius = e:getRadius()
+  local forceScale = mass / 5e4
+  local torqueScale = forceScale * (radius / 10.0) ^ 2.0
+
   if abs(self.forward) > 1e-6 then
     local maxThrust = (self.forward > 0) and thrustForwardMax or thrustBackwardMax
-    e:applyForce(e:getForward():scale(self.forward * maxThrust * mult))
+    e:applyForce(e:getForward():scale(self.forward * maxThrust * mult * forceScale))
   end
 
   if abs(self.right) > 1e-6 then
-    e:applyForce(e:getRight():scale(self.right * thrustRightMax))
+    e:applyForce(e:getRight():scale(self.right * thrustRightMax * forceScale))
   end
 
   if abs(self.up) > 1e-6 then
-    e:applyForce(e:getUp():scale(self.up * thrustUpMax))
+    e:applyForce(e:getUp():scale(self.up * thrustUpMax * forceScale))
   end
 
   if max(max(abs(self.pitch), abs(self.yaw)), abs(self.roll)) > 1e-6 then
     e:applyTorqueLocal(Vec3f(
-      self.pitch * thrustPitchMax,
-      -self.yaw * thrustYawMax,
-      -self.roll * thrustRollMax))
+      self.pitch * thrustPitchMax * torqueScale,
+      -self.yaw * thrustYawMax * torqueScale,
+      -self.roll * thrustRollMax * torqueScale))
   end
 
   for thruster in e:iterSocketsByType(SocketType.Thruster) do

@@ -47,6 +47,12 @@ function SystemMap:onDraw (state)
     end
     Draw.Point(x, y)
 
+    -- NPC cap names: draw them next to the red dots (docs/npcwork.md).
+    if e:getOwner() and e:getName() then
+      UI.DrawEx.TextAdditive('NovaMono', e:getName(), 8,
+        x + 6, y - 5, 0, 0, 0.85, 0.85, 0.85, 0.9, 0.5, 0.5)
+    end
+
     if e:hasFlows() then
       UI.DrawEx.Ring(x, y, self.zoom * e:getScale(), { r = 0.1, g = 0.5, b = 1.0, a = 1.0 })
     end

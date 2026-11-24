@@ -16,7 +16,6 @@ local meshHead
 local meshTail
 local shaderHead
 local shaderTail
-local onAddedToParent
 
 Preload.Add (function ()
   meshHead = Gen.Primitive.Billboard(-1, -1, 1, 1)
@@ -29,7 +28,6 @@ end)
 
 Pulse:setInitializer (function (self)
   self.matrix = Matrix.Identity()
-  self:register(Event.AddedToParent, onAddedToParent)
 end)
 
 Pulse:addOnDestruct(function (self)
@@ -38,10 +36,6 @@ Pulse:addOnDestruct(function (self)
 end)
 
 Pulse:define()
-
-onAddedToParent = function (self, parent)
-  self:refreshMatrix()
-end
 
 function Pulse:refreshMatrix ()
   self.matrix:free()
