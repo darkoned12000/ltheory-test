@@ -4,23 +4,53 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
 
 **This file is the ONLY tracker.** The finished design and implementation records live in `docs/` (`docs/ltheory-planets.md`, `docs/procedural-space-environment.md`, `docs/ssao-gtao-implementation.md`, `docs/fog-nebula-implementation.md`, `docs/multithreading.md`, `docs/debug-panel-update.md`, `docs/SDL_Migration.md`, `docs/ltheory-node-ui.md`, `docs/ltheory-ui-gui-research.md`) — those are the *why*, and they stay exactly as they were written. Anything still open is listed **here**, so nothing hides in a 165 KB file.
 
-## Open (genuinely remaining, as of 2026-11-24)
+## Open (genuinely remaining, as of 2026-11-25)
 The roadmap above is largely complete. What is actually still unimplemented:
 
 1. **Graphics-options parity (#14)** — motion blur, shadow-quality master + PCF radius, SSR, anamorphic lens flares, AMD CAS. (FXAA/SMAA already shipped via `postfx.fxaa`.)
 2. **Economy's last mile** — energy cells have no use (ship capacitor not wired, no upgrades); old game's **market escrow** (per-owner storage lockers, midpoint settlement) not ported (current port does instant trades).
 3. **Three SpaceField channels with no consumer** — `starVisibility` (medium's extinction of stars), `turbulence` (plume warp), `radiation` (region hazard).
 4. **Gas giants (W7d) + atmosphere entry/landing (W7e)** — explicitly deferred 2026-10-14; design in `docs/ltheory-planets.md` §11.3.
-5. **Save format phase 2** — market/belt state, destroyed-asteroid memory, missions, and durable ship-by-ship NPC state. Asteroid deposit remainders and additive NPC actor snapshots are now saved; see `docs/npcwork.md`.
+5. **Save format phase 2** — market/belt state and missions. Phase 1 NPC actors, authoritative ship/module rosters, policy/jobs, simulation time, sector, ScannerDB/safety/knowledge memory, fingerprinted deposits, bounded tombstones, sector transit/holds, and purchase serials are now saved; see `docs/npcwork.md`.
 6. **Procedural content (#7/#8)** — L-system stations and biome terrain. The mixed procedural NPC fleet, main menu, and settings screens are implemented on `npc-work` (pending approval).
-7. **NPC progression and social gameplay** — repair/refit/ship purchases, durable cross-sector continuation, player-facing comms, escort/rescue cooperation, wreck salvage, gas harvesting, and missions. Prioritized in `docs/npcwork.md` → “Next steps”.
+7. **NPC progression and social gameplay** — cross-sector market contracts, human-facing shipyard UI, player comms, escort/rescue cooperation, wreck salvage, gas harvesting, and missions. Normal-speed NPC gate travel/sector holds and the first repair/refit/purchase/upkeep slice are implemented on `npc-work`; see `docs/npcwork.md` → “Next steps”.
 
-## Completed on `npc-work` (uncommitted, 2026-11-24)
+## Completed through `80d18b9` (2026-11-24)
 - **Mixed autonomous NPC fleet** — deterministic fighters, freighters, industrials, and a capital; role-specific procedural hulls, scale/mass/cargo, visible engine trails, real thrust-based movement, startup placement, and sector-roster reconciliation.
-- **NPC identity, policy, and lifecycle** — stable NPC registry/IDs, one simulation clock, route-aware utility and memory, cloned committed jobs, cooldowns, patrols, damage-driven flee, shared defense directives, and ranged organization communication. Deleted/docked actors and target locks clean up correctly.
+- **NPC identity, policy, and lifecycle** — stable NPC registry/IDs, one simulation clock, route-aware utility and memory, cloned committed jobs, cooldowns, patrols, damage-driven flee, shared defense directives, and ranged organization communication. Deleted/docked actors and target locks clean up correctly. Phase 1 adds stable ship IDs, structural route keys, ship physical/cargo snapshots, policy/cooldown persistence, active-job checkpoints, saved sector/time, and bounded tombstones with spawn suppression.
 - **Resource gameplay** — 5–10 second scans, directional spectrum, persistent per-pilot ScannerDB records, active-brake mining, finite asteroid deposits randomized deterministically from **120–5,000 units** (size-weighted), remaining-deposit display, stream-reload persistence, and save/load persistence.
 - **Flight/dock HUD hardening** — ray/sphere reticle targeting, stable close-range brackets, real mesh previews, cargo/extraction readouts, radar category filters and range labels, safe dock/undock physics, per-frame input edges, and HUD visibility during scan/mine/move actions.
-- **Verification** — 462 focused checks plus the full `configure.py test` suite and UI integration pass; real boot is clean. Full implementation record and remaining limitations: `docs/npcwork.md`.
+- **Verification** — 748 focused checks plus the full `configure.py test` suite and UI integration pass; real boot and save/load round-trip are clean. Full implementation record and remaining limitations: `docs/npcwork.md`.
+
+## Phase 1 persistence complete (uncommitted, 2026-11-25)
+- Stable structural IDs and route keys; planned NPC ship IDs are now used.
+- Ship-by-ship transform/hull/capacitor/cargo/dock snapshots, policy memory and
+  cooldowns, active-job checkpoints, simulation time, and saved sector index.
+- Bounded tombstones with death recording and deterministic spawn suppression;
+  outgoing sector places are removed before rebuilding.
+- Job restore rebinds endpoints and resumes the current subaction; depleted,
+  tombstoned, and wrong-sector sources cancel safely.
+- Saved rosters are authoritative under configuration changes; last-ship death
+  permanently retires the actor. Fingerprinted scan knowledge survives stream
+  rematerialization for NPC and human ships; ScannerDB keys match HUD/target
+  lookups; safety keeps recording while job data is unresolved.
+- Module slots have durable IDs and exact saved occupancy. Asteroid physical and
+  deposit fingerprints prevent stale overlays attaching to replacement rocks;
+  startup fingerprints are finalized after field placement. Human/NPC docking,
+  string policy seeds, and malformed additive payloads restore fail-closed.
+
+## NPC travel + Phase 2 first slice (uncommitted, 2026-11-25)
+- Correct-gate routing and normal-speed `TravelTo` approach; no NPC-only time
+  scale or automatic boost. Gate entry uses persistent sector transit without
+  moving the player's sector.
+- Outgoing NPCs are held by sector instead of deleted; destination entry restores
+  the same actor/ship/cargo/credits/job and excludes duplicate roster IDs.
+- Periodic NPC decision/status logs (`Config.game.npcLog`, `PHX_NPC_LOG=1/0`) show
+  action, target, position, speed/top speed, ETA, hull, credits, and progression.
+- Normal-speed repair/refit/purchase actions, hourly upkeep/debt, atomic payments,
+  durable module slots, cargo transfer, role-to-capital progression, and saved
+  purchase serials.
+- Cross-sector market contracts/missions and human-facing shipyard UI remain.
 
 ## Completed (recent, 2026-10-27)
 - **cascadedmaps merged to main** — single-pass CSM box culling + cached/pooled economy mining jobs (commit `bd7d5e0`).
@@ -173,9 +203,11 @@ The roadmap above is largely complete. What is actually still unimplemented:
    process loading the file from disk; and real injected clicks through
    the CUSTOM GAME → F6 → F7 flow. Additive state now also includes NPC actor
    identity/profile/organization/credits and finite asteroid deposit remainders
-   (120–5,000 units per rock, persisted through stream unload/reload). NOT in
-   yet: market/belt state, destroyed-asteroid tombstones, ship-by-ship NPC
-   state, policy memory, and missions.
+   (120–5,000 units per rock, persisted through stream unload/reload). Phase 1
+   also saves stable NPC ships, physical/cargo state, policy memory/cooldowns,
+   active job checkpoints, simulation time, sector index, and bounded tombstones.
+   NOT in yet: market/belt state, authoritative roster reconciliation,
+   ScannerDB/safety memory, equipment IDs, and missions.
 18. **Gas giants (W7d)** — deferred 2026-10-14. A banded generator plus a
    no-solid-surface path. It was explicitly the expensive one, so it was
    held back until the FPS budget had been re-measured under load. The

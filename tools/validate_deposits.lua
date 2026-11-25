@@ -54,18 +54,29 @@ check('depleted rock retains composition metadata', rock:getYield().item == item
 local keyed = Entity()
 keyed.getScale = function () return 10 end
 keyed:addYield(item, 1, 12)
-local world = { depositState = { ['rock:1'] = 5 } }
+local world = { depositState = { ['rock:1'] = 5 }, depositFingerprints = { ['rock:1'] = 'fp1' } }
 keyed.getRoot = function () return world end
-keyed:setDepositKey('rock:1')
+keyed:setDepositKey('rock:1', 'fp1')
 check('stable deposit key restores saved remaining amount', keyed:getYieldRemaining() == 5)
 keyed:consumeYield(2)
-check('consumption updates persistent deposit state', world.depositState['rock:1'] == 3)
+check('consumption updates persistent deposit state', world.depositState['rock:1'] == 3
+  and world.depositFingerprints['rock:1'] == 'fp1')
 local reloaded = Entity()
 reloaded.getScale = function () return 10 end
 reloaded:addYield(item, 1, 12)
 reloaded.getRoot = function () return world end
-reloaded:setDepositKey('rock:1')
+reloaded:setDepositKey('rock:1', 'fp1')
 check('reloaded rock restores the remaining deposit', reloaded:getYieldRemaining() == 3)
+local mismatched = Entity()
+mismatched.getScale = function () return 10 end
+mismatched:addYield(item, 1, 12)
+mismatched.getRoot = function () return world end
+mismatched:setDepositKey('rock:1', 'different')
+check('fingerprint mismatch leaves the freshly generated deposit', mismatched:getYieldRemaining() == 12)
+local barren = Entity()
+barren.getRoot = function () return world end
+local barrenOk = pcall(function () barren:setDepositKey('rock:1', 'fp1') end)
+check('barren rock ignores stale deposit state without crashing', barrenOk)
 
 if failures == 0 then
   print(string.format('deposits: %d checks passed', checks)); os.exit(0)

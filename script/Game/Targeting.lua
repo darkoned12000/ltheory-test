@@ -1,6 +1,6 @@
--- Generic target eligibility shared by the HUD and player actions. Live ships
--- and minable asteroids are targetable; destroyed, deleted, and bodyless
--- entities are not.
+-- Generic target eligibility shared by the HUD and player actions. Live ships,
+-- minable asteroids, planets, and visible wormholes are targetable; destroyed,
+-- deleted, and ordinary bodyless entities are not.
 
 local Targeting = {}
 
@@ -34,9 +34,17 @@ function Targeting.SurfaceGap (entity, ship)
   return math.max(0, math.sqrt(dx*dx + dy*dy + dz*dz) - radius)
 end
 
+function Targeting.Radius (entity)
+  if not entity then return 0 end
+  if entity.body and entity.body.getBoundingRadius then return entity.body:getBoundingRadius() end
+  return entity.getRadius and entity:getRadius() or 0
+end
+
 function Targeting.IsTargetable (entity)
-  if not entity or not entity.body or entity.deleted then return false end
+  if not entity or entity.deleted then return false end
   if entity.isDestroyed and entity:isDestroyed() then return false end
+  if entity.isWormhole then return true end
+  if not entity.body then return false end
   if entity.isAlive and entity:isAlive() then return true end
   if entity.isPlanet then return true end
   return entity.hasYield and entity:hasYield() or false

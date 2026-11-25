@@ -121,6 +121,7 @@ Wormhole = subclass(Entity, function (self, opts)
   self.homeSector    = opts.homeSector
 
   self.isWormhole = true
+  self.stableId = opts.stableId
   self.name = opts.name or 'Wormhole'
 
   -- WHAT KIND OF GATE THIS IS.
@@ -291,7 +292,18 @@ end
 -- container". The old engine then moved the docker into the destination
 -- container; here the destination is a position and a sector index, so the
 -- ship is moved there and the app is told the sector changed.
+local function tryNpcTransit (gate, e)
+  local owner = e.getOwner and e:getOwner()
+  local root = gate.getRoot and gate:getRoot()
+  if owner and owner.isNpc and owner:isNpc() and root and root.beginNpcTransit then
+    root:beginNpcTransit(owner, e, gate, 'wormhole-dock')
+    return true
+  end
+  return false
+end
+
 function Wormhole:addDocked (e)
+  if tryNpcTransit(self, e) then return end
   Entity.addDocked(self, e)
   self:transfer(e)
 end
@@ -307,6 +319,7 @@ end
 -- So the ship warps on the spot, the way the old game did: the old
 -- Wormhole::Dock moved the docker into the destination container directly.
 function Wormhole:warp (e)
+  if tryNpcTransit(self, e) then return end
   -- The dock component puts the docker in as a child; take it straight back
   -- out again, because the gate is a trigger and not somewhere to be
   -- parked.

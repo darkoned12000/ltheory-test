@@ -1,9 +1,14 @@
 local Job = require('Game.Job')
 local Actions = requireAll('Game.Actions')
+local RouteKey = require('Game.RouteKey')
+local Knowledge = require('Game.Knowledge')
 
 local Mine = subclass(Job, function (self, src, dst)
   self.src = src
   self.dst = dst
+  self.srcKey = RouteKey.Entity(src)
+  self.dstKey = RouteKey.Entity(dst)
+  self.itemName = src:getYield().item:getName()
 end)
 
 function Mine:clone ()
@@ -23,7 +28,9 @@ function Mine:getKind ()
 end
 
 function Mine:isKnown (asset)
-  if not (asset.knownYields and asset.knownYields[self.src]) then return false end
+  asset.knowledge = asset.knowledge or Knowledge.Create()
+  asset.knownYields = asset.knowledge.knownYields
+  if not Knowledge.Known(asset.knowledge, self.src) then return false end
   if self.src.deleted or (self.src.isDestroyed and self.src:isDestroyed()) then return false end
   if self.src.hasYield and not self.src:hasYield() then return false end
   if self.src.getParent and not self.src:getParent() then return false end
@@ -31,8 +38,13 @@ function Mine:isKnown (asset)
 end
 
 function Mine:getKey ()
-  return format('mine:%s:%s:%s', self.src.id, self.dst.id,
+  return RouteKey.Encode('mine', RouteKey.Entity(self.src), RouteKey.Entity(self.dst),
     self.src:getYield().item:getName())
+end
+
+function Mine:isPersistent ()
+  return RouteKey.IsPersistent(RouteKey.Entity(self.src))
+    and RouteKey.IsPersistent(RouteKey.Entity(self.dst))
 end
 
 function Mine:getName ()

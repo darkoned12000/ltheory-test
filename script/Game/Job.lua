@@ -1,4 +1,5 @@
 local Action = require('Game.Action')
+local NpcLog = require('Game.NpcLog')
 
 local Job = subclass(Action, function (self) end)
 
@@ -16,6 +17,16 @@ function Job:finish (e, outcome)
 end
 
 function Job:onStop (e)
+  if e.npcJobCheckpoint then
+    NpcLog.Event(e, 'job checkpointed for sector transit')
+    self.result = nil
+    return
+  end
+
+  local outcome = self.result or 'cancelled'
+  local name = (self.getName and self:getName())
+    or (self.getKind and self:getKind()) or 'job'
+  NpcLog.Event(e, format('job finished (%s): %s', outcome, name))
   local policy = e.npcPolicy
   if policy then
     local root = e:getRoot()

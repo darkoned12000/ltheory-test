@@ -90,13 +90,14 @@ function HUD:pickTarget ()
   for i = 1, #self.targets.tracked do
     local target = self.targets.tracked[i]
     if target ~= playerShip and Targeting.IsTargetable(target) then
-      target.body:getPos(scratchPos)
-      local radius = target.body:getBoundingRadius()
-      if not planes or Frustum.sphereVisible(planes, scratchPos.x, scratchPos.y,
-                                              scratchPos.z, radius * 1.15) then
+      local pos
+      if target.body then target.body:getPos(scratchPos); pos = scratchPos
+      else pos = target:getPos() end
+      local radius = Targeting.Radius(target)
+      if not planes or Frustum.sphereVisible(planes, pos.x, pos.y, pos.z, radius * 1.15) then
         local distance = Targeting.RaySphereDistance(
           ray.px, ray.py, ray.pz, ray.dirx, ray.diry, ray.dirz,
-          scratchPos.x, scratchPos.y, scratchPos.z, radius)
+          pos.x, pos.y, pos.z, radius)
         if distance and distance >= ray.tMin and distance <= ray.tMax
            and (not bestDistance or distance < bestDistance) then
           best, bestDistance = target, distance
@@ -145,23 +146,17 @@ function HUD:drawTargets (a)
   for i = 1, #self.targets.tracked do
     local target = self.targets.tracked[i]
     if target ~= playerShip and Targeting.IsTargetable(target) then
-      local disp = target:getOwnerDisposition(player)
+      local disp = target.getOwnerDisposition and target:getOwnerDisposition(player) or 0
+      local pos
+      if target.body then target.body:getPos(scratchPos); pos = scratchPos
+      else pos = target:getPos() end
+      local radius = Targeting.Radius(target)
       local culled = false
-      local hasScratchPos = false
       if planes and disp >= 0 then
-        local body = target.body
-        if body then
-          body:getPos(scratchPos)
-          hasScratchPos = true
-          local radius = body:getBoundingRadius() * 1.15
-          culled = not Frustum.sphereVisible(planes, scratchPos.x, scratchPos.y,
-                                             scratchPos.z, radius)
-        end
+        culled = not Frustum.sphereVisible(planes, pos.x, pos.y, pos.z, radius * 1.15)
       end
       if not culled then
-        local pos = hasScratchPos and scratchPos or target:getPos()
         if ray then
-          local radius = target.body:getBoundingRadius()
           local pickDistance = Targeting.RaySphereDistance(
             ray.px, ray.py, ray.pz, ray.dirx, ray.diry, ray.dirz,
             pos.x, pos.y, pos.z, radius)
@@ -204,7 +199,7 @@ function HUD:drawTargets (a)
           -- The click handler is HUD:onInput; setSubject opens the info panel.
           -- Passive boxes are range-gated to visual range; the player's own
           -- target always shows them.
-          if target:getOwner() and (playerTarget == target or dist < 6000) then
+          if target.getOwner and target:getOwner() and (playerTarget == target or dist < 6000) then
             local bx, by = ss.x - 6, ss.y - 8
             local bw, bh = 20, 14
             UI.DrawEx.Rect(bx, by, bw, bh, Color(0, 0.5, 1.0, 0.85))
@@ -256,7 +251,7 @@ function HUD:drawLock (a)
     playerShip:setTarget(nil)
     target = nil
   end
-  if not target or target:isDestroyed() then
+  if not target or (target.isDestroyed and target:isDestroyed()) then
     -- Target died (or was swept from the world): drop the lock.
     if target then playerShip:setTarget(nil) end
     self:updateInfoPanel(nil)
@@ -270,7 +265,7 @@ function HUD:drawLock (a)
   local bx, by, bw, bh = camera:entityToScreenSphere(target)
   local box = math.min(140, math.max(28, math.max(bw, bh) * 1.25))
   local mx, my = bx + bw * 0.5 - box * 0.5, by + bh * 0.5 - box * 0.5
-  local hostile = target:getOwnerDisposition(self.player) < 0
+  local hostile = target.getOwnerDisposition and target:getOwnerDisposition(self.player) < 0 or false
   local pulse = 0.82 + 0.18 * math.sin(Time.GetRaw() * 0.006)
   local bracket = hostile and Color(1.0, 0.15, 0.1, a * pulse)
     or Color(0.1, 0.75, 1.0, a * pulse)
@@ -331,7 +326,7 @@ function HUD:drawLock (a)
   end
 
   -- Impact point
-  if playerShip.socketSpeedMax > 0 then
+  if playerShip.socketSpeedMax > 0 and target.body then
     local tHit, pHit = Math.Impact(
       playerShip:getPos(),
       target:getPos(),
@@ -681,7 +676,10 @@ end
 function HUD:controlTurrets (e)
   local targetPos, targetVel
   local target = e:getTarget()
-  if target and target:getOwnerDisposition(self.player) <= 0.0 then
+  -- Wormholes are lockable navigation targets but have no rigid body, so
+  -- Entity:getVelocity() would assert. Only physical targets can drive
+  -- projectile lead/auto-aim; a gate lock still uses the normal reticle aim.
+  if target and target.body and target:getOwnerDisposition(self.player) <= 0.0 then
     targetPos = target:getPos()
     targetVel = target:getVelocity()
   end
@@ -751,7 +749,20 @@ function HUD:controlTargetLock (e)
   self:updateInfoPanel(e:getTarget())
 end
 
+function HUD:preferredDockable (ship)
+  local target = ship:getTarget()
+  if target and target.hasDockable and target:hasDockable() and Targeting.IsTargetable(target) then
+    local gap = Targeting.SurfaceGap(target, ship)
+    local range = (Config.game and Config.game.dockRange) or 500
+    if gap and gap <= range then return target end
+  end
+  return self.dockable
+end
+
 function HUD:onInput (state)
+  -- A modal page owns gameplay input. In particular, never start DockAt or
+  -- another action while the menu/popup has paused the world underneath it.
+  if self.ltheory and self.ltheory.anyScreenOpen and self.ltheory:anyScreenOpen() then return end
   local mp = Input.GetMousePosition()
   local bounds = self.radarBounds
   if bounds and Radar.Contains(bounds.x, bounds.y, bounds.radius + 36, mp.x, mp.y) then
@@ -831,9 +842,9 @@ function HUD:onInput (state)
   end
   camera:pop()
 
-  if self.dockable and not busy then
-    if ShipBindings.Dock:get() > 0 then
-      local d = self.dockable
+  if not busy then
+    local d = self:preferredDockable(e)
+    if d and ShipBindings.Dock:get() > 0 then
       if d.warpOnDock and d.warp then
         -- A JUMPGATE: the ship warps on the spot. The generic dock action
         -- would fly the ship at a point BELOW the dockable, which is right
@@ -863,8 +874,8 @@ function HUD:refreshRadarContacts ()
       local dx, dy, dz = scratchPos.x - origin.x, scratchPos.y - origin.y, scratchPos.z - origin.z
       local dist2 = dx*dx + dy*dy + dz*dz
       if dist2 <= range2 then
-        local key = entity.getRegistryId and entity:getRegistryId() or ('entity:' .. tostring(entity.id))
-        local saved = ScannerDB.Get(db, key)
+        local key = ScannerDB.Key(entity)
+        local saved = ScannerDB.ContactFor(db, entity)
         local tier = math.max(ScannerDB.TierForRange(math.sqrt(dist2)) or 1, saved and saved.tier or 0)
         local signal = Radar.SignalFor(entity)
         if Radar.ShowSignal(signal, Config.ui and Config.ui.radarFilters) then

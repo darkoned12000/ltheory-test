@@ -99,6 +99,9 @@ check('fighter mass is derived from scaled radius', fighter:getMass() == 50 * 40
 local proto = { seed = 42, mesh = {}, scale = 64, sockets = {} }
 local capitalA, capitalB = Ship(proto, 1), Ship(proto, 2)
 check('ship instances get unique stable registry ids', capitalA:getRegistryId() ~= capitalB:getRegistryId())
+local planned = Ship(proto, 3, 'ship:1234:1')
+check('planned NPC ship id overrides prototype serial id',
+  planned:getRegistryId() == 'ship:1234:1' and planned.stableId == 'ship:1234:1')
 check('capital registry class is strategic', capitalA:getRegistryClass().id == 3)
 local freighter = Ship({ seed = 43, mesh = {}, scale = 28, sockets = {},
   classId = 2, model = 'Freighter' })

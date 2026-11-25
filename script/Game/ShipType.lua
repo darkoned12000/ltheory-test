@@ -73,9 +73,9 @@ local ShipType = class(function (self, seed, generator, scale, meta)
   rng:free()
 end)
 
-function ShipType:instantiate ()
+function ShipType:instantiate (stableId)
   self.instanceSerial = (self.instanceSerial or 0) + 1
-  return Ship(self, self.instanceSerial)
+  return Ship(self, self.instanceSerial, stableId)
 end
 
 return ShipType

@@ -56,9 +56,12 @@ local Asteroid = class(function (self)
 end)
 function Asteroid:setPos (p) self.pos = p end
 function Asteroid:setScale (s) self.scale = s end
+function Asteroid:getScale () return self.scale end
 function Asteroid:setRot () end
-function Asteroid:addYield () self.yields = self.yields + 1 end
-function Asteroid:setDepositKey (key) self.depositKey = key end
+function Asteroid:addYield (item) self.yields = self.yields + 1; self.yieldItem = item end
+function Asteroid:hasYield () return self.yields > 0 end
+function Asteroid:getYield () return { item = self.yieldItem, size = 1, initial = 120 } end
+function Asteroid:setDepositKey (key, fingerprint) self.depositKey, self.depositFingerprint = key, fingerprint end
 function Asteroid:getPos () return self.pos end
 _G.Entities = { Zone = Zone, Asteroid = Asteroid }
 
@@ -76,11 +79,23 @@ ffi.cdef [[
   typedef struct Collision { void* body0; void* body1; int index; int count; } Collision;
 ]]
 local System = dofile(root .. 'script/Game/Entities/System.lua')
-local world = { rng = rng, children = {}, zones = {} }
-function world:addChild (child) insert(self.children, child) end
+local world = { rng = rng, children = {}, zones = {}, dead = {}, deadFingerprints = {} }
+function world:addChild (child) child.parent = self; insert(self.children, child) end
+function world:removeChild (child)
+  child.parent = nil
+  for i = #self.children, 1, -1 do
+    if self.children[i] == child then table.remove(self.children, i); return end
+  end
+end
 function world:addZone (zone) insert(self.zones, zone) end
+function world:isTombstoned (key, fingerprint)
+  return self.dead[key] == true and (not self.deadFingerprints[key]
+    or self.deadFingerprints[key] == fingerprint)
+end
 local requested = vec(1200, -340, -5600)
 local zone = System.spawnAsteroidField(world, 5, 5, requested)
+local originalFingerprint = world.children[1].generationFingerprint
+local originalDepositFingerprint = world.children[1].depositFingerprint
 
 local failures, checks = 0, 0
 local function check (name, ok, detail)
@@ -105,6 +120,23 @@ local firstPos = world.children[1].pos
 local firstError = math.sqrt((firstPos.x - recentered.x)^2
   + (firstPos.y - recentered.y)^2 + (firstPos.z - recentered.z)^2)
 check('recentering moves every asteroid with the field', firstError < 1e-6)
+check('recentering refreshes physical and deposit fingerprints',
+  world.children[1].generationFingerprint ~= originalFingerprint
+  and world.children[1].depositFingerprint ~= originalDepositFingerprint)
+world.dead['startup:2'] = true
+world.deadFingerprints['startup:2'] = world.children[2].depositFingerprint
+  or world.children[2].generationFingerprint
+System.moveAsteroidField(world, zone, recentered)
+check('final-position tombstones suppress rematerialized startup rocks',
+  not world.dead['startup:2'] or not world.children[2]
+  or world.children[2].stableId ~= 'startup:2')
+world.dead['startup:2'] = nil
+world.deadFingerprints['startup:2'] = nil
+world.dead['startup:2'] = true
+System.spawnAsteroidField(world, 3, 3, requested)
+check('tombstoned startup asteroid is not spawned', #world.children == 6)
+check('startup generation preserves tombstoned clumping anchors',
+  #world.zones[2].children == 3)
 
 if failures == 0 then
   print(string.format('startup field: %d checks passed', checks))

@@ -110,6 +110,7 @@ _G.EconomyRegistry = { unregister = function () end }
 
 local System = dofile(root .. '/script/Game/Entities/System.lua')
 local Registry = require('Game.NpcRegistry')
+local Tombstones = require('Game.Tombstones')
 local Directives = require('Game.Directives')
 local Communication = require('Game.Communication')
 local Population = require('Game.NpcPopulation')
@@ -155,6 +156,7 @@ local function makeSystem (seed)
   s.npcSerial = 0
   s.seed = seed or 1234
   s.time = 0
+  s.tombstones = Tombstones.Create()
   s.economy = { parent = s }
   s.hasEconomy = function () return true end
   s.flows = {}
@@ -348,6 +350,20 @@ local despawnOk, removed = pcall(function () return sys:despawnNPCPopulation() e
 check('population can be explicitly despawned', despawnOk and removed == 8)
 check('despawn clears actor and communication registries', Registry.count(sys.npcs) == 1
   and Communication.count(sys.comms) == 1)
+
+local destroyedShip = makeShip()
+destroyedShip.stableId = 'ship:destroyed'
+sys:addChild(destroyedShip)
+destroyedShip.health = 0
+sys:sweepDestroyed()
+check('actual ship death records a tombstone', sys:isTombstoned('ship:destroyed')
+  and destroyedShip:getParent() == nil)
+local unloadedShip = makeShip()
+unloadedShip.stableId = 'ship:unloaded'
+sys:addChild(unloadedShip)
+unloadedShip:delete()
+sys:sweepDestroyed()
+check('ordinary unload does not record a tombstone', not sys:isTombstoned('ship:unloaded'))
 
 if failures == 0 then
   print(string.format('npc lifecycle: %d checks passed', checks))

@@ -291,8 +291,14 @@ Config.game = {
   timeScaleShipEditor    = 0.0,
   invertPitch            = false,
 
-  aiUsesBoost            = true,
+  -- NPCs fly at the same normal thrust speed as a player who is not holding
+  -- SHIFT. They never receive a private time scale or automatic boost.
+  aiUsesBoost            = false,
   aiFire                 = function (dt, rng) return rng:getExp() ^ 2 < dt end,
+  npcLog                 = true,
+  npcLogInterval         = 5,
+  npcTravelDelay         = 180,
+  npcTravelInterval      = 300,
 
   dockRange              = 500,
   miningRange            = 250,
@@ -335,6 +341,7 @@ Config.game = {
 
   -- NPC organization communication/threat range in world units.
   commRange              = 20000,
+  tombstoneLimit         = 4096,
 
   -- The SECTOR's extent, in world units. A sector is a volume of space with
   -- its own name and its own regions; this is how big it is.

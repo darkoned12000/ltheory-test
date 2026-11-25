@@ -4,7 +4,8 @@ local GPUParticles = require('Game.Entities.GPUParticles')
 --[[ Ship destruction: one scale-boosted GPU particle burst replaces the eight
   legacy Explosion billboards this used to spawn. ]]
 local function explode (self, source)
-  if self:getOwner() then self:getOwner():removeAsset(self) end
+  self.destroyedOwner = self:getOwner()
+  if self.destroyedOwner then self.destroyedOwner:removeAsset(self) end
   GPUParticles.explode(
     self:getPos(),
     self:getVelocity(),

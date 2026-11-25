@@ -94,9 +94,30 @@ function Vec:scale (s) return vec(self.x * s, self.y * s, self.z * s) end
 function Vec:dot (b) return self.x*b.x + self.y*b.y + self.z*b.z end
 
 local source = {
+  stableId = 'ship:threat',
   isAlive = function () return true end,
   getPos = function () return vec(10, 0, 0) end,
 }
+Safety.recordDamage(state, 10, source, 5)
+state.lastThreatAt = 4
+local safetyOk, safetySnapshot = pcall(function () return Safety.Capture(state) end)
+check('safety memory is serializable', safetyOk and safetySnapshot.damage == 45
+  and safetySnapshot.sourceKey == 'ship:threat' and safetySnapshot.lastThreatAt == 4)
+local restoredSafety = Safety.Create()
+local safetyRestoreOk = pcall(function () Safety.Restore(restoredSafety, safetySnapshot) end)
+check('safety memory restores damage and cooldown', safetyRestoreOk
+  and restoredSafety.damage == 45 and restoredSafety.lastDamageAt == 5
+  and restoredSafety.cooldownUntil == state.cooldownUntil
+  and restoredSafety.lastThreatAt == 4)
+check('unresolved safety source survives recapture', Safety.Capture(restoredSafety).sourceKey == 'ship:threat')
+Safety.recordDamage(restoredSafety, 1, { id = 123 }, 6)
+check('runtime-only damage source clears stale durable source',
+  Safety.Capture(restoredSafety).sourceKey == nil)
+Safety.Restore(restoredSafety, { lastDamageAt = math.huge, damage = -5,
+  cooldownUntil = -math.huge, sourceKey = 'runtime:1' })
+check('malformed safety values fail closed', restoredSafety.lastDamageAt == -math.huge
+  and restoredSafety.damage == 0 and restoredSafety.cooldownUntil == -math.huge
+  and restoredSafety.sourceKey == nil)
 local controller = { forward = 1, right = 1, up = 1, yaw = 1, pitch = 1, roll = 1, boost = 1 }
 function controller:clear ()
   self.forward, self.right, self.up = 0, 0, 0

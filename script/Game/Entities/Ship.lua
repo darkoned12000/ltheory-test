@@ -2,9 +2,11 @@ local Entity = require('Game.Entity')
 local Material = require('Game.Material')
 local Movement = require('Game.ShipMovement')
 local Registry = require('Game.Registry')
+local StableId = require('Game.StableId')
 local Targeting = require('Game.Targeting')
+local Knowledge = require('Game.Knowledge')
 
-local Ship = subclass(Entity, function (self, proto, instanceSerial)
+local Ship = subclass(Entity, function (self, proto, instanceSerial, stableId)
   self:addActions()
   self:addCapacitor(100, 10)
   self:addChildren()
@@ -20,8 +22,9 @@ local Ship = subclass(Entity, function (self, proto, instanceSerial)
   self:addSockets()
   self:addVisibleMesh(proto.mesh, Material.Metal())
   self:addThrustController()
+  self.stableId = stableId or Registry.NewId('ship', proto.seed or self.id, instanceSerial or 1)
   self:addRegistryInfo({
-    id = Registry.NewId('ship', proto.seed or self.id, instanceSerial or 1),
+    id = self.stableId,
     classId = proto.classId or ((proto.scale or 1) >= 32 and 3 or 2),
     manufacturer = 'LimTech',
     model = proto.model or ((proto.scale or 1) >= 32 and 'Capital' or 'Fighter'),
@@ -33,7 +36,7 @@ local Ship = subclass(Entity, function (self, proto, instanceSerial)
   --        better for ShipType et al
   for type, elems in pairs(proto.sockets) do
     for i, pos in ipairs(elems) do
-      self:addSocket(type, pos, true)
+      self:addSocket(type, pos, true, i, StableId.Module(self.stableId, type, i))
     end
   end
 
@@ -95,8 +98,9 @@ function Ship:getScanStatus (target)
   if not self:isIdle() then return 'busy' end
   if not target or not target.body then return 'no target' end
   if not (target.isAsteroid or target:hasYield()) then return 'invalid target' end
-  self.scannedAsteroids = self.scannedAsteroids or {}
-  if self.scannedAsteroids[target] then return 'already scanned' end
+  self.knowledge = self.knowledge or Knowledge.Create()
+  self.scannedAsteroids = self.knowledge.scannedAsteroids
+  if Knowledge.Scanned(self.knowledge, target) then return 'already scanned' end
   local range = (Config.game and Config.game.scanRange) or 2000
   if self:getMinDistance(target) > range then return 'out of range' end
   return 'ready'
@@ -112,8 +116,10 @@ end
 
 function Ship:scanForResources ()
   local target = self:getTarget()
-  self.scannedAsteroids = self.scannedAsteroids or {}
-  if not target or not (target.isAsteroid or target:hasYield()) or self.scannedAsteroids[target] then
+  self.knowledge = self.knowledge or Knowledge.Create()
+  self.scannedAsteroids = self.knowledge.scannedAsteroids
+  if not target or not (target.isAsteroid or (target.hasYield and target:hasYield()))
+     or Knowledge.Scanned(self.knowledge, target) then
     local root = self:getRoot()
     local range = (Config.game and Config.game.scanRange) or 2000
     target = root and root.findScanTarget and root:findScanTarget(self, range)
@@ -122,7 +128,9 @@ function Ship:scanForResources ()
 end
 
 function Ship:getMiningStatus (target)
-  if not Targeting.IsTargetable(target) or not target:hasYield() then return 'no minable target' end
+  if not Targeting.IsTargetable(target) or not target.hasYield or not target:hasYield() then
+    return 'no minable target'
+  end
   local current = self:getCurrentAction()
   if current and current.target == target and current.getName
      and current:getName():sub(1, 6) == 'MineAt' then

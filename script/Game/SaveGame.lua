@@ -41,6 +41,11 @@ local Directory = require('ffi.Directory')
 local Tex2D = require('ffi.Tex2D')
 local Json = require('Game.Json')
 local Item = require('Game.Item')
+local NpcPolicy = require('Game.NpcPolicy')
+local RouteKey = require('Game.RouteKey')
+local ScannerDB = require('Game.ScannerDB')
+local NpcSafety = require('Game.NpcSafety')
+local Knowledge = require('Game.Knowledge')
 
 local SaveGame = {}
 
@@ -82,6 +87,207 @@ local function vec3 (v)
   return {x = tonumber(v.x), y = tonumber(v.y), z = tonumber(v.z)}
 end
 
+local function finite (value, fallback)
+  value = tonumber(value)
+  if value and value == value and value ~= math.huge and value ~= -math.huge then
+    return value
+  end
+  return fallback
+end
+
+local function restoreVec (value)
+  if type(value) ~= 'table' then return nil end
+  local x, y, z = finite(value.x), finite(value.y), finite(value.z)
+  if not x or not y or not z then return nil end
+  return Vec3f(x, y, z)
+end
+
+local function restoreQuat (value)
+  if type(value) ~= 'table' then return nil end
+  local x, y, z, w = finite(value.x), finite(value.y), finite(value.z), finite(value.w)
+  if not x or not y or not z or not w then return nil end
+  return Quat(x, y, z, w)
+end
+
+local function captureItems (entity)
+  local items = {}
+  if entity.hasInventory and entity:hasInventory() then
+    for item, count in pairs(entity:getInventory()) do
+      if count > 0 then items[#items + 1] = { item = item:getName(), count = count } end
+    end
+    table.sort(items, function (a, b) return a.item < b.item end)
+  end
+  return items
+end
+
+local function captureModules (ship)
+  local modules = {}
+  for _, socket in ipairs(ship.sockets or {}) do
+    if socket.child then
+      modules[#modules + 1] = { id = socket.moduleId, type = socket.type,
+        index = socket.typeIndex }
+    end
+  end
+  table.sort(modules, function (a, b)
+    if a.type ~= b.type then return a.type < b.type end
+    return (a.index or 0) < (b.index or 0)
+  end)
+  return modules
+end
+
+function SaveGame.CaptureJob (ship)
+  local job = ship.job
+  if not job then return nil end
+  local active = false
+  for _, action in ipairs(ship.actions or {}) do
+    if action == job then active = true; break end
+  end
+  if not active then return nil end
+  local kind = job.getKind and job:getKind()
+  local src = job.src and RouteKey.Entity(job.src)
+  local dst = job.dst and RouteKey.Entity(job.dst)
+  if not kind or (job.src and not RouteKey.IsPersistent(src))
+     or (job.dst and not RouteKey.IsPersistent(dst)) then return nil end
+  local current = ship.getCurrentAction and ship:getCurrentAction()
+  local actionTarget = current and current.target and RouteKey.Entity(current.target) or nil
+  if current and current.target and not RouteKey.IsPersistent(actionTarget) then return nil end
+  local srcFingerprint = job.src and (job.src.depositFingerprint or job.src.generationFingerprint) or nil
+  if kind == 'mine' and (type(srcFingerprint) ~= 'string' or srcFingerprint == '') then
+    return nil
+  end
+  return {
+    kind = kind,
+    src = src,
+    srcFingerprint = srcFingerprint,
+    dst = dst,
+    item = job.itemName or (job.item and job.item:getName())
+      or (job.src and job.src.getYield and job.src:getYield().item:getName()) or nil,
+    state = ship.jobState or 0,
+    tradeCount = ship.tradeCount,
+    action = current and current.getName and current:getName():match('^%S+') or nil,
+    actionTarget = actionTarget,
+  }
+end
+
+local function captureKnowledge (ship)
+  local state = ship.knowledge or Knowledge.FromLegacy(ship.knownYields, ship.scannedAsteroids)
+  return Knowledge.Capture(state)
+end
+
+function SaveGame.CaptureShip (ship)
+  if not ship then return nil end
+  local id = ship.stableId or (ship.getRegistryId and ship:getRegistryId())
+  if not id or id == '' then return nil end
+  local rot = ship.getRot and ship:getRot()
+  local dockedAt = ship.getParent and ship:getParent()
+  return {
+    id = id,
+    kind = ship.shipKind or ship.npcRole,
+    role = ship.npcRole,
+    variant = ship.shipVariant,
+    seed = ship.prototypeSeed,
+    scale = ship.getScale and ship:getScale() or nil,
+    capacity = ship.hasInventory and ship:hasInventory() and ship:getInventoryCapacity() or nil,
+    name = ship.getName and ship:getName() or nil,
+    pos = ship.getPos and vec3(ship:getPos()) or nil,
+    vel = ship.getVelocity and vec3(ship:getVelocity()) or nil,
+    rot = rot and { x = tonumber(rot.x), y = tonumber(rot.y),
+      z = tonumber(rot.z), w = tonumber(rot.w) } or nil,
+    health = ship.hasHealth and ship:hasHealth() and {
+      value = ship:getHealth(), max = ship.healthMax, rate = ship.healthRate } or nil,
+    charge = ship.hasCharge and ship:hasCharge() and {
+      value = ship:getCharge(), max = ship:getChargeMax(), rate = ship.chargeRate } or nil,
+    items = captureItems(ship),
+    modules = captureModules(ship),
+    dockedAt = dockedAt and RouteKey.Entity(dockedAt) or nil,
+    policy = ship.npcPolicy and NpcPolicy.Capture(ship.npcPolicy) or nil,
+    safety = ship.npcSafety and NpcSafety.Capture(ship.npcSafety) or nil,
+    knowledge = captureKnowledge(ship),
+    job = SaveGame.CaptureJob(ship) or ship.pendingJob,
+  }
+end
+
+function SaveGame.RestoreShip (ship, data)
+  if not ship or type(data) ~= 'table' then return end
+  if type(data.kind) == 'string' then ship.shipKind = data.kind end
+  if type(data.role) == 'string' then
+    ship.npcRole = data.role
+  elseif type(data.kind) == 'string' then
+    ship.npcRole = data.kind -- legacy snapshots only stored the hull kind
+  end
+  if type(data.variant) == 'number' then ship.shipVariant = data.variant end
+  if type(data.seed) == 'number' or type(data.seed) == 'string' then
+    ship.prototypeSeed = data.seed
+  end
+  local pos, vel, rot = restoreVec(data.pos), restoreVec(data.vel), restoreQuat(data.rot)
+  if pos then ship:setPos(pos) end
+  if vel then ship:setVelocity(vel) end
+  if rot and (rot.x ~= 0 or rot.y ~= 0 or rot.z ~= 0 or rot.w ~= 0) then ship:setRot(rot) end
+  if type(data.health) == 'table' and ship.hasHealth and ship:hasHealth() then
+    local value = finite(data.health.value)
+    local max = finite(data.health.max, ship.healthMax)
+    local rate = finite(data.health.rate, ship.healthRate)
+    if value and max and max > 0 and rate then ship:setHealth(value, max, rate) end
+  end
+  if type(data.charge) == 'table' and ship.hasCharge and ship:hasCharge() then
+    local value = finite(data.charge.value)
+    local max = finite(data.charge.max, ship:getChargeMax())
+    local rate = finite(data.charge.rate, ship.chargeRate)
+    if value and max and max > 0 and rate then ship:setCharge(value, max, rate) end
+  end
+  local capacity = finite(data.capacity)
+  if capacity and capacity > 0 and ship.hasInventory and ship:hasInventory() then
+    ship:setInventoryCapacity(capacity)
+    for item in pairs(ship:getInventory()) do ship:getInventory()[item] = nil end
+    ship:refreshInventory()
+    for _, entry in ipairs(type(data.items) == 'table' and data.items or {}) do
+      if type(entry) == 'table' and type(entry.item) == 'string' then
+        local item = itemByName(entry.item)
+        local count = finite(entry.count)
+        if item and count and count > 0 then ship:addItem(item, count) end
+      end
+    end
+  end
+  if type(data.policy) == 'table' then
+    ship.npcPolicy = NpcPolicy.Create(0)
+    NpcPolicy.Restore(ship.npcPolicy, data.policy)
+  end
+  if data.safety then
+    ship.npcSafety = ship.npcSafety or NpcSafety.Create()
+    NpcSafety.Restore(ship.npcSafety, data.safety)
+  end
+  ship.knowledge = Knowledge.Create()
+  Knowledge.Restore(ship.knowledge, data.knowledge)
+  ship.knownYields = ship.knowledge.knownYields
+  ship.scannedAsteroids = ship.knowledge.scannedAsteroids
+  local root = ship.getRoot and ship:getRoot()
+  if root and root.registerKnowledgeShip then root:registerKnowledgeShip(ship) end
+  if type(data.job) == 'table' then ship.pendingJob = data.job end
+end
+
+local function restoreScannerDB (owner, data)
+  if not owner or not owner.getScannerDB or type(data) ~= 'table' then return end
+  local ownerId = owner.getActorId and owner:getActorId() or 'player'
+  local db = ScannerDB.Create(ownerId)
+  ScannerDB.Restore(db, data)
+  owner.scannerDB = db
+end
+
+local function captureTransit (transit)
+  if type(transit) ~= 'table' then return nil end
+  local arrival, pos = transit.arrivalPos, nil
+  if type(arrival) == 'table' then
+    local x, y, z = finite(arrival.x), finite(arrival.y), finite(arrival.z)
+    if x and y and z then pos = { x = x, y = y, z = z } end
+  end
+  return {
+    destination = tonumber(transit.destination), fromSector = tonumber(transit.fromSector),
+    reason = type(transit.reason) == 'string' and transit.reason or 'travel',
+    departedAt = tonumber(transit.departedAt) or 0,
+    arrivalPos = pos,
+  }
+end
+
 local function copyProfile (profile)
   local out = {}
   for key, value in pairs(profile or {}) do
@@ -97,37 +303,155 @@ end
 -- identity, wealth, affiliation, and profile back onto those fresh actors.
 function SaveGame.CaptureNpcs (system)
   local out = {}
-  if not system or not system.npcs then return out end
-  for _, npc in ipairs(system.npcs.list) do
+  if not system then return out end
+  local actors, seen = {}, {}
+  for _, npc in ipairs(system.npcs and system.npcs.list or {}) do
+    if not seen[npc] then seen[npc] = true; actors[#actors + 1] = npc end
+  end
+  for _, entry in ipairs(system.npcTransit or {}) do
+    local npc = entry.npc
+    if npc and not seen[npc] then seen[npc] = true; actors[#actors + 1] = npc end
+  end
+  for _, npc in ipairs(actors) do
     local organizationId = npc:getOrganization()
+    local ships = {}
+    for _, ship in ipairs(npc:getAssets()) do
+      local snapshot = SaveGame.CaptureShip(ship)
+      if snapshot then ships[#ships + 1] = snapshot end
+    end
+    table.sort(ships, function (a, b) return a.id < b.id end)
+    local standings = {}
+    for id, value in pairs(npc.organizationStanding or {}) do
+      standings[#standings + 1] = { id = id, value = value }
+    end
+    table.sort(standings, function (a, b) return a.id < b.id end)
     out[#out + 1] = {
       id = npc:getNpcId(),
       profile = copyProfile(npc:getNpcProfile()),
       organization = organizationId,
       standing = organizationId and npc:getOrganizationStanding(organizationId) or 0,
+      standings = standings,
       credits = npc:getItemCount(Item.Credit),
       assetCount = #npc:getAssets(),
+      primaryShip = npc.controlling and RouteKey.Entity(npc.controlling) or nil,
+      ships = ships,
+      scannerDB = npc.scannerDB and ScannerDB.Capture(npc.scannerDB) or nil,
+      progression = npc.npcProgression and {
+        purchaseSerial = math.max(0, math.floor(tonumber(npc.npcProgression.purchaseSerial) or 0)),
+      } or nil,
+      transit = captureTransit(npc.transit),
     }
   end
+  table.sort(out, function (a, b) return a.id < b.id end)
   return out
 end
 
 function SaveGame.RestoreNpcs (system, data)
-  if not system or not data or not data.npcs then return end
+  if not system or type(data) ~= 'table' or type(data.npcs) ~= 'table' then return end
+  local authoritative = system.despawnNPCPopulation and system.spawnAI
+  local actors = {}
+  if authoritative then system:despawnNPCPopulation() end
   for _, entry in ipairs(data.npcs) do
-    local npc = system:getNpc(entry.id)
-    if npc then
-      npc:setNpcProfile(entry.profile or {})
-      npc:setOrganization(entry.organization)
-      if entry.organization then
-        npc:setOrganizationStanding(entry.organization, entry.standing or 0)
+    if type(entry) == 'table' and type(entry.id) == 'string' and entry.id ~= '' then
+      local profile = type(entry.profile) == 'table' and entry.profile or {}
+      local organization = type(entry.organization) == 'string' and entry.organization or nil
+      local npc = system:getNpc(entry.id)
+      if not npc and system.spawnAI and not system:isTombstoned(entry.id) then
+        npc = system:spawnAI(0, {
+          npcId = entry.id,
+          role = profile.role or 'capital',
+          profile = profile,
+          organization = organization,
+        })
+        system.npcPopulationActors = system.npcPopulationActors or {}
+        system.npcPopulationActors[#system.npcPopulationActors + 1] = npc
       end
-      local credits = math.max(0, math.floor(tonumber(entry.credits) or 0))
-      local current = npc:getItemCount(Item.Credit)
-      if current > credits then npc:removeItem(Item.Credit, current - credits) end
-      if credits > current then npc:addItem(Item.Credit, credits - current) end
+      if npc then
+        npc:setNpcProfile(profile)
+        if type(entry.progression) == 'table' then
+          npc.npcProgression = {
+            purchaseSerial = math.max(0, math.floor(tonumber(entry.progression.purchaseSerial) or 0)),
+          }
+        end
+        if entry.scannerDB then restoreScannerDB(npc, entry.scannerDB) end
+        npc:setOrganization(organization)
+        if organization then
+          npc:setOrganizationStanding(organization, tonumber(entry.standing) or 0)
+        end
+        for _, standing in ipairs(type(entry.standings) == 'table' and entry.standings or {}) do
+          if type(standing) == 'table' and type(standing.id) == 'string' then
+            npc:setOrganizationStanding(standing.id, tonumber(standing.value) or 0)
+          end
+        end
+        local credits = math.max(0, math.floor(tonumber(entry.credits) or 0))
+        local current = npc:getItemCount(Item.Credit)
+        if current > credits then npc:removeItem(Item.Credit, current - credits) end
+        if credits > current then npc:addItem(Item.Credit, credits - current) end
+
+        local restoredShips = {}
+        for _, snapshot in ipairs(type(entry.ships) == 'table' and entry.ships or {}) do
+          if type(snapshot) == 'table' and type(snapshot.id) == 'string' then
+            local ship = system.resolveStableId and system:resolveStableId(snapshot.id)
+            local retired = system.isTombstoned and system:isTombstoned(snapshot.id)
+            if not ship and not retired and system.spawnShip then
+              ship = system:spawnShip(snapshot.kind or 'fighter', {
+                shipId = snapshot.id, seed = snapshot.seed, variant = snapshot.variant,
+                scale = snapshot.scale, cargo = snapshot.capacity,
+                modules = type(snapshot.modules) == 'table' and snapshot.modules or nil,
+              })
+              if ship then ship:setOwner(npc) end
+            end
+            if ship then
+              ship:clearActions()
+              if type(snapshot.dockedAt) == 'string' then
+                local parent = system:resolveStableId(snapshot.dockedAt)
+                if parent and parent.hasDockable and parent:hasDockable() then parent:addDocked(ship) end
+              end
+              SaveGame.RestoreShip(ship, snapshot)
+              restoredShips[snapshot.id] = ship
+              if type(snapshot.name) == 'string' then ship:setName(snapshot.name) end
+            end
+          end
+        end
+        local assetCount = math.max(0, math.floor(tonumber(entry.assetCount) or 0))
+        if (type(entry.ships) ~= 'table' or #entry.ships == 0) and assetCount > 0
+           and #npc:getAssets() == 0 and system.spawnShip then
+          local role = profile.role or 'capital'
+          local shipId = 'ship:' .. entry.id:gsub('^npc:', '')
+          local ship = system:spawnShip(role, { shipId = shipId })
+          if ship then ship:setOwner(npc); npc:setControlling(ship) end
+        end
+        if type(entry.primaryShip) == 'string' then
+          local primary = restoredShips[entry.primaryShip]
+            or (system.resolveStableId and system:resolveStableId(entry.primaryShip))
+          if primary then npc:setControlling(primary) end
+        end
+        if type(entry.transit) == 'table' and tonumber(entry.transit.destination) then
+          local destination = math.floor(tonumber(entry.transit.destination))
+          local primary = npc:getControlling() or restoredShips[entry.primaryShip or '']
+          if primary then
+            if destination ~= system.sectorIndex and system.beginNpcTransit then
+              local arrival = entry.transit.arrivalPos
+              local gate = {
+                getPartnerSector = function () return destination end,
+                getPartnerPos = function () return arrival end,
+                getName = function () return 'saved transit gate' end,
+              }
+              if system:beginNpcTransit(npc, primary, gate, entry.transit.reason) then
+                npc.transit.departedAt = tonumber(entry.transit.departedAt) or 0
+              end
+            elseif destination == system.sectorIndex and type(entry.transit.arrivalPos) == 'table' then
+              local p = entry.transit.arrivalPos
+              primary:setPos(Vec3f(p.x, p.y, p.z))
+              npc.transit = nil
+            end
+          end
+        end
+        if authoritative and not npc.transit then actors[#actors + 1] = npc end
+      end
     end
   end
+  if authoritative then system.npcPopulationActors = actors end
 end
 
 -- Asteroid deposits are the mutable part of an otherwise deterministic world.
@@ -136,25 +460,46 @@ end
 function SaveGame.CaptureDeposits (system)
   local out = {}
   for key, remaining in pairs(system and system.depositState or {}) do
-    out[#out + 1] = { key = key, remaining = remaining }
+    out[#out + 1] = { key = key, remaining = remaining,
+      fingerprint = system.depositFingerprints and system.depositFingerprints[key] or nil }
   end
   table.sort(out, function (a, b) return a.key < b.key end)
   return out
 end
 
-function SaveGame.RestoreDeposits (system, data)
+function SaveGame.RestoreTombstones (system, data)
+  if system and system.restoreTombstones then system:restoreTombstones(data) end
+end
+
+function SaveGame.RestoreWorld (system, data)
   if not system or not data then return end
+  SaveGame.RestoreDeposits(system, data.deposits)
+  SaveGame.RestoreTombstones(system, data.tombstones)
+  local simTime = tonumber(data.simTime)
+  if not simTime or simTime ~= simTime or simTime == math.huge or simTime == -math.huge then
+    simTime = 0
+  end
+  system.time = math.max(0, simTime)
+end
+
+function SaveGame.RestoreDeposits (system, data)
+  if not system or type(data) ~= 'table' then return end
   system.depositState = {}
+  system.depositFingerprints = {}
   for _, entry in ipairs(data) do
-    if type(entry.key) == 'string' and tonumber(entry.remaining) then
+    if type(entry) == 'table' and type(entry.key) == 'string'
+       and type(entry.fingerprint) == 'string' and tonumber(entry.remaining) then
       system.depositState[entry.key] = math.max(0, math.floor(entry.remaining))
+      system.depositFingerprints[entry.key] = entry.fingerprint
     end
   end
   -- Usually restore runs before streaming creates the field, but applying to
   -- already-loaded rocks makes the function safe for in-place restores too.
   for _, child in ipairs(system.children or {}) do
-    if child.depositKey and child.yield and system.depositState[child.depositKey] ~= nil then
-      child.yield.remaining = system.depositState[child.depositKey]
+    local key = child.depositKey
+    local fingerprint = key and system.depositFingerprints[key]
+    if key and fingerprint and child.depositFingerprint == fingerprint and child.setDepositKey then
+      child:setDepositKey(key, fingerprint)
     end
   end
 end
@@ -172,9 +517,15 @@ function SaveGame.Capture (ship, meta, system)
     playerName    = meta and meta.playerName or 'Player',
     systemName    = meta and meta.systemName or '',
     regionName    = meta and meta.regionName or '',
+    sectorIndex   = meta and meta.sectorIndex or 0,
     seedHex       = meta and meta.seedHex or '',
   }
   if ship ~= nil then
+    data.playerShip = SaveGame.CaptureShip(ship)
+    local owner = ship.getOwner and ship:getOwner()
+    if owner and owner.getScannerDB then
+      data.playerScannerDB = ScannerDB.Capture(owner:getScannerDB())
+    end
     data.playerPos  = vec3(ship:getPos())
     data.playerVel  = vec3(ship:getVelocity())
     local rot = ship:getRot()
@@ -200,6 +551,8 @@ function SaveGame.Capture (ship, meta, system)
   if system then
     data.npcs = SaveGame.CaptureNpcs(system)
     data.deposits = SaveGame.CaptureDeposits(system)
+    data.tombstones = system.captureTombstones and system:captureTombstones() or {}
+    data.simTime = system.getTime and system:getTime() or 0
   end
   return data
 end
@@ -211,39 +564,49 @@ end
 function SaveGame.Restore (ship, data, system)
   if data == nil then return end
   if system then
-    SaveGame.RestoreDeposits(system, data.deposits)
+    SaveGame.RestoreWorld(system, data)
     SaveGame.RestoreNpcs(system, data)
   end
-  if ship == nil then return end
-  if data.playerPos then
-    ship:setPos(Vec3f(data.playerPos.x, data.playerPos.y, data.playerPos.z))
+  if ship == nil then
+    if system and system.rebindKnowledge then system:rebindKnowledge() end
+    return
   end
-  if data.playerVel then
-    ship:setVelocity(Vec3f(data.playerVel.x, data.playerVel.y, data.playerVel.z))
-  end
+  if type(data.playerShip) == 'table' then SaveGame.RestoreShip(ship, data.playerShip) end
+  local owner = ship.getOwner and ship:getOwner()
+  if type(data.playerScannerDB) == 'table' then restoreScannerDB(owner, data.playerScannerDB) end
+  local playerPos, playerVel = restoreVec(data.playerPos), restoreVec(data.playerVel)
+  if playerPos then ship:setPos(playerPos) end
+  if playerVel then ship:setVelocity(playerVel) end
   -- A zero quaternion is a corrupt save, not a heading: leave the fresh
   -- spawn's identity rotation rather than setting a degenerate one.
-  local r = data.playerRot
-  if r and (r.x ~= 0 or r.y ~= 0 or r.z ~= 0 or r.w ~= 0) then
-    ship:setRot(Quat(r.x, r.y, r.z, r.w))
-  end
+  local r = restoreQuat(data.playerRot)
+  if r and (r.x ~= 0 or r.y ~= 0 or r.z ~= 0 or r.w ~= 0) then ship:setRot(r) end
   -- Inside the fountain: hull first (a dead-ship save refuses at the
   -- caller), then credits and cargo.
-  if ship:hasHealth() and data.shipHealth then
-    ship:setHealth(data.shipHealth, data.shipHealthMax or ship.healthMax,
-                   data.shipHealthRate or ship.healthRate)
+  if ship:hasHealth() then
+    local value = finite(data.shipHealth)
+    local max = finite(data.shipHealthMax, ship.healthMax)
+    local rate = finite(data.shipHealthRate, ship.healthRate)
+    if value and max and max > 0 and rate then ship:setHealth(value, max, rate) end
   end
-  if data.playerCredits and data.playerCredits > 0 then
-    ship:addCredits(data.playerCredits)
-  end
-  if data.items then
+  local credits = finite(data.playerCredits)
+  if credits and credits > 0 then ship:addCredits(credits) end
+  -- `playerShip.items` is the authoritative cargo snapshot. The top-level
+  -- `items` array is the legacy mirror; applying both duplicates small stacks.
+  if type(data.items) == 'table' and not data.playerShip then
     for _, entry in ipairs(data.items) do
-      local item = itemByName(entry.item)
-      if item and entry.count and entry.count > 0 then
-        ship:addItem(item, entry.count)
+      if type(entry) == 'table' and type(entry.item) == 'string' then
+        local item = itemByName(entry.item)
+        local count = finite(entry.count)
+        if item and count and count > 0 then ship:addItem(item, count) end
       end
     end
   end
+  if system and type(data.playerShip) == 'table' and type(data.playerShip.dockedAt) == 'string' then
+    local parent = system.resolveStableId and system:resolveStableId(data.playerShip.dockedAt)
+    if parent and parent.hasDockable and parent:hasDockable() then parent:addDocked(ship) end
+  end
+  if system and system.rebindKnowledge then system:rebindKnowledge() end
 end
 
 -- ---------------------------------------------------------------------------

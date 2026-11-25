@@ -73,6 +73,37 @@ end
 check('equal-value routes diversify across six NPC seeds', distinct >= 3,
   string.format('distinct=%d', distinct))
 
+Policy.recordOutcome(p1, leanFast, 'cancelled', 100)
+local captureOk, snapshot = pcall(function () return Policy.Capture(p1) end)
+check('policy memory is serializable', captureOk and snapshot and snapshot.seed == 123)
+local runtimeRoute = job('runtime:999', 'mine', 1, 1)
+Policy.recordOutcome(p1, runtimeRoute, 'completed', 101)
+local captureOk2, snapshot2 = pcall(function () return Policy.Capture(p1) end)
+snapshot = captureOk2 and snapshot2 or { routes = {} }
+local hasRuntime = false
+for _, route in ipairs(snapshot.routes) do
+  if route.key == 'runtime:999' then hasRuntime = true end
+end
+check('runtime-only routes are excluded from persistence', not hasRuntime)
+local restoredPolicy = Policy.Create(0)
+local restoreOk = pcall(function () Policy.Restore(restoredPolicy, snapshot) end)
+check('policy restore retains seed and cooldown memory', restoreOk and restoredPolicy.seed == 123
+  and not Policy.canAssign(restoredPolicy, leanFast, 100)
+  and Policy.canAssign(restoredPolicy, leanFast, 1000))
+local stringSeed = 'npc:123:ship:123:1'
+local stringPolicy = Policy.Create(stringSeed)
+local stringRestored = Policy.Create(0)
+Policy.Restore(stringRestored, Policy.Capture(stringPolicy))
+check('string policy seeds survive restore', stringRestored.seed == stringSeed
+  and Policy.preference(stringRestored, 'mine') == Policy.preference(stringPolicy, 'mine'))
+local malformedPolicy = Policy.Create(7)
+local malformedOk = pcall(function ()
+  Policy.Restore(malformedPolicy, { seed = {}, routes = 42 })
+  Policy.Restore(malformedPolicy, { seed = 'ok', routes = { 42, { key = 'mine:ok' } } })
+end)
+check('malformed policy payloads fail closed', malformedOk and malformedPolicy.seed == 'ok'
+  and malformedPolicy.routes['mine:ok'] ~= nil)
+
 if failures == 0 then
   print(string.format('npc policy: %d checks passed', checks))
   os.exit(0)

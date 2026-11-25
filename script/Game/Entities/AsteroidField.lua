@@ -45,6 +45,7 @@
 -- file lives in it, so that would be a circular require of itself.
 local Asteroid = require('Game.Entities.Asteroid')
 local Seed     = require('Game.Seed')
+local Fingerprint = require('Game.GenerationFingerprint')
 
 local AsteroidField = {}
 AsteroidField.__index = AsteroidField
@@ -244,6 +245,8 @@ end
 function AsteroidField:generateChunk (cx, cy, cz, solids)
   local rng  = Seed.rng(self.streamTag, chunkSalt(cx, cy, cz))
   local cs   = self.chunkSize
+  local sector = tostring(self.system.sectorSeed or self.system.seed or 0)
+  local worldSeed = tostring(self.system.seed or (Seed.get and Seed.get()) or 0)
   local ox, oy, oz = cx * cs, cy * cs, cz * cs
   -- update() passes a snapshot shared by all chunks generated in that scan.
   -- Rewalking the whole System child list per chunk made a boundary crossing
@@ -363,7 +366,11 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
       scale = scale * (2.0 + 2.0 * rng:getUniform())
       if scale > self.largeMaxScale then scale = self.largeMaxScale end
     end
-    local asteroid = Asteroid(rng:get31(), scale, { static = self.static })
+    local rockSeed = rng:get31()
+    local asteroid = Asteroid(rockSeed, scale, { static = self.static })
+    local stableId = string.format('%s:%s:%d:%d:%d:%d',
+      self.streamTag, sector, cx, cy, cz, i)
+    asteroid.depositKey, asteroid.stableId = stableId, stableId
     asteroid:setPos(Vec3f(x, y, z))
     asteroid:setRot(rng:getQuat())
     -- The ORE: whether this rock is worth mining comes from the region's
@@ -379,6 +386,17 @@ function AsteroidField:generateChunk (cx, cy, cz, solids)
       -- isotopes are the reactors' fuel, the silver is the money.
       local Item = require('Game.Item')
       asteroid:addYield(rng:choose(Item.T1), 1.0)
+    end
+    asteroid.generationFingerprint = Fingerprint.Physical({
+      generator = 'stream', worldSeed = worldSeed, sectorSeed = sector,
+      scope = self.streamTag, cx = cx, cy = cy, cz = cz, slot = i,
+      chunkSize = cs, perChunk = perChunk, rockScale = rockScale, oreChance = oreChance,
+      seed = rockSeed, scale = asteroid:getScale(), x = x, y = y, z = z,
+    })
+    if asteroid:hasYield() then
+      local yield = asteroid:getYield()
+      asteroid.depositFingerprint = Fingerprint.Deposit(asteroid.generationFingerprint,
+        yield.item:getName(), yield.size, yield.initial)
     end
     -- Remember the generating position (NOT the entity's live position) so
     -- clumping anchors stay put even if a rock is later destroyed.
@@ -437,6 +455,23 @@ end
   radii, which is what produces hysteresis: a ship loitering near the boundary
   cannot thrash, because a chunk is only dropped once it is past unloadDist,
   which is strictly beyond the distance at which it would have been re-added. ]]
+function AsteroidField:materializeChunk (chunk)
+  local live = {}
+  for _, rock in ipairs(chunk.rocks) do
+    local asteroid = rock.entity
+    if self.system:isTombstoned(asteroid.stableId,
+       asteroid.depositFingerprint or asteroid.generationFingerprint) then
+      self.loadedCount = self.loadedCount - 1
+    else
+      self.system:addChild(asteroid)
+      asteroid:setDepositKey(asteroid.stableId, asteroid.depositFingerprint)
+      live[#live + 1] = rock
+    end
+  end
+  chunk.rocks = live
+  return #live
+end
+
 function AsteroidField:update (shipPos)
   local cs = self.chunkSize
   local px, py, pz = shipPos.x, shipPos.y, shipPos.z
@@ -486,13 +521,7 @@ function AsteroidField:update (shipPos)
            and not self.chunks[chunkSalt(cx, cy, cz)] then
           if not solids then solids = self:solids() end
           local chunk = self:generateChunk(cx, cy, cz, solids)
-          local sector = tostring(self.system.sectorSeed or self.system.seed or 0)
-          for i = 1, #chunk.rocks do
-            local asteroid = chunk.rocks[i].entity
-            self.system:addChild(asteroid)
-            asteroid:setDepositKey(string.format('%s:%s:%d:%d:%d:%d',
-              self.streamTag, sector, cx, cy, cz, i))
-          end
+          self:materializeChunk(chunk)
           touched = touched + 1
           loadedN = loadedN + 1
         end

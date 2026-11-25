@@ -10,6 +10,7 @@ local Label    = require('UI.Label')
 local Widget   = require('UI.Widget')
 local DrawEx   = require('UI.DrawEx')
 local ScannerDB = require('Game.ScannerDB')
+local Targeting = require('Game.Targeting')
 local TargetInfo = require('Game.TargetInfo')
 local ffi      = require('ffi')
 
@@ -84,6 +85,28 @@ function Preview:onDraw (focus, active)
   local x, y, sx, sy = self:getRectGlobal()
   DrawEx.RectOutline(x, y, sx, sy, Color(0.20, 0.35, 0.50, 0.55))
   local e = self.panel and self.panel.subject
+  if e and e.isWormhole then
+    -- Gates intentionally have no body or mesh. Show a compact portal
+    -- schematic rather than leaving their target preview blank.
+    local cx, cy = x + sx * 0.5, y + sy * 0.5
+    local rx = math.min(sx, sy) * 0.36
+    Draw.Color(0.20, 0.60, 1.00, 0.90)
+    for ring = 1, 3 do
+      local radius = rx * (1.0 - (ring - 1) * 0.24)
+      local ry = radius * 0.68
+      local segments = 32
+      local px, py
+      for i = 0, segments do
+        local angle = 2.0 * math.pi * i / segments
+        local nx, ny = cx + math.cos(angle) * radius,
+                       cy + math.sin(angle) * ry
+        if px then Draw.Line(px, py, nx, ny) end
+        px, py = nx, ny
+      end
+    end
+    Draw.Color(1, 1, 1, 1)
+    return
+  end
   if not (e and e.body and e.mesh) then return end
   local mesh = TargetInfo.ResolveMesh(e)
   if self.mesh ~= mesh then
@@ -144,7 +167,7 @@ function NpcInfoPanel.Create (ltheory)
 
   local function liveSubject ()
     local e = self.subject
-    if e and (e:isAlive() or e.isPlanet) and e.body then return e end
+    if e and Targeting.IsTargetable(e) then return e end
     return nil
   end
 
@@ -164,8 +187,7 @@ function NpcInfoPanel.Create (ltheory)
   local function contactFor (e)
     local player = self.ltheory and self.ltheory.player
     if not (e and player) then return nil end
-    local key = e.getRegistryId and e:getRegistryId() or ('entity:' .. tostring(e.id))
-    return ScannerDB.Get(player:getScannerDB(), key)
+    return ScannerDB.ContactFor(player:getScannerDB(), e)
   end
 
   row('Name', function ()
@@ -174,10 +196,12 @@ function NpcInfoPanel.Create (ltheory)
   end)
   row(function ()
     local e = liveSubject()
+    if e and e.isWormhole then return 'Destination' end
     return e and e.isPlanet and 'Radius' or 'Health'
   end, function ()
     local e = liveSubject()
     if not e then return '' end
+    if e.isWormhole then return TargetInfo.Destination(e) or '' end
     if e.isPlanet then return format('%.0f', e:getRadius()) end
     return e.health and format('%d / %d', e:getHealth(), e.healthMax) or ''
   end)

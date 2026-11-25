@@ -12,11 +12,15 @@
 ----------------------------------------------------------------------------]]--
 
 local Job = require('Game.Job')
+local RouteKey = require('Game.RouteKey')
 
 local Transport = subclass(Job, function (self, src, dst, item)
   self.src = src
   self.dst = dst
   self.item = item
+  self.srcKey = RouteKey.Entity(src)
+  self.dstKey = RouteKey.Entity(dst)
+  self.itemName = item:getName()
 end)
 
 function Transport:clone ()
@@ -38,7 +42,11 @@ function Transport:getKind ()
 end
 
 function Transport:getKey ()
-  return format('transport:%s:%s:%s', self.src.id, self.dst.id, self.item:getName())
+  return RouteKey.Encode('transport', self.srcKey, self.dstKey, self.itemName)
+end
+
+function Transport:isPersistent ()
+  return RouteKey.IsPersistent(self.srcKey) and RouteKey.IsPersistent(self.dstKey)
 end
 
 function Transport:getName ()

@@ -23,6 +23,10 @@ local Communication = require('Game.Communication')
 local Directives = require('Game.Directives')
 local NpcPopulation = require('Game.NpcPopulation')
 local NpcRegistry = require('Game.NpcRegistry')
+local NpcLog = require('Game.NpcLog')
+local Tombstones = require('Game.Tombstones')
+local Fingerprint = require('Game.GenerationFingerprint')
+local Knowledge = require('Game.Knowledge')
 
 local System = subclass(Entity, function (self, seed)
   self:addChildren()
@@ -47,6 +51,8 @@ local System = subclass(Entity, function (self, seed)
 
   self.players = {}
   self.npcs = NpcRegistry.Create()
+  self.npcTransit = {}
+  self.sectorIndex = nil
   self.directives = Directives.Create()
   self.comms = Communication.Create()
   self.npcSerial = 0
@@ -56,6 +62,12 @@ local System = subclass(Entity, function (self, seed)
   -- Stable asteroid-key -> remaining deposit units. Additive to the seeded
   -- world and serialized in saves, so streamed unload/reload cannot refill a rock.
   self.depositState = {}
+  self.depositFingerprints = {}
+  self.tombstones = Tombstones.Create((Config.game and Config.game.tombstoneLimit) or 4096)
+  self.stableIndex = {}
+  self.knowledgeShips = {}
+  self.npcStations = {}
+  self.npcStationIndex = {}
 
   -- The current sector's REGIONS and SEED, for the environmental field
   -- (13a/13f).
@@ -73,12 +85,21 @@ local System = subclass(Entity, function (self, seed)
   self.lightEntities = {}
   self.lightEntityIndex = {}
   self:register(Event.ChildAdded, function (system, event)
-    if event.child.hasLight and event.child:hasLight() then
+    local child = event.child
+    if child.stableId then system.stableIndex[child.stableId] = child end
+    if child.hasHealth and not child.tombstoneHook then
+      child.tombstoneHook = true
+      child:register(Event.Destroyed, function (entity)
+        system:recordDestroyed(entity)
+      end)
+    end
+    if child.hasLight and child:hasLight() then
       system:registerLightEntity(event.child)
     end
+    system:registerNpcStation(child)
   end)
   self:register(Event.ChildRemoved, function (system, event)
-    system:unregisterLightEntity(event.child)
+    system:handleChildRemoved(event)
   end)
 end)
 
@@ -99,6 +120,37 @@ function System:unregisterLightEntity (entity)
   self.lightEntities[last] = nil
   self.lightEntityIndex[entity] = nil
   if moved ~= entity then self.lightEntityIndex[moved] = i end
+end
+
+function System:registerNpcStation (entity)
+  if not entity or entity.isWormhole or not entity.hasDockable or not entity:hasDockable()
+     or not entity.addItem or not entity.removeItem or self.npcStationIndex[entity] then return end
+  local i = #self.npcStations + 1
+  self.npcStations[i], self.npcStationIndex[entity] = entity, i
+end
+
+function System:unregisterNpcStation (entity)
+  local i = self.npcStationIndex and self.npcStationIndex[entity]
+  if not i then return end
+  local last = #self.npcStations
+  local moved = self.npcStations[last]
+  self.npcStations[i], self.npcStations[last] = moved, nil
+  self.npcStationIndex[entity] = nil
+  if moved ~= entity then self.npcStationIndex[moved] = i end
+end
+
+function System:handleChildRemoved (event)
+  local child = event.child
+  if child.stableId and self.stableIndex[child.stableId] == child then
+    self.stableIndex[child.stableId] = nil
+  end
+  -- Docking reparents a live ship under a station. Keep its knowledge rebind
+  -- registration; deletion/despawn is the terminal removal path.
+  if child.deleted or (child.health and child.health <= 0) then
+    self:unregisterKnowledgeShip(child)
+  end
+  self:unregisterNpcStation(child)
+  self:unregisterLightEntity(child)
 end
 
 function System:addZone (zone)
@@ -164,6 +216,72 @@ function System:getTime ()
   return self.time or 0
 end
 
+function System:markTombstone (stableId, fingerprint)
+  if stableId == 'ship:player' then return false end
+  return self.tombstones and self.tombstones:Mark(stableId, fingerprint) or false
+end
+
+function System:isTombstoned (stableId, fingerprint)
+  if not self.tombstones then return false end
+  if fingerprint ~= nil then return self.tombstones:Matches(stableId, fingerprint) end
+  return self.tombstones:Has(stableId)
+end
+
+function System:captureTombstones ()
+  return self.tombstones and self.tombstones:Capture() or {}
+end
+
+function System:restoreTombstones (data)
+  if not self.tombstones or type(data) ~= 'table' then return end
+  local filtered = {}
+  for _, entry in ipairs(data) do
+    local key = type(entry) == 'string' and entry or type(entry) == 'table' and entry.key or nil
+    if key ~= 'ship:player' then filtered[#filtered + 1] = entry end
+  end
+  self.tombstones:Restore(filtered)
+end
+
+function System:resolveStableId (stableId)
+  return self.stableIndex and self.stableIndex[stableId] or nil
+end
+
+function System:registerKnowledgeShip (ship)
+  if not ship or not ship.knowledge then return end
+  self.knowledgeShips = self.knowledgeShips or {}
+  self.knowledgeShips[ship] = true
+  ship.knownYields = ship.knowledge.knownYields
+  ship.scannedAsteroids = ship.knowledge.scannedAsteroids
+end
+
+function System:unregisterKnowledgeShip (ship)
+  if self.knowledgeShips then self.knowledgeShips[ship] = nil end
+end
+
+function System:rebindKnowledge ()
+  if not self.knowledgeShips then return end
+  local sector = self.sectorSeed or self.seed
+  for ship in pairs(self.knowledgeShips) do
+    if ship.deleted or (ship.health and ship.health <= 0) then
+      self.knowledgeShips[ship] = nil
+    else
+      Knowledge.Rebind(ship.knowledge, function (key) return self:resolveStableId(key) end,
+        function (key, fingerprint) return self:isTombstoned(key, fingerprint) end, sector)
+      ship.knownYields = ship.knowledge.knownYields
+      ship.scannedAsteroids = ship.knowledge.scannedAsteroids
+    end
+  end
+end
+
+function System:recordDestroyed (entity)
+  if entity.stableId then self:markTombstone(entity.stableId, Knowledge.Fingerprint(entity)) end
+  local owner = entity.destroyedOwner or (entity.getOwner and entity:getOwner())
+  if owner and owner.isNpc and owner:isNpc() and #owner:getAssets() == 0 then
+    if owner.stableId then self:markTombstone(owner.stableId) end
+    owner:delete()
+    if owner:getParent() then owner:getParent():removeChild(owner) end
+  end
+end
+
 function System:update (dt)
   self.time = self:getTime() + dt
   Communication.update(self.comms, self:getTime())
@@ -214,7 +332,9 @@ function System:sweepDestroyed ()
       -- removeChild is deliberately lazy; a prior reparent/removal can leave a
       -- stale array slot until the next broadcast compacts it.
       if e.parent == parent then
-        if e.deleted or (e.health and e.health <= 0) then
+        local destroyed = e.health and e.health <= 0
+        if destroyed then self:recordDestroyed(e) end
+        if e.deleted or destroyed then
           parent:removeChild(e)
         elseif e.children then
           sweep(e)
@@ -365,6 +485,7 @@ function System:streamAsteroidField (ship)
     if self.asteroidField then
       self.asteroidField:clear()
       self.asteroidField = nil
+      self:rebindKnowledge()
       print('[system] field: cleared')
     end
     return
@@ -399,6 +520,7 @@ function System:streamAsteroidField (ship)
   if not (ship and ship.body) then return end
 
   local loaded, unloaded = self.asteroidField:update(ship:getPos())
+  if loaded > 0 or unloaded > 0 then self:rebindKnowledge() end
   -- Log only when the stream actually moves, so this cannot spam the console
   -- on a stationary ship (where it would return 0 every frame).
   if loaded > 0 then
@@ -490,6 +612,7 @@ function System:spawnAI (shipCount, opts)
     profile = opts.profile,
     organization = opts.organization or roleDef.organization,
   })
+  player.stableId = npcId
   -- THE BRAIN MUST BE IN THE WORLD: the capital's Think action ticks via
   -- Event.Update, which only fires for entities in the tree. The capital
   -- was never added to the system -- its Think never ran, and every ship
@@ -510,11 +633,14 @@ function System:spawnAI (shipCount, opts)
       variant = opts.variant,
       scale = roleDef.scale,
       pos = opts.pos,
+      shipId = opts.shipId and (shipCount > 1 and (opts.shipId .. ':' .. i) or opts.shipId),
     })
-    ship.npcRole = role
-    ship:setInventoryCapacity(roleDef.cargo)
-    ship:setOwner(player) -- routes through addAsset: the ship book
-    ship:setName(opts.name or NameGen.npcShipName(self.rng))
+    if ship then
+      ship.npcRole = role
+      ship:setInventoryCapacity(roleDef.cargo)
+      ship:setOwner(player) -- routes through addAsset: the ship book
+      ship:setName(opts.name or NameGen.npcShipName(self.rng))
+    end
   end
   player:addItem(Item.Credit, kStartCredits)
   player:pushAction(Actions.Think())
@@ -522,31 +648,161 @@ function System:spawnAI (shipCount, opts)
   return player
 end
 
+function System:transitIdsFor (sectorIndex)
+  local out = {}
+  for _, entry in ipairs(self.npcTransit or {}) do
+    if entry.destination == sectorIndex and entry.npc and entry.npc.getNpcId then
+      out[entry.npc:getNpcId()] = true
+    end
+  end
+  return out
+end
+
+function System:holdNPCPopulation (sectorIndex)
+  local actors = {}
+  for _, npc in ipairs(self.npcPopulationActors or {}) do actors[#actors + 1] = npc end
+  local held = 0
+  for _, npc in ipairs(actors) do
+    local ship = npc:getControlling()
+    if not ship then
+      for _, asset in ipairs(npc:getAssets()) do ship = asset; break end
+    end
+    if ship then
+      local pos = ship:getPos()
+      local gate = {
+        getPartnerSector = function () return sectorIndex end,
+        getPartnerPos = function () return pos end,
+        getName = function () return 'sector boundary' end,
+      }
+      if self:beginNpcTransit(npc, ship, gate, 'sector-hold', true) then held = held + 1 end
+    end
+  end
+  return held
+end
+
+function System:beginNpcTransit (npc, ship, gate, reason, allowCurrentSector)
+  if not (npc and ship and gate and gate.getPartnerSector and gate.getPartnerPos) then return false end
+  if npc.transit then return false end
+  local destination = gate:getPartnerSector()
+  if destination == nil or (destination == self.sectorIndex and not allowCurrentSector) then return false end
+  local assets = {}
+  for _, asset in ipairs(npc:getAssets()) do assets[#assets + 1] = asset end
+  if #assets == 0 then assets[1] = ship end
+  local arrival = gate:getPartnerPos()
+  local ax, ay, az = tonumber(arrival and arrival.x), tonumber(arrival and arrival.y), tonumber(arrival and arrival.z)
+  if not ax or not ay or not az or ax ~= ax or ay ~= ay or az ~= az
+     or math.abs(ax) == math.huge or math.abs(ay) == math.huge or math.abs(az) == math.huge then return false end
+  local SaveGame
+  for _, asset in ipairs(assets) do
+    if asset.job then
+      SaveGame = SaveGame or require('Game.SaveGame')
+      asset.pendingJob = SaveGame.CaptureJob(asset)
+      NpcLog.Event(asset, 'job checkpoint captured before sector transit')
+    end
+  end
+  local entry = {
+    npc = npc, ship = ship, assets = assets, destination = destination,
+    fromSector = self.sectorIndex, reason = reason or 'travel', departedAt = self:getTime(),
+    arrivalPos = arrival and { x = arrival.x, y = arrival.y, z = arrival.z } or nil,
+  }
+  npc.transit = {
+    destination = destination, fromSector = entry.fromSector, reason = entry.reason,
+    departedAt = entry.departedAt, arrivalPos = entry.arrivalPos,
+  }
+  self.npcTransit = self.npcTransit or {}
+  self.npcTransit[#self.npcTransit + 1] = entry
+  for i = #(self.npcPopulationActors or {}), 1, -1 do
+    if self.npcPopulationActors[i] == npc then table.remove(self.npcPopulationActors, i) end
+  end
+  for _, asset in ipairs(assets) do
+    local controller = asset.thrustController
+    if controller then
+      controller:clear()
+      if controller.engineSound then controller.engineSound:setVolume(0) end
+    end
+    if asset.setVelocity then asset:setVelocity(Vec3f(0, 0, 0)) end
+    local parent = asset.getParent and asset:getParent()
+    if parent and parent.hasDockable and parent:hasDockable() then parent:removeDocked(asset) end
+    parent = asset.getParent and asset:getParent()
+    if parent then parent:removeChild(asset, true) end
+  end
+  if npc.getParent and npc:getParent() then npc:getParent():removeChild(npc) end
+  NpcLog.Event(ship, format('entered %s: sector %s -> %s, identity/cargo/job held in transit',
+    gate:getName(), tostring(entry.fromSector), tostring(destination)))
+  return true
+end
+
+function System:restoreNpcTransit (sectorIndex)
+  local restored = 0
+  for i = #(self.npcTransit or {}), 1, -1 do
+    local entry = self.npcTransit[i]
+    if entry.destination == sectorIndex then
+      table.remove(self.npcTransit, i)
+      local npc, ship = entry.npc, entry.ship
+      if npc.deleted or ship.deleted or self:isTombstoned(npc:getNpcId())
+         or (ship.stableId and self:isTombstoned(ship.stableId)) then
+        self:despawnNpc(npc)
+      else
+        local arrival = entry.arrivalPos or { x = 0, y = 0, z = 0 }
+        for j, asset in ipairs(entry.assets) do
+          if not asset.deleted then
+            if asset.clearActions then
+              asset.npcJobCheckpoint = true
+              asset:clearActions()
+              asset.npcJobCheckpoint = false
+            end
+            asset.job = nil
+            local offset = j == 1 and Vec3f(0, 0, 0)
+              or Vec3f((j - 1) * 200, 0, (j - 1) * 100)
+            asset:setPos(Vec3f(arrival.x + offset.x, arrival.y + offset.y, arrival.z + offset.z))
+            self:addChild(asset)
+          end
+        end
+        self:addChild(npc)
+        self:registerNpc(npc)
+        self:registerCommunicator(npc)
+        self:addPlayer(npc)
+        if not npc:getControlling() or npc:getControlling().deleted then npc:setControlling(ship) end
+        self.npcPopulationActors = self.npcPopulationActors or {}
+        self.npcPopulationActors[#self.npcPopulationActors + 1] = npc
+        npc.transit, ship.npcTravel = nil, nil
+        npc.npcNextTravelAt = self:getTime()
+          + ((Config and Config.game and Config.game.npcTravelInterval) or 300)
+        restored = restored + 1
+        NpcLog.Event(ship, format('arrived sector %s at (%.0f,%.0f,%.0f); same actor/ship/job resumed',
+          tostring(sectorIndex), arrival.x, arrival.y, arrival.z))
+      end
+    end
+  end
+  return restored
+end
+
+function System:despawnNpc (npc)
+  local assets = {}
+  for _, ship in ipairs(npc:getAssets()) do assets[#assets + 1] = ship end
+  for _, ship in ipairs(assets) do
+    ship:clearActions()
+    local parent = ship:getParent()
+    if parent and parent.hasDockable and parent:hasDockable() then
+      parent:removeDocked(ship)
+    end
+    local controller = ship.thrustController
+    if controller and controller.engineSound then
+      controller.engineSound:free()
+      controller.engineSound = nil
+    end
+    ship:delete()
+    if ship:getParent() then ship:getParent():removeChild(ship) end
+  end
+  npc:clearActions()
+  npc:delete()
+  if npc:getParent() then npc:getParent():removeChild(npc) end
+end
+
 function System:despawnNPCPopulation ()
   local actors = self.npcPopulationActors or {}
   local count = #actors
-  for _, npc in ipairs(actors) do
-    local assets = {}
-    for _, ship in ipairs(npc:getAssets()) do assets[#assets + 1] = ship end
-    for _, ship in ipairs(assets) do
-      ship:clearActions()
-      local parent = ship:getParent()
-      if parent and parent.hasDockable and parent:hasDockable() then
-        parent:removeDocked(ship)
-        parent = ship:getParent()
-      end
-      local controller = ship.thrustController
-      if controller and controller.engineSound then
-        controller.engineSound:free()
-        controller.engineSound = nil
-      end
-      ship:delete()
-      if ship:getParent() then ship:getParent():removeChild(ship) end
-    end
-    npc:clearActions()
-    npc:delete()
-    if npc:getParent() then npc:getParent():removeChild(npc) end
-  end
+  for _, npc in ipairs(actors) do self:despawnNpc(npc) end
   self.npcPopulationActors = {}
   return count
 end
@@ -559,6 +815,7 @@ function System:spawnNPCPopulation (seed, opts)
   local radius = math.max(500, opts.radius or 12000)
   local actors = {}
   for i, entry in ipairs(plan) do
+    if opts.exclude and opts.exclude[entry.id] then goto continue end
     local roleDef = NpcPopulation.Roles[entry.role]
     local angle = (entry.seed % 628318) / 1000.0
     local distance = radius * (0.35 + (entry.seed % 1000) / 1800.0)
@@ -566,6 +823,7 @@ function System:spawnNPCPopulation (seed, opts)
     local pos = center + Vec3f(math.cos(angle) * distance, height, math.sin(angle) * distance)
     local npc = self:spawnAI(1, {
       npcId = entry.id,
+      shipId = entry.shipId,
       name = roleDef.name .. ' ' .. i,
       role = entry.role,
       shipType = roleDef.shipType,
@@ -575,7 +833,12 @@ function System:spawnNPCPopulation (seed, opts)
       profile = { role = entry.role, variant = entry.variant },
       organization = roleDef.organization,
     })
-    actors[i] = npc
+    if self:isTombstoned(entry.id) then
+      self:despawnNpc(npc)
+    else
+      actors[#actors + 1] = npc
+    end
+    ::continue::
   end
   self.npcPopulationActors = actors
   return actors
@@ -660,12 +923,14 @@ function System:findScanTarget (scanner, maxRange)
   local range = maxRange or (Config.game and Config.game.scanSearchRange) or 15000
   local range2 = range * range
   local origin = scanner:getPos()
-  local scanned = scanner.scannedAsteroids or {}
+  scanner.knowledge = scanner.knowledge or Knowledge.Create()
+  scanner.scannedAsteroids = scanner.knowledge.scannedAsteroids
+  local scanned = scanner.knowledge
   local best, bestDist = nil, range2
   for _, entity in ipairs(self.children or {}) do
     if entity ~= scanner and entity.parent == self and entity.isAsteroid and entity.body
        and not entity.deleted and not (entity.isDestroyed and entity:isDestroyed())
-       and not scanned[entity] then
+       and not Knowledge.Scanned(scanned, entity) then
       local delta = entity:getPos() - origin
       local dist = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z
       if dist < bestDist then best, bestDist = entity, dist end
@@ -688,8 +953,31 @@ function System:npcTargets (exclude)
   return out
 end
 
-function System:spawnAsteroidField (count, oreCount, fieldPos)
+local function refreshStartupFingerprint (asteroid)
+  local meta = asteroid.startupGeneration
+  if not meta then return end
+  local pos = asteroid:getPos()
+  asteroid.generationFingerprint = Fingerprint.Physical({
+    generator = 'startup', worldSeed = meta.worldSeed, sectorSeed = meta.sectorSeed,
+    scope = meta.scope, slot = meta.slot, chunkSize = 0, perChunk = meta.perChunk,
+    rockScale = 1, oreChance = meta.oreChance, seed = meta.seed, scale = meta.scale,
+    x = pos.x, y = pos.y, z = pos.z,
+  })
+  if asteroid:hasYield() then
+    local yield = asteroid:getYield()
+    asteroid.depositFingerprint = Fingerprint.Deposit(asteroid.generationFingerprint,
+      yield.item:getName(), yield.size, yield.initial)
+  else
+    asteroid.depositFingerprint = nil
+  end
+end
+
+function System:spawnAsteroidField (count, oreCount, fieldPos, opts)
+  opts = type(opts) == 'table' and opts or {}
   local rng = self.rng
+  local worldSeed = tostring(self.seed or 0)
+  local fieldScope = fieldPos and format('startup:%d:%d:%s:%s:%s', count, oreCount,
+    tostring(fieldPos.x), tostring(fieldPos.y), tostring(fieldPos.z)) or 'startup:random'
   local zone = Entities.Zone(format('%s Field', genName(rng)))
   zone.pos = fieldPos or rng:getDir3():scale(kSystemScale * (1.0 + rng:getExp()))
 
@@ -707,7 +995,8 @@ function System:spawnAsteroidField (count, oreCount, fieldPos)
 
     -- scale is 2..~5 (exp distribution). Smaller == lower health (see Asteroid).
     local scale = 2 + 3 * rng:getExp()
-    local asteroid = Entities.Asteroid(rng:get31(), scale)
+    local rockSeed = rng:get31()
+    local asteroid = Entities.Asteroid(rockSeed, scale)
     asteroid:setPos(pos)
     asteroid:setScale(scale)
     asteroid:setRot(rng:getQuat())
@@ -723,9 +1012,19 @@ function System:spawnAsteroidField (count, oreCount, fieldPos)
       asteroid:addYield(rng:choose(Item.T1), 1.0)
     end
 
-    zone:add(asteroid)
-    self:addChild(asteroid)   -- <-- this is what puts it in the live world
-    asteroid:setDepositKey('startup:' .. i)
+    local stableId = 'startup:' .. i
+    asteroid.stableId = stableId
+    asteroid.startupGeneration = {
+      worldSeed = worldSeed, sectorSeed = tostring(self.sectorSeed or 0),
+      scope = fieldScope, slot = i, perChunk = count,
+      oreChance = oreCount / math.max(1, count), seed = rockSeed, scale = asteroid:getScale(),
+    }
+    refreshStartupFingerprint(asteroid)
+    zone:add(asteroid)        -- preserve deterministic clumping anchors
+    if opts.deferTombstones or not self:isTombstoned(stableId, Knowledge.Fingerprint(asteroid)) then
+      self:addChild(asteroid) -- <-- this is what puts it in the live world
+      asteroid:setDepositKey(stableId, asteroid.depositFingerprint)
+    end
   end
   self:addZone(zone)
   return zone
@@ -738,6 +1037,19 @@ function System:moveAsteroidField (zone, pos)
     if child.body and not child.deleted then
       local childPos = child:getPos()
       child:setPos(Vec3f(childPos.x + dx, childPos.y + dy, childPos.z + dz))
+      refreshStartupFingerprint(child)
+    end
+  end
+  -- Fingerprints include the final world position. Apply tombstones and saved
+  -- deposit overlays only after translation, never against the temporary
+  -- pre-placement coordinates used to preserve the seeded clumping layout.
+  for _, child in ipairs(zone.children or {}) do
+    if child.body and not child.deleted then
+      if self:isTombstoned(child.stableId, Knowledge.Fingerprint(child)) then
+        if child.parent then self:removeChild(child) end
+      else
+        child:setDepositKey(child.stableId, child.depositFingerprint)
+      end
     end
   end
 end
@@ -892,13 +1204,19 @@ function System:spawnMoon (planet, index)
   return moon
 end
 
+function System.ValidateModuleEntry (entry)
+  return type(entry) == 'table' and (entry.type == 'Thruster' or entry.type == 'Turret')
+    and type(entry.index) == 'number' and entry.index >= 1 and entry.index % 1 == 0
+end
+
 function System:spawnShip (kind, opts)
   opts = opts or {}
   if not ShipArchetypes.Defs[kind] then kind = 'fighter' end
   kind = kind or 'fighter'
   local def = ShipArchetypes.Get(kind)
   local variant = math.max(1, math.floor(opts.variant or 1))
-  local cacheKey = kind .. ':v' .. variant .. ':Type'
+  local cacheKey = kind .. ':v' .. variant .. ':s' .. tostring(opts.seed or 'default')
+    .. ':z' .. tostring(opts.scale or def.scale) .. ':Type'
   if not self[cacheKey] then
     local seed = opts.seed or self.rng:get31()
     local generator = Gen.Ship[ShipArchetypes.Generator(kind, variant)]
@@ -907,29 +1225,46 @@ function System:spawnShip (kind, opts)
       kind = kind, classId = def.classId, model = def.model,
     })
   end
-  local ship = self[cacheKey]:instantiate()
+  local ship = self[cacheKey]:instantiate(opts.shipId)
+  ship.shipKind = kind
+  ship.shipVariant = variant
+  ship.prototypeSeed = opts.seed or self[cacheKey].seed
   ship:setInventoryCapacity(opts.cargo or def.cargo)
   if opts.pos then
     ship:setPos(opts.pos)
   else
     ship:setPos(self.rng:getDir3():scale(kSystemScale * (1.0 + self.rng:getExp())))
   end
+  if opts.shipId and self:isTombstoned(opts.shipId) then
+    ship:delete()
+    return nil
+  end
   self:addChild(ship)
 
-  if true then
+  if type(opts.modules) == 'table' then
+    for _, entry in ipairs(opts.modules) do
+      if not System.ValidateModuleEntry(entry) then goto continue end
+      local module
+      if entry.type == 'Thruster' then
+        module = Entities.Thruster()
+        module:setScale(0.5 * ship:getScale())
+      elseif entry.type == 'Turret' then
+        module = Entities.Turret()
+        module:setScale(2 * ship:getScale())
+      end
+      if module and not ship:plug(module, entry.index) then module:delete() end
+      ::continue::
+    end
+  else
     while true do
       local thruster = Entities.Thruster()
       thruster:setScale(0.5 * ship:getScale())
-      -- TODO : Does this leak a Thruster/RigidBody?
-      if not ship:plug(thruster) then break end
+      if not ship:plug(thruster) then thruster:delete(); break end
     end
-  end
-  if true then
     while true do
       local turret = Entities.Turret()
       turret:setScale(2 * ship:getScale())
-      -- TODO : Does this leak a Turret/RigidBody?
-      if not ship:plug(turret) then break end
+      if not ship:plug(turret) then turret:delete(); break end
     end
   end
   return ship
@@ -937,6 +1272,8 @@ end
 
 function System:spawnStation ()
   local station = Entities.Station(self.rng:get31())
+  station.stableId = 'station:main'
+  station.shipyard = true
   local p = self.rng:getDisc():scale(kSystemScale)
   station:setPos(Vec3f(p.x, 0, p.y))
   station:setScale(100)
@@ -998,6 +1335,10 @@ function System:spawnStation ()
   for _, out in ipairs(Production.EnergyNuclear.outputs) do
     station.market:addStandingSell(station, out.item, 200,
       Item.Price[out.item] or 20)
+  end
+  if self:isTombstoned(station.stableId) then
+    station:delete()
+    return nil
   end
   self:addChild(station)
   return station

@@ -63,7 +63,9 @@ check('higher resolution upgrades existing contact', contact.tier == 4
   and contact.firstSeen == 10 and contact.lastSeen == 20 and contact.position.x == 4)
 check('scanner database count is unique', ScannerDB.Count(db) == 1)
 check('different pilots have separate databases', ScannerDB.Count(ScannerDB.Create('npc:a')) == 0)
-local ore = { id = 3, isAsteroid = true, getName = function () return 'Ore Rock' end,
+local ore = { id = 3, stableId = 'asteroidField:1:0:0:0:1',
+  depositFingerprint = 'ore-fp-1', isAsteroid = true,
+  getName = function () return 'Ore Rock' end,
   hasYield = function () return true end,
   getYield = function () return { item = { getName = function () return 'Iron Ore' end } } end }
 local planet = { id = 4, isPlanet = true, getName = function () return 'Planet' end }
@@ -78,6 +80,61 @@ check('completed resource scan identifies its yield',
   oreContact.yieldIdentified == true and oreContact.yieldItem == 'Iron Ore')
 check('planet contacts have planet frequency class', ScannerDB.Record(db, planet, 4, 30).signal == 'planet')
 check('ship contacts have ship frequency class', ScannerDB.Record(db, vessel, 4, 30).signal == 'ship')
+check('asteroid contact uses structural key', ScannerDB.Get(db, 'asteroidField:1:0:0:0:1') == oreContact)
+local captureOk, snapshot = pcall(function () return ScannerDB.Capture(db) end)
+check('scanner database is serializable', captureOk and snapshot and #snapshot.contacts == 2)
+local restoredDb = ScannerDB.Create('player')
+local restoreOk = pcall(function () ScannerDB.Restore(restoredDb, snapshot) end)
+check('scanner database restores contacts and yield knowledge', restoreOk
+  and ScannerDB.Count(restoredDb) == 2
+  and ScannerDB.Get(restoredDb, 'asteroidField:1:0:0:0:1').yieldItem == 'Iron Ore')
+check('entity lookup uses the structural scanner key', ScannerDB.ContactFor(db, ore) == oreContact)
+local replacedOre = { stableId = ore.stableId, depositFingerprint = 'ore-fp-2',
+  isAsteroid = true, getName = function () return 'Replacement' end,
+  hasYield = function () return true end }
+check('entity lookup rejects a replaced asteroid fingerprint',
+  ScannerDB.ContactFor(db, replacedOre) == nil)
+local runtime = { id = 99, getName = function () return 'Runtime' end }
+ScannerDB.Record(db, runtime, 4, 40)
+check('runtime contacts are excluded from persistence', #ScannerDB.Capture(db).contacts == 2)
+local malformedDb = ScannerDB.Create('player')
+local malformedOk = pcall(function ()
+  ScannerDB.Restore(malformedDb, { ownerId = 'player', contacts = {
+    42, { key = 'runtime:1' }, { key = 'ship:duplicate', tier = 1 },
+    { key = 'ship:duplicate', tier = 4 },
+  } })
+end)
+check('malformed and duplicate scanner contacts are handled safely', malformedOk
+  and ScannerDB.Count(malformedDb) == 1
+  and ScannerDB.Get(malformedDb, 'ship:duplicate').tier == 4)
+local wrongOwner = ScannerDB.Create('npc:other')
+ScannerDB.Restore(wrongOwner, snapshot)
+check('scanner payload cannot override another owner', ScannerDB.Count(wrongOwner) == 0)
+local isolated = ScannerDB.Create('player')
+ScannerDB.Restore(isolated, snapshot)
+local savedContact = ScannerDB.Get(isolated, 'ship:seed:1')
+savedContact.position.x = 999
+local payloadContact
+for _, entry in ipairs(snapshot.contacts) do
+  if entry.key == 'ship:seed:1' then payloadContact = entry end
+end
+check('restored scanner positions do not alias payload tables',
+  payloadContact and payloadContact.position.x ~= 999)
+for i = 1, 20 do ScannerDB.AddLog(isolated, 'ship:seed:1', 'log' .. i, i) end
+check('scanner logs remain bounded', #savedContact.logs == 16)
+local hud = io.open(root .. '/script/Game/Controls/HUD.lua'):read('*a')
+local panel = io.open(root .. '/script/Game/GUI/NpcInfoPanel.lua'):read('*a')
+check('HUD radar uses structural scanner lookup', hud:find('ScannerDB.ContactFor', 1, true)
+  and hud:find('ScannerDB.Key', 1, true) and not hud:find("('entity:' .. tostring(entity.id))", 1, true))
+check('NPC info uses fingerprint-aware scanner lookup', panel:find('ScannerDB.ContactFor', 1, true)
+  and not panel:find("('entity:' .. tostring(e.id))", 1, true))
+local unfingerprintedOre = { stableId = 'asteroidField:1:0:0:0:9', isAsteroid = true,
+  getName = function () return 'Legacy Ore' end, hasYield = function () return true end,
+  getYield = function () return { item = { getName = function () return 'Iron Ore' end } } end }
+local legacyDb = ScannerDB.Create('player')
+ScannerDB.Record(legacyDb, unfingerprintedOre, 4, 10, nil, true)
+check('unfingerprinted asteroid contacts fail closed', ScannerDB.ContactFor(legacyDb, unfingerprintedOre) == nil)
+check('unfingerprinted asteroid contacts are not persisted', #ScannerDB.Capture(legacyDb).contacts == 0)
 
 if failures == 0 then
   print(string.format('registry/scanner: %d checks passed', checks))

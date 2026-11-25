@@ -41,8 +41,15 @@ function TargetInfo.Deposit (entity, contact)
   return string.format('%d / %d', remaining, initial)
 end
 
+function TargetInfo.Destination (entity)
+  if not entity or not entity.isWormhole then return nil end
+  return entity.getPartnerName and entity:getPartnerName()
+    or entity.getPartnerSector and ('Sector ' .. tostring(entity:getPartnerSector()))
+    or nil
+end
+
 function TargetInfo.HasDisposition (entity)
-  return entity and not entity.isAsteroid and not entity.isPlanet
+  return entity and not entity.isAsteroid and not entity.isPlanet and not entity.isWormhole
 end
 
 function TargetInfo.SurfaceGap (entity, ship)

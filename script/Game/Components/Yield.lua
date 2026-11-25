@@ -63,11 +63,16 @@ function Entity:getYieldInitial ()
   return self.yield and self.yield.initial or 0
 end
 
-function Entity:setDepositKey (key)
+function Entity:setDepositKey (key, fingerprint)
   self.depositKey = key
+  self.depositFingerprint = fingerprint
+  if not self.yield then return end
   local root = self.getRoot and self:getRoot()
-  if root and root.depositState and root.depositState[key] ~= nil then
-    self.yield.remaining = math.max(0, math.floor(root.depositState[key]))
+  if not root or not root.depositState or not root.depositFingerprints then return end
+  if fingerprint == nil or root.depositFingerprints[key] ~= fingerprint then return end
+  local remaining = root.depositState[key]
+  if remaining ~= nil then
+    self.yield.remaining = math.max(0, math.min(self.yield.initial, math.floor(remaining)))
   end
 end
 
@@ -79,6 +84,10 @@ function Entity:consumeYield (count)
   local root = self.getRoot and self:getRoot()
   if root and root.depositState and self.depositKey then
     root.depositState[self.depositKey] = self.yield.remaining
+    if self.depositFingerprint then
+      root.depositFingerprints = root.depositFingerprints or {}
+      root.depositFingerprints[self.depositKey] = self.depositFingerprint
+    end
   end
   return taken
 end

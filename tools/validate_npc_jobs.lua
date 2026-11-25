@@ -78,13 +78,28 @@ _G.requireAll = function ()
   return { MoveTo = function () return { onStart = function () end, onStop = function () end,
     getName = function () return 'MoveTo' end } end, MineAt = function () return {} end,
     DockAt = function () return {} end, Undock = function () return {} end,
-    Stop = function () return {} end,
+    Stop = function () return { getName = function () return 'Stop' end,
+      onStart = function () end, onStop = function () end } end,
     Patrol = function () return { getName = function () return 'Patrol' end,
       onStart = function () end, onStop = function () end } end,
     Scan = function () return { getName = function () return 'Scan' end,
       onStart = function () end, onStop = function () end } end,
+    TravelTo = function (gate) return { gate = gate, getName = function () return 'TravelTo' end,
+      onStart = function () end, onStop = function () end } end,
+    Repair = function (station) return { target = station, getName = function () return 'Repair' end,
+      onStart = function () end, onStop = function () end } end,
+    Refit = function (station) return { target = station, getName = function () return 'Refit' end,
+      onStart = function () end, onStop = function () end } end,
+    PurchaseShip = function (station) return { target = station, getName = function () return 'PurchaseShip' end,
+      onStart = function () end, onStop = function () end } end,
+    Undock = function () return { getName = function () return 'Undock' end,
+      onStart = function () end, onStop = function () end } end,
     Flee = function (source, duration) return Flee(source, duration) end }
 end
+
+local item = { getMass = function () return 1 end, getName = function () return 'Ore' end }
+local creditItem = { getMass = function () return 0 end, getName = function () return 'Credit' end }
+package.loaded['Game.Item'] = { Credit = creditItem, All = function () return { item, creditItem } end }
 
 local Job = dofile(root .. '/script/Game/Job.lua')
 package.loaded['Game.Job'] = Job
@@ -103,7 +118,6 @@ local function check (name, ok, detail)
   end
 end
 
-local item = { getMass = function () return 1 end, getName = function () return 'Ore' end }
 local trader = {
   getSellToPrice = function () return 500 end,
   computeTrade = function () return 10, 500 end,
@@ -116,16 +130,25 @@ local function endpoint (id, distance)
     getTrader = function () return trader end,
     getYield = function () return { item = item } end,
     hasYield = function (self) return not self.empty end,
+    stableId = 'entity:' .. id,
   }
 end
 
 local source, dest = endpoint(11, 20), endpoint(22, 20)
+source.depositFingerprint = 'source-fp'
+local Knowledge = require('Game.Knowledge')
 local mine, transport = Mine(source, dest), Transport(source, dest, item)
 local mineOk, mineKey = pcall(function () return mine:getKey() end)
 local transportOk, transportKey = pcall(function () return transport:getKey() end)
-check('mine route has a stable structural key', mineOk and mineKey == 'mine:11:22:Ore', tostring(mineKey))
-check('transport route has a stable structural key', transportOk and transportKey == 'transport:11:22:Ore', tostring(transportKey))
-local knownAsset = { knownYields = { [source] = true } }
+check('mine route has a structural key', mineOk and type(mineKey) == 'string', tostring(mineKey))
+check('transport route has a structural key', transportOk and type(transportKey) == 'string', tostring(transportKey))
+local recreatedSource, recreatedDest = endpoint(999, 20), endpoint(888, 20)
+recreatedSource.stableId, recreatedDest.stableId = source.stableId, dest.stableId
+check('mine route key survives endpoint recreation', Mine(recreatedSource, recreatedDest):getKey() == mineKey)
+check('transport route key survives endpoint recreation',
+  Transport(recreatedSource, recreatedDest, item):getKey() == transportKey)
+check('mine and transport route keys differ', mineKey ~= transportKey)
+local knownAsset = { knowledge = Knowledge.FromLegacy({ [source] = true }, { [source] = true }) }
 check('known live yield is minable', mine:isKnown(knownAsset))
 source.deleted = true
 check('deleted yield is not minable', not mine:isKnown(knownAsset))
@@ -148,7 +171,8 @@ local function asset (id)
   e:addActions()
   e:addHealth(100, 0)
   e.assetId = id
-  e.knownYields = { [source] = true }
+  e.knowledge = Knowledge.FromLegacy({ [source] = true }, { [source] = true })
+  e.knownYields, e.scannedAsteroids = e.knowledge.knownYields, e.knowledge.scannedAsteroids
   e.owner = { getNpcId = function () return 'npc:test' end }
   function e:getRoot () return rootEntity end
   function e:getInventoryCapacity () return 10 end
@@ -162,7 +186,9 @@ think:manageAsset(a)
 local assigned = a:getCurrentAction()
 check('Think assigns a cloned mine action', assigned ~= nil and assigned ~= mine)
 check('asset remembers the exact active clone', a.job == assigned)
+local originalMineKey = mine:getKey()
 mine.src = endpoint(99, 20)
+check('pooled mine retargeting refreshes route identity', mine:getKey() ~= originalMineKey)
 check('pooled mine retargeting cannot mutate active route', assigned.src.id == 11)
 mine.src = source
 
@@ -176,6 +202,44 @@ check('completion records policy outcome', policyOk and policy.routes[mine:getKe
 check('completed job leaves an idle action stack', a:isIdle(), 'actions=' .. #a.actions)
 think:manageAsset(a)
 check('completed route is not immediately reassigned', a:isIdle())
+local checkpointAsset = asset(16)
+think:manageAsset(checkpointAsset)
+local checkpointPolicy = think:getPolicy(checkpointAsset)
+checkpointAsset.npcJobCheckpoint = true
+checkpointAsset:clearActions()
+checkpointAsset.npcJobCheckpoint = false
+check('sector checkpointing does not record a cancelled job',
+  checkpointAsset:isIdle() and checkpointAsset.job
+  and checkpointPolicy.routes[mine:getKey()] == nil)
+
+local knownSource = endpoint(77, 20)
+knownSource.stableId, knownSource.depositFingerprint = 'rock:known', 'source-fp'
+rootEntity.resolveStableId = function (_, key)
+  if key == 'entity:11' then return source end
+  if key == 'rock:known' then return knownSource end
+  if key == 'entity:22' then return dest end
+end
+rootEntity.isTombstoned = function () return false end
+a.actions = {}
+a.pendingJob = { kind = 'mine', src = 'entity:11', dst = 'entity:22', item = 'Ore',
+  srcFingerprint = 'source-fp', state = 3, action = 'Stop' }
+think:restorePendingJob(a)
+check('pending mine job rebinds stable endpoints', a.job and a.job.src == source
+  and a.job.dst == dest and a.pendingJob == nil)
+check('pending job restores its braking subaction', a.jobState == 2
+  and a:getCurrentAction():getName() == 'Stop')
+a:clearActions()
+a.knowledge = Knowledge.Create()
+Knowledge.Restore(a.knowledge, {
+  { key = 'rock:known', fingerprint = 'source-fp', yieldIdentified = true },
+  { key = 'rock:unloaded', fingerprint = 'unloaded-fp', yieldIdentified = true },
+})
+a.knownYields, a.scannedAsteroids = a.knowledge.knownYields, a.knowledge.scannedAsteroids
+Knowledge.Rebind(a.knowledge, function (key) return rootEntity:resolveStableId(key) end,
+  function (key) return rootEntity:isTombstoned(key) end, 7)
+check('known yields rebind to regenerated rocks', Knowledge.Known(a.knowledge, knownSource))
+check('unloaded knowledge remains retryable without a busy flag',
+  a.knowledge.scans['rock:unloaded'] ~= nil and a.pendingKnowledge == nil)
 
 local b = asset(2)
 think:manageAsset(b)
@@ -223,6 +287,125 @@ check('Think runs damage safety without errors', safetyOk, tostring(safetyErr))
 check('damage temporarily preempts the active job', #victim.actions == 2
   and victim.actions[1] == protectedJob and victim.actions[2]:getName() == 'Flee')
 think:onUpdateActive(brain, 0)
+local pendingVictim = asset(6)
+pendingVictim.pendingJob = { kind = 'mine', src = 'runtime:99', dst = 'entity:22' }
+local pendingBrain = { iterAssets = function ()
+  local done = false
+  return function ()
+    if done then return nil end
+    done = true
+    return pendingVictim
+  end
+end }
+think:onUpdateActive(pendingBrain, 0)
+check('safety handler installs while job data is pending', pendingVictim.npcSafetyHandler == true)
+pendingVictim:damage(30, source)
+check('damage is recorded while job data is pending', pendingVictim.npcSafety.damage == 30)
+think:onUpdateActive(pendingBrain, 0)
+check('safety still flees while job data is pending', pendingVictim:getCurrentAction()
+  and pendingVictim:getCurrentAction():getName() == 'Flee')
+check('runtime-only pending jobs are discarded', pendingVictim.pendingJob == nil)
+local staleJobAsset = asset(7)
+staleJobAsset.pendingJob = { kind = 'mine', src = 'entity:11', dst = 'entity:22',
+  srcFingerprint = 'old-source-fp', item = 'Ore', state = 1 }
+think:restorePendingJob(staleJobAsset)
+check('pending jobs reject changed source fingerprints', staleJobAsset.pendingJob == nil
+  and staleJobAsset.job == nil)
+local legacyJobAsset = asset(8)
+legacyJobAsset.pendingJob = { kind = 'mine', src = 'entity:11', dst = 'entity:22',
+  item = 'Ore', state = 1 }
+think:restorePendingJob(legacyJobAsset)
+check('pending mine jobs without generation fingerprints fail closed',
+  legacyJobAsset.pendingJob == nil and legacyJobAsset.job == nil)
+local displayJobAsset = asset(9)
+displayJobAsset.pendingJob = { kind = 'mine', src = 'entity:11', dst = 'entity:22',
+  srcFingerprint = 'source-fp', item = 'Ore', state = 2, action = 'MoveTo Rock',
+  actionTarget = 'entity:11' }
+think:restorePendingJob(displayJobAsset)
+check('display-named subactions restore their target', displayJobAsset:getCurrentAction()
+  and displayJobAsset:getCurrentAction():getName() == 'MoveTo')
+local retreatJobAsset = asset(10)
+retreatJobAsset:setHealth(20, 100, 0)
+retreatJobAsset.pendingJob = { kind = 'mine', src = 'entity:11', dst = 'entity:22',
+  srcFingerprint = 'source-fp', item = 'Ore', state = 2, action = 'Stop' }
+local retreatBrain = { iterAssets = function ()
+  local done = false
+  return function ()
+    if done then return nil end
+    done = true
+    return retreatJobAsset
+  end
+end }
+think:onUpdateActive(retreatBrain, 0)
+check('restored jobs remain below an active safety retreat', retreatJobAsset.job
+  and retreatJobAsset:getCurrentAction():getName() == 'Flee'
+  and retreatJobAsset.actions[1] == retreatJobAsset.job)
+local transportAsset = asset(11)
+transportAsset.pendingJob = { kind = 'transport', src = 'entity:11', dst = 'entity:22',
+  item = 'Ore', state = 2, action = 'Transport' }
+think:restorePendingJob(transportAsset)
+check('current job action does not repeat its completed synchronous stage',
+  transportAsset.job and transportAsset.jobState == 2 and transportAsset.pendingJob == nil)
+local travelAsset = asset(12)
+travelAsset.npcRole, travelAsset.npcNextTravelAt, travelAsset.travelTargetSector = 'industrial', 0, 2
+rootEntity.sectors = { { index = 0, neighbours = { 1 } }, { index = 1, neighbours = { 0, 2 } },
+  { index = 2, neighbours = { 1 } } }
+rootEntity.sectorIndex = 0
+local correctGate = { stableId = 'gate:0:1', getName = function () return 'Correct Gate' end,
+  getPartnerSector = function () return 1 end, getPos = function () return { x = 1, y = 0, z = 0 } end }
+rootEntity.gates = { correctGate }
+think:manageTravel(travelAsset)
+check('Think sends idle NPCs toward the correct wormhole', travelAsset:getCurrentAction()
+  and travelAsset:getCurrentAction().gate == correctGate)
+local patrolTravelAsset = asset(14)
+patrolTravelAsset.npcRole, patrolTravelAsset.npcNextTravelAt = 'fighter', 0
+patrolTravelAsset.travelTargetSector = 2
+patrolTravelAsset:pushAction({ getName = function () return 'Patrol' end,
+  onStart = function () end, onStop = function () end })
+think:manageTravel(patrolTravelAsset)
+check('due travel interrupts a fighter patrol instead of waiting forever',
+  patrolTravelAsset:getCurrentAction() and patrolTravelAsset:getCurrentAction().gate == correctGate)
+local patient = asset(15)
+patient.npcRole, patient.npcNextTravelAt = 'fighter', 1000
+local patientPatrol = { getName = function () return 'Patrol' end,
+  onStart = function () end, onStop = function () end }
+patient:pushAction(patientPatrol)
+think:manageTravel(patient)
+check('patrol remains active while no higher-priority goal is due',
+  patient:getCurrentAction() == patientPatrol)
+rootEntity.sectors, rootEntity.gates, rootEntity.sectorIndex = nil, nil, nil
+local progressionStation = { getName = function () return 'Yard' end,
+  hasDockable = function () return true end, hasMarket = function () return true end,
+  getPos = function () return { x = 0, y = 0, z = 0 } end,
+  addItem = function () return true end, removeItem = function () return true end }
+rootEntity.children = { progressionStation }
+local progressionOwner = { credits = 1000 }
+function progressionOwner:getItemCount (item) return item == creditItem and self.credits or 0 end
+function progressionOwner:hasItem (item, count) return item == creditItem and self.credits >= count end
+function progressionOwner:removeItem (item, count)
+  if item ~= creditItem or self.credits < count then return false end
+  self.credits = self.credits - count; return true
+end
+function progressionOwner:addItem (item, count)
+  if item == creditItem then self.credits = self.credits + count; return true end
+  return false
+end
+local progressionAsset = asset(13)
+progressionAsset.owner, progressionAsset.shipKind = progressionOwner, 'fighter'
+progressionAsset.health, progressionAsset.healthMax = 20, 100
+think:manageProgression(progressionAsset)
+check('Think prioritizes repair when hull and credits require it',
+  progressionAsset:getCurrentAction() and progressionAsset:getCurrentAction():getName() == 'Repair')
+progressionAsset.actions, progressionAsset.parent = {}, progressionStation
+progressionAsset.afterProgression = 'undock'
+think:manageDockExit(progressionAsset)
+check('progression completion schedules a normal undock', progressionAsset:getCurrentAction()
+  and progressionAsset:getCurrentAction():getName() == 'Undock')
+progressionAsset.actions = {}
+think:manageUpkeep(progressionAsset, 3600)
+check('upkeep accrues and charges in simulation hours', progressionOwner.credits == 997
+  and progressionAsset.npcUpkeepElapsed == 0)
+rootEntity.children = nil
 check('safety does not stack duplicate retreats', #victim.actions == 2)
 victim:popAction()
 check('job resumes after retreat', victim:getCurrentAction() == protectedJob)

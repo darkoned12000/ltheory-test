@@ -96,7 +96,7 @@ function DockScreen.Create (opts)
   -- page: closing the page and staying docked with no UI would strand
   -- the player in a menu-less dock).
   self.onCancel = function ()
-    self.player:getControlling():pushAction(Actions.Undock())
+    self:undock()
   end
 
   self.body = nil
@@ -108,6 +108,16 @@ end
 
 -- Resolve the dock you are AT right now: the controlling ship's parent,
 -- which must be a dockable (it is, whenever this screen is open).
+function DockScreen:undock ()
+  local ship = self.player and self.player:getControlling()
+  local station = ship and ship:getParent()
+  if not (station and station.hasDockable and station:hasDockable()) then return false end
+  local current = ship.getCurrentAction and ship:getCurrentAction()
+  if current and current:getName() == 'Undock' then return false end
+  ship:pushAction(Actions.Undock())
+  return true
+end
+
 function DockScreen:dock ()
   local ship = self.player and self.player:getControlling()
   local station = ship and ship:getParent()
@@ -311,7 +321,7 @@ function DockScreen:refresh ()
   self.body:add(spacer(44))
   self.body:add(cell(self.message or ' ', nil, GOOD))
   self.body:add(MenuButton.Create('UNDOCK  (F)', function ()
-    self.player:getControlling():pushAction(Actions.Undock())
+    self:undock()
   end))
 
   self.content:add(self.body)
@@ -410,7 +420,7 @@ end
 -- had, so gamepad/quick hands keep their flow).
 function DockScreen:onInput ()
   if ShipBindings.Dock:get() > 0 then
-    self.player:getControlling():pushAction(Actions.Undock())
+    self:undock()
     return
   end
   if ShipBindings.Sell:get() > 0 then self:sellAll() end

@@ -11,10 +11,11 @@ function Undock:getName ()
 end
 
 function Undock:onUpdateActive (e, dt)
-  if e:getParent():hasDockable() then
-    e:getParent():removeDocked(e)
-  end
+  local parent = e:getParent()
+  if parent and parent.hasDockable and parent:hasDockable() then parent:removeDocked(e) end
   e:popAction()
+  local root = e:getRoot()
+  if root and root.app and root.app.syncDockScreen then root.app:syncDockScreen() end
 end
 
 return Undock

@@ -87,9 +87,11 @@ local function check (name, ok, detail)
   else failures = failures + 1; print('FAIL - ' .. name .. (detail and ('  -- ' .. detail) or '')) end
 end
 
-local empty = { id = 1, isAsteroid = true, hasYield = function () return false end,
+local empty = { id = 1, stableId = 'asteroidField:1:0:0:0:1', isAsteroid = true,
+  hasYield = function () return false end,
   isDestroyed = function () return false end, getName = function () return 'Empty' end }
-local rich = { id = 2, isAsteroid = true, hasYield = function () return true end,
+local rich = { id = 2, stableId = 'asteroidField:1:0:0:0:2', isAsteroid = true,
+  hasYield = function () return true end,
   getYield = function () return { item = { getName = function () return 'Iron Ore' end } } end,
   isDestroyed = function () return false end, getName = function () return 'Rich' end }
 local world = {
@@ -156,7 +158,8 @@ local ScannerDB = require('Game.ScannerDB')
 local db = npc:getScannerDB()
 check('scans populate the pilot scanner database', ScannerDB.Count(db) == 2)
 check('scanner database retains resolved yield data',
-  ScannerDB.Get(db, 'entity:2').yieldItem == 'Iron Ore' and #ScannerDB.Get(db, 'entity:2').logs == 1)
+  ScannerDB.Get(db, 'asteroidField:1:0:0:0:2').yieldItem == 'Iron Ore'
+  and #ScannerDB.Get(db, 'asteroidField:1:0:0:0:2').logs == 1)
 
 if failures == 0 then
   print(string.format('npc scanning: %d checks passed', checks))

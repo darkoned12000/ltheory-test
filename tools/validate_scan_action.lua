@@ -63,8 +63,12 @@ local target = {
   isDestroyed = function () return false end,
   getName = function () return 'Rock' end,
 }
+local registeredKnowledgeShip
 local ship = {
   children = {}, popped = false, knownYields = {}, scannedAsteroids = {},
+  getRoot = function () return { registerKnowledgeShip = function (_, value)
+    registeredKnowledgeShip = value
+  end } end,
   addChild = function (self, child) self.children[#self.children + 1] = child end,
   removeChild = function (self, child)
     for i = 1, #self.children do
@@ -85,6 +89,7 @@ scan:onUpdateActive(ship, 4)
 check('scan does not resolve early', not ship.popped and scan.result == nil)
 scan:onUpdateActive(ship, 1)
 check('successful scan records discovery', scan.result == true and ship.knownYields[target] == true)
+check('live scans register the ship for knowledge rebinding', registeredKnowledgeShip == ship)
 check('successful scan explains the discovered deposit',
   ship.scanNotice == 'DEPOSIT IDENTIFIED: Iron Ore')
 check('scan result is visible before cleanup', not ship.popped

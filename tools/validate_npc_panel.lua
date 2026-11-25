@@ -5,20 +5,29 @@ local src = debug.getinfo(1, 'S').source:match('^@(.+)$') or '.'
 if src:sub(1, 1) ~= '/' then src = (io.popen('pwd'):read('*l') or '.') .. '/' .. src end
 local root = src:gsub('/tools/validate_npc_panel%.lua$', '')
 if root == src then root = '.' end
+package.path = root .. '/script/?.lua;' .. package.path
 
 local Widget = {}
 Widget.__index = Widget
 function Widget:setAlign (x, y) self.alignX, self.alignY = x, y; return self end
 function Widget:setStretch () return self end
 function Widget:setPadUniform () return self end
-function Widget:add () return self end
+function Widget:add (child) self.children = self.children or {}; self.children[#self.children + 1] = child; return self end
 function Widget:onLayoutPos (px, py, psx, psy)
   self.x = px + self.alignX * (psx - self.sx)
   self.y = py + self.alignY * (psy - self.sy)
 end
+function Widget:getRectGlobal () return self.rx or 0, self.ry or 0, self.rsx or 148, self.rsy or 112 end
 local Container = Widget
 local function chain ()
-  return setmetatable({}, { __index = function ()
+  local object = { children = {} }
+  return setmetatable(object, { __index = function (_, name)
+    if name == 'add' then
+      return function (self, child)
+        self.children[#self.children + 1] = child
+        return self
+      end
+    end
     return function (self) return self end
   end })
 end
@@ -34,6 +43,13 @@ package.loaded['Game.TargetInfo'] = {}
 package.loaded['ffi'] = {}
 _G.List = function () return {} end
 _G.Config = { ui = { color = {} } }
+local drawnLines = 0
+_G.Draw = {
+  Color = function () end,
+  Line = function () drawnLines = drawnLines + 1 end,
+}
+_G.Color = function (...) return { ... } end
+package.loaded['UI.DrawEx'] = { RectOutline = function () end, Panel = function () end }
 
 local Panel = dofile(root .. '/script/Game/GUI/NpcInfoPanel.lua')
 local panel = Panel.Create(nil)
@@ -52,6 +68,12 @@ check('panel is inset 10px from right edge', panel.x == 1920 - 300 - 10,
   string.format('x=%.0f', panel.x))
 check('panel is inset 10px from top edge', panel.y == 10,
   string.format('y=%.0f', panel.y))
+local body = panel.children[1].children[2]
+local preview = body.children[1]
+panel.subject = { isWormhole = true }
+preview:onDraw(false, true)
+check('bodyless wormhole renders a portal preview', drawnLines > 0,
+  string.format('%d schematic strokes', drawnLines))
 
 if failures == 0 then
   print(string.format('npc panel: %d checks passed', checks))

@@ -112,6 +112,16 @@ check('ordinary bodies are not auto-targets', not Targeting.IsTargetable({
   body = {}, isAlive = function () return false end, hasYield = function () return false end,
 }))
 check('planets are targetable', Targeting.IsTargetable({ body = {}, isPlanet = true }))
+local wormhole = { isWormhole = true, getName = function () return 'Wormhole' end,
+  getPos = function () return { x = 100, y = 0, z = 0 } end,
+  getRadius = function () return 900 end, hasDockable = function () return true end }
+check('wormholes are targetable', Targeting.IsTargetable(wormhole))
+ship.lockedTarget = wormhole
+local gateMineOk, gateMine = pcall(function () return ship:mineTarget(wormhole) end)
+check('mining input rejects a wormhole without crashing', gateMineOk and not gateMine)
+local gateScanOk = pcall(function () return ship:scanForResources() end)
+check('resource scan input rejects a wormhole without crashing', gateScanOk)
+ship.lockedTarget = nil
 local inside = Targeting.ScreenScore(100, 100, 80, 80, 40, 40, { x = 100, y = 100 })
 check('reticle inside target bounds produces a pick score', inside and inside == 0)
 check('reticle outside target bounds is rejected',
@@ -140,17 +150,19 @@ local approachOk, approachResult = pcall(function () return ship:scanTarget(rock
 check('player scan rejects distant targets without moving', approachOk and not approachResult
   and #ship.actions == 0)
 ship.distance = 100
-ship.scannedAsteroids = {}
+ship.knowledge = require('Game.Knowledge').Create()
+ship.knownYields, ship.scannedAsteroids = ship.knowledge.knownYields, ship.knowledge.scannedAsteroids
 ship.scanCandidate = rock
 ship.lockedTarget = nil
 local searchOk = pcall(function () return ship:scanForResources() end)
 check('player scan search chooses an in-range unscanned candidate', searchOk and #ship.actions == 1)
 ship.actions = {}
-ship.scannedAsteroids[rock] = true
+ship.knowledge.scannedAsteroids[rock] = true
 local rescanOk, rescanResult = pcall(function () return ship:scanTarget(rock) end)
 check('player does not rescan the same asteroid', rescanOk and not rescanResult)
 ship.distance = 5000
-ship.scannedAsteroids = {}
+ship.knowledge = require('Game.Knowledge').Create()
+ship.knownYields, ship.scannedAsteroids = ship.knowledge.knownYields, ship.knowledge.scannedAsteroids
 check('scan status explains out-of-range', ship:getScanStatus(rock) == 'out of range')
 ship.distance = 1000
 check('mining status explains approach distance', ship:getMiningStatus(rock) == 'approach')

@@ -2,17 +2,17 @@
 
 ## Status
 
-- Active branch: `npc-work`, created from merged `main` at `d905da2`.
-- All new work remains **uncommitted** until the user has tested and discussed
-  it. Existing merged WIP history is intentionally preserved.
+- Active branch: `npc-work`. The autonomous fleet/resource/HUD work is committed
+  as `80d18b9`; Phase 1 persistence, NPC sector travel, and the first Phase 2
+  progression slice below remain **uncommitted** until tested and approved.
 - NPC ship generation was **never missing**. The problems were prototype,
   scale/distance, lifecycle, targeting, and AI-policy issues.
 - Baseline verification on `npc-work`: `python3 configure.py test` passes,
   including shader validation and the UI integration smoke test.
-- Final uncommitted verification: all 462 focused NPC/movement/mining/registry/
-  population/radar checks pass; `python3 configure.py test` passes including UI integration; a 25-second
-  real LTheory boot on the pinned seed logs no errors/asserts before intentional
-  timeout. No new commits have been made.
+- Final uncommitted verification: all 748 focused NPC/movement/mining/registry/
+  population/radar/progression checks pass; `python3 configure.py test` passes
+  including UI integration; the real save/load round-trip and a 25-second LTheory
+  boot are clean. No new commits have been made.
 - Pinned-seed profiler comparison after removing duplicate NPC Economy updates:
   the original six-capital demo improved from ~4.71 ms to ~3.46 ms (about
   212 → 289 fps). The final eight-ship mixed roster with radar averages ~3.74 ms
@@ -113,7 +113,7 @@ wireframe used by `NodeGraphInspector`.
 These fixes are verified by targeted boots and the real J/K/U + fire path, but
 still require user visual approval.
 
-## Completed on `npc-work` (uncommitted)
+## Completed through `80d18b9`
 
 - Added `Game.ShipMovement`: top speed and acceleration now scale with hull
   radius and cargo load. Fighter reference remains 500 u/s; a 600-unit capital
@@ -247,32 +247,128 @@ still require user visual approval.
   deterministically regenerated brain by stable id; ship-by-ship state and
   tombstones are not yet persisted.
 
+## Phase 1 persistence complete (uncommitted, 2026-11-25)
+
+- Added canonical `Game.StableId`, structural `Game.RouteKey`, planned NPC ship
+  IDs, and a System stable-ID index. Pooled mine templates refresh route keys on
+  retarget; runtime IDs are explicitly non-persistent.
+- Save/load now captures actor standings/primary ship plus each ship's transform,
+  hull, capacitor, capacity, cargo, docking parent, policy memory/cooldowns, and
+  active economy-job checkpoint. Human and NPC docking restore; simulation time
+  and sector index are saved.
+- Active jobs rebind by structural endpoint keys, wait for streamed sources, and
+  recreate the current `MoveTo`/`Stop`/`MineAt`/`DockAt`/`Undock` subaction even
+  when its saved name includes a target. Safety retreat is pushed after restore
+  so it preempts the job; depleted, tombstoned, stale, and wrong-sector sources
+  cancel cleanly.
+- Added bounded `Game.Tombstones`, immediate death recording plus sweep fallback,
+  and spawn suppression for startup/streamed asteroids, the main station, region
+  places, and planned NPC ships. Asteroid tombstones use the same deposit-aware
+  fingerprint as knowledge/jobs. Sector transitions remove outgoing places before
+  rebuilding the destination.
+- World overlays (deposits, tombstones, simulation time) restore before content
+  generation; saved sector content and roster seed now match the saved sector.
+- Saved rosters are authoritative under `aiShips` changes. Last-ship death
+  permanently retires the actor, and tombstoned actor slots stay suppressed.
+- `Game.Knowledge` stores fingerprint-checked scan records by structural key.
+  Entity maps are rebuildable caches, so stream unload/reload and save/load do
+  not lose discoveries. Live scans register immediately, docking retains the
+  registration, and both NPC and human ships rebind; depleted rocks stay scanned
+  but stop counting as known usable yields.
+- ScannerDB contacts use the same structural/fingerprint keys as the HUD and
+  target panel, serialize per pilot (including the human), reject malformed or
+  wrong-owner payloads, and never attach old yield data to a replacement rock.
+- Safety state includes damage, cooldown, threat-broadcast timing, and durable
+  or unresolved source keys. Pending knowledge/jobs no longer block retreat or
+  damage-handler installation; runtime-only jobs are discarded.
+- Module slots have durable `<ship>:module:<type>:<index>` IDs; saved rosters
+  regenerate exactly the occupied sockets, including the player ship. Malformed
+  module entries and nested numeric snapshot fields are ignored, and the reserved
+  `ship:player` identity cannot be tombstoned.
+- Asteroid physical/deposit fingerprints invalidate stale state after density,
+  region, seed, position, or deposit-generation changes. Startup fingerprints are
+  refreshed after final field translation, then tombstones/deposits are applied.
+  Legacy unfingerprinted asteroid overlays fail closed.
+
+### NPC sector travel and Phase 2 progression (uncommitted, 2026-11-25)
+
+- NPCs route to the correct wormhole (including multi-hop mission routes) and
+  approach through the existing `TravelTo`/`Wormhole` path. Gate entry puts the
+  actor in persistent sector transit instead of changing the player's sector.
+  NPC routing reads the sector gate graph directly; it does not depend on the
+  player's target lock.
+- Visible wormholes are now player-targetable with **T** despite having no rigid
+  body. Target info shows the destination, and **F** prefers the locked gate when
+  it is within normal docking range.
+- Outgoing local actors are streamed into sector holds, not deleted. Ownership
+  is preserved while detached. Active jobs are checkpointed before departure,
+  stale action stacks are cleared on arrival, and `pendingJob` rebinds after
+  destination content exists. Duplicate roster IDs are excluded.
+- Travel uses ordinary thrust and ordinary simulation `dt`. Automatic NPC boost
+  is off (`aiUsesBoost=false`); there is no private NPC time scale. Gate logs show
+  distance, normal top speed, ETA, entry, and arrival.
+- `Config.game.npcLog` enables periodic action/target/position/speed/ETA/hull/
+  credit logs plus job, scan, retreat, upkeep, and progression events.
+  `PHX_NPC_LOG=1/0` overrides it. Distance/ETA uses a bodyless-safe surface
+  fallback for wormholes.
+- Phase 2 adds normal-speed `Repair`, `Refit`, and `PurchaseShip` actions, role
+  module/hull policy, hourly upkeep/debt, atomic payment/refund, durable module
+  slots, cargo transfer, and stable purchased-ship IDs; capital is the terminal
+  hull, so purchase policy cannot oscillate back to a smaller role ship. Think
+  prioritizes repair, then refit, then affordable hull progression, then travel;
+  due goals interrupt
+  fighter patrol instead of waiting forever.
+- Purchase serials, purchased-hull NPC roles, job checkpoints, and sector
+  transit/hold metadata are additive save state. Cross-sector market contracts
+  and missions remain future work; current travel is exploration or a future
+  `travelTargetSector` assignment.
+
+### Docking UI hardening (uncommitted, 2026-11-25)
+
+- `DockAt` and `Undock` synchronize the station screen immediately through the
+  app, rather than waiting solely on the next-frame watcher.
+- Opening the dock page silently closes any menu/popup above it; HUD gameplay
+  actions cannot start while a modal screen has paused the world.
+- `DockScreen:undock()` and the `Undock` action are idempotent, so focused/child
+  input routing or repeated F presses cannot stack duplicate undocks.
+- `[DOCK]` transition logs report state, station, action count, and screen state.
+
 Tests added and passing:
 
 - `tools/validate_ship_movement.lua` — 15 checks.
 - `tools/validate_npc_identity.lua` — 16 checks.
-- `tools/validate_npc_lifecycle.lua` — 59 checks, including one-update-per-frame,
+- `tools/validate_npc_lifecycle.lua` — 61 checks, including one-update-per-frame,
   target cleanup, ownership transfer, nested death cleanup, and social registry
   lifecycle.
-- `tools/validate_npc_policy.lua` — 10 checks.
-- `tools/validate_npc_jobs.lua` — 28 checks, including cloned assignments,
-  completion/cancellation memory, and damage-driven job preemption.
-- `tools/validate_npc_safety.lua` — 15 checks.
+- `tools/validate_npc_policy.lua` — 15 checks.
+- `tools/validate_npc_jobs.lua` — 52 checks, including cloned assignments,
+  completion/cancellation memory, damage-driven job preemption, and pending-data
+  safety/fingerprint handling.
+- `tools/validate_npc_safety.lua` — 20 checks.
 - `tools/validate_npc_cooperation.lua` — 23 checks.
 - `tools/validate_npc_communication.lua` — 13 checks.
 - `tools/validate_npc_trade.lua` — 10 checks.
-- `tools/validate_npc_save.lua` — 11 checks.
+- `tools/validate_npc_save.lua` — 46 checks.
 - `tools/validate_npc_actions.lua` — 16 checks.
 - `tools/validate_control_delta.lua` — 6 checks.
 - `tools/validate_camera_bracket.lua` — 4 checks.
 - `tools/validate_hud_lifecycle.lua` — 2 checks.
-- `tools/validate_docking.lua` — 12 checks.
+- `tools/validate_docking.lua` — 14 checks.
 - `tools/validate_cargo.lua` — 9 checks.
-- `tools/validate_deposits.lua` — 10 checks.
-- `tools/validate_startup_field.lua` — 7 checks.
-- `tools/validate_player_mining.lua` — 30 checks.
+- `tools/validate_deposits.lua` — 12 checks.
+- `tools/validate_stable_id.lua` — 32 checks.
+- `tools/validate_module_identity.lua` — 3 checks.
+- `tools/validate_tombstones.lua` — 10 checks.
+- `tools/validate_asteroid_tombstones.lua` — 4 checks.
+- `tools/validate_asteroid_fingerprints.lua` — 14 checks.
+- `tools/validate_phase1_roster.lua` — 28 checks.
+- `tools/validate_npc_travel.lua` — 10 checks.
+- `tools/validate_npc_progression.lua` — 59 checks.
+- `tools/validate_knowledge.lua` — 14 checks.
+- `tools/validate_startup_field.lua` — 11 checks.
+- `tools/validate_player_mining.lua` — 33 checks.
 - `tools/validate_stop_action.lua` — 5 checks.
-- `tools/validate_scan_action.lua` — 9 checks.
+- `tools/validate_scan_action.lua` — 10 checks.
 - `tools/validate_scan_effect.lua` — 8 checks.
 - `tools/validate_npc_scanning.lua` — 7 checks.
 - `tools/validate_npc_population.lua` — 22 checks.
@@ -282,48 +378,37 @@ Tests added and passing:
 - `tools/validate_ship_type_fallback.lua` — 3 checks.
 - `tools/validate_radar.lua` — 19 checks.
 - `tools/validate_target_info.lua` — 16 checks.
-- `tools/validate_registry_scanner.lua` — 23 checks.
+- `tools/validate_wormhole_targeting.lua` — 13 checks.
+- `tools/validate_registry_scanner.lua` — 37 checks.
 - `tools/validate_mining_beam.lua` — 12 checks.
-- `tools/validate_npc_panel.lua` — 3 checks.
-- `tools/validate_capital_ship.lua` — 8 checks.
+- `tools/validate_npc_panel.lua` — 4 checks.
+- `tools/validate_capital_ship.lua` — 9 checks.
 - `tools/validate_startup_placement.lua` — 8 checks.
 
-Known remaining work: NPC actor identity/profile/organization/credits and
-asteroid deposit remainders are saved, but ship-by-ship state, policy memory,
-and destroyed-asteroid tombstones are not. Route keys still use runtime entity
-IDs and are therefore session-only. Repair/refit/ship purchases, player-facing
-comms UI, salvage/gas harvesting, and true cross-sector job continuation are
-not implemented yet. Registry metadata and ScannerDB records are session-only.
-NPC ship rosters reconcile on sector entry, but outgoing station/place cleanup
-and durable cross-sector actor/ship state remain future work. Cooperation covers
-shared defense only. World-space visibility and combat behavior still need the
+Phase 1 is complete. NPC gate travel/sector holds and the first Phase 2
+repair/refit/purchase/upkeep slice are implemented. Remaining work includes
+cross-sector market contracts, player-facing comms UI, salvage/gas harvesting,
+escort/rescue cooperation, and missions. Cooperation covers shared defense only.
+World-space visibility, travel, progression, and combat behavior still need the
 user's visual approval in a real play session.
 
 ## Next steps (NPC standpoint)
 
-1. **Persist ships, not just actors.** Save/restore each NPC's ship, cargo,
-   hull/capacitor, equipment, current action/job, policy memory, and destroyed
-   entity tombstones. Replace runtime route IDs with stable structural keys.
-2. **Cross-sector continuation.** Carry the same NPC and ship through a
-   jumpgate, resume the committed job on arrival, and avoid duplicate brains or
-   reset credits/inventory. Reconcile outgoing station/place children too.
-3. **Repair/refit/purchase loop.** Add repair, refit, upkeep, and shipyard
-   actions so wealth changes hull choice and self-preservation has a concrete
-   destination.
-4. **Local perception and avoidance.** Add obstacle/avoidance steering, repair
-   seeking, regroup, and non-hostile combat readability; validate the current
-   flee/attack behavior visually.
-5. **Cooperation beyond shared defense.** Escort, rescue, miner protection,
+1. **Cross-sector contracts.** Generate deterministic destination-market work
+   so `travelTargetSector` is mission-driven rather than exploration-only.
+2. **Local perception and avoidance.** Add obstacle/avoidance steering, regroup,
+   and non-hostile combat readability; validate flee/attack/travel visually.
+3. **Cooperation beyond shared defense.** Escort, rescue, miner protection,
    pooled contracts, and shared credit/reputation using the existing directive
    and communication buses.
-6. **Player-facing communication.** Hails, mission offers, threat warnings, and
+4. **Player-facing communication.** Hails, mission offers, threat warnings, and
    discovery reports built on `Game.Communication`.
-7. **Salvage and gas harvesting.** Persistent wreck yields/forensics and
+5. **Salvage and gas harvesting.** Persistent wreck yields/forensics and
    equipment-gated `Helium3` capture, then let policy choose among mining,
    salvage, trading, and harvesting.
-8. **Missions and long-term progression.** Faction/player contracts, reputation,
+6. **Missions and long-term progression.** Faction/player contracts, reputation,
    unlocks, and recurring relationships.
-9. **Ship Generator workflow.** Rebuild/preview/export controls and direct custom
+7. **Ship Generator workflow.** Rebuild/preview/export controls and direct custom
    hull assignment; slider changes currently do not invalidate cached prototypes.
 
 ## Ship Generator tool status
@@ -390,25 +475,32 @@ Implemented foundations now available:
 - route-aware utility policy, cooldowns, memory, and cloned committed jobs;
 - ranged NPC-to-NPC communication and damage-driven flee;
 - mixed procedural role fleet and sector-roster reconciliation;
-- additive actor and asteroid-deposit save state.
+- authoritative actor/ship rosters, durable module slots, policy/job checkpoints,
+  simulation time, saved sector, ScannerDB/safety/knowledge memory, fingerprinted
+  asteroid deposits, bounded tombstones, and last-ship actor retirement;
+- structural route keys and planned ship IDs.
 
 Still missing or incomplete:
 
-- durable ship-by-ship state and cross-sector job continuation;
-- ship purchase/upgrade/repair/upkeep economy;
+- cross-sector market contracts and mission-driven route selection;
+- player-facing repair/refit/shipyard UI for the human player;
 - player-facing communication UI;
 - wreck salvage and nebula harvesting actions;
-- stable structural route keys and destroyed-entity tombstones;
 - escort/rescue cooperation beyond shared defense;
 - robust local avoidance, repair/regroup behavior, and visual combat approval.
 
-### Phase status (2026-11-24)
+### Phase status (2026-11-25)
 
 - **Phase 0 — complete:** visibility, targeting, lifecycle, projectile, and
   movement regressions are covered; real boot and UI integration pass.
-- **Phase 1 — foundation complete:** identity/registry/lifecycle and additive
-  actor snapshots exist; ship-by-ship persistence and tombstones remain.
-- **Phase 2 — open:** repair/refit/purchase/upkeep progression.
+- **Phase 1 — complete:** authoritative rosters, stable ship/module IDs,
+  physical/cargo snapshots, policy/cooldowns, active-job checkpoints, structural
+  routes, simulation time, saved sector, ScannerDB/safety/knowledge memory,
+  fingerprinted asteroid overlays, bounded tombstones, and last-ship actor
+  retirement are implemented and tested.
+- **Phase 2 — first slice complete:** normal-speed repair/refit/purchase/upkeep,
+  role progression policy, atomic payments, cargo transfer, and purchase serial
+  persistence are implemented and tested.
 - **Phase 3 — first slice complete:** utility, route memory, cooldowns,
   commitment, patrol, and damage-driven flee exist; avoidance/repair/regroup and
   broader perception remain.
@@ -416,8 +508,10 @@ Still missing or incomplete:
   organization standing exist; escort/rescue/contracts remain.
 - **Phase 5 — backend complete:** ranged addressed/broadcast messages, TTL,
   inboxes, and threat/directive flow exist; player-facing comms UI remains.
-- **Phase 6 — roster reconciliation only:** deterministic sector rosters do not
-  accumulate, but the same ship/job does not yet continue across sectors.
+- **Phase 6 — travel/streaming slice complete:** correct-gate routing,
+  normal-speed approach, persistent transit, outgoing sector holds, destination
+  restore, duplicate exclusion, and save/load continuity are implemented and
+  tested. Cross-sector market contracts remain.
 - **Phases 7–8 — open:** salvage/gas harvesting, missions, reputation, and
   long-term progression.
 
@@ -536,20 +630,17 @@ Replace “highest payout every time” with a utility scheduler:
    seeking, and regroup remain.
 5. ◐ Two NPCs can cooperate on shared defense; escort/rescue remain.
 
-The core “NPC as player” architecture is proven. The next milestone is durable
-ships and cross-sector continuation, followed by progression and broader social
-gameplay.
+The core “NPC as player” architecture is proven. Durable ships, sector travel,
+and the first progression slice are implemented; the next milestone is
+mission-driven cross-sector work and broader social gameplay.
 
 ### Execution order for `npc-work`
 
-1. **Phase 1 completion:** persist ship-by-ship state, stable route keys, and
-   destroyed-entity tombstones.
-2. **Phase 6:** continue the same NPC/ship/job through jumpgates and reconcile
-   outgoing place/station children.
-3. **Phase 2:** repair/refit/purchase/upkeep progression.
-4. **Phase 3 completion:** local avoidance, repair/regroup, and visual combat
-   approval.
-5. Then escort/rescue cooperation, player comms, salvage/gas harvesting, and
+1. **Phase 6 travel/streaming:** complete; cross-sector market contracts remain.
+2. **Phase 2 progression:** first slice complete; human-facing shipyard UI remains.
+3. **Phase 3 completion:** local avoidance, regroup, and visual combat/travel/
+   progression approval.
+4. Then escort/rescue cooperation, player comms, salvage/gas harvesting, and
    missions as each slice is tested.
 
 Each completed slice must update this document with:
@@ -563,8 +654,8 @@ Each completed slice must update this document with:
 - NPC caps are real ships using the same `Ship` archetype as the player.
 - Procedural generation, rendering, physics, actions, economy, and wormholes
   already exist.
-- Identity/lifecycle, utility policy, shared defense, and communication
-  foundations now exist; the remaining work is **durable ships, progression,
-  cross-sector continuation, and broader social gameplay**.
+- Identity/lifecycle, utility policy, durable ships, sector travel, first-slice
+  progression, shared defense, and communication foundations now exist; the
+  remaining work is **cross-sector contracts and broader social gameplay**.
 - Generic targeting for asteroids/stations/factories is implemented and remains
   entity-generic.

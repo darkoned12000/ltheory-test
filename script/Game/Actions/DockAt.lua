@@ -28,6 +28,8 @@ function DockAt:onUpdateActive (e, dt)
   if (e:getPos() - tp):length() <= kDockRange then
     self.target:addDocked(e)
     e:popAction()
+    local root = e:getRoot()
+    if root and root.app and root.app.syncDockScreen then root.app:syncDockScreen() end
     return
   end
 

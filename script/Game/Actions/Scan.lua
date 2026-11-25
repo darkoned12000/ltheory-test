@@ -1,6 +1,8 @@
 local Action = require('Game.Action')
 local ScanEffect = require('Game.Entities.ScanEffect')
 local ScannerDB = require('Game.ScannerDB')
+local Knowledge = require('Game.Knowledge')
+local NpcLog = require('Game.NpcLog')
 local Seed = require('Game.Seed')
 
 local nextId = 0
@@ -45,17 +47,18 @@ function Scan:resolve (e, found)
   self.result = found
   self.resultTime = 0
   if self.effect then self.effect.result = found end
-  e.scannedAsteroids = e.scannedAsteroids or {}
-  e.scannedAsteroids[self.target] = true
-  if found then
-    e.knownYields = e.knownYields or {}
-    e.knownYields[self.target] = true
-  end
+  e.knowledge = e.knowledge or Knowledge.Create()
+  e.knownYields = e.knowledge.knownYields
+  e.scannedAsteroids = e.knowledge.scannedAsteroids
+  Knowledge.Record(e.knowledge, self.target, found)
   local root = e.getRoot and e:getRoot()
+  if root and root.registerKnowledgeShip then root:registerKnowledgeShip(e) end
   local now = root and root.getTime and root:getTime() or 0
   e.scanNotice = found and ('DEPOSIT IDENTIFIED: ' .. self.target:getYield().item:getName())
     or 'NO RESOURCE YIELD'
   e.scanNoticeUntil = now + 3
+  NpcLog.Event(e, found and ('scan identified ' .. self.target:getYield().item:getName())
+    or 'scan found no usable yield')
   local owner = e.getOwner and e:getOwner()
   if owner and owner.getScannerDB then
     local pos = self.target.getPos and self.target:getPos()

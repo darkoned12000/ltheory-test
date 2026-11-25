@@ -24,6 +24,7 @@ function subclass (base, ctor)
 end
 function insert (t, v) t[#t + 1] = v end
 function remove (t, v)
+  if v == nil then v = t[#t] end
   for i = 1, #t do
     if t[i] == v then t[i] = t[#t]; t[#t] = nil; return end
   end
@@ -49,6 +50,7 @@ local function vec (x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z
 _G.Vec3f = vec
 function Vec.__sub (a, b) return vec(a.x - b.x, a.y - b.y, a.z - b.z) end
 function Vec:scale (s) return vec(self.x * s, self.y * s, self.z * s) end
+function Vec:muls (s) return self:scale(s) end
 function Vec:length () return math.sqrt(self.x*self.x + self.y*self.y + self.z*self.z) end
 function Vec:dot (b) return self.x*b.x + self.y*b.y + self.z*b.z end
 
@@ -56,6 +58,15 @@ local Event = dofile(root .. 'script/Game/Event.lua')
 _G.Event = Event
 local Entity = dofile(root .. 'script/Game/Entity.lua')
 package.loaded['Game.Entity'] = Entity
+local Action = class(function () end)
+function Action:onStart () end
+function Action:onStop () end
+function Action:onUpdateActive () end
+function Action:onUpdatePassive () end
+package.loaded['Game.Action'] = Action
+dofile(root .. 'script/Game/Components/Actions.lua')
+local DockAt = dofile(root .. 'script/Game/Actions/DockAt.lua')
+local Undock = dofile(root .. 'script/Game/Actions/Undock.lua')
 package.loaded['Game.SocketKind'] = { Thruster = 1, Turret = 2 }
 package.loaded['Game.ShipMovement'] = {
   forceScale = function () return 1 end,
@@ -90,6 +101,8 @@ station.pos, station.radius, station.up = vec(0, 0, 0), 800, vec(0, 1, 0)
 function station:getPos () return self.pos end
 function station:getRadius () return self.radius end
 function station:getUp () return self.up end
+function station:getForward () return vec(1, 0, 0) end
+function station:getName () return 'Station' end
 system:addChild(station)
 
 local ship = Entity()
@@ -139,6 +152,21 @@ check('undocking leaves controls clear', ship:getThrustController().forward == 0
 ship:getThrustController().forward = 1
 ship:updateThrustController({ dt = 1 / 60 })
 check('undocked ship accepts thrust again', ship.forceApplications == 1)
+
+ship:addActions()
+local dockPos = station:getPos() - station:getUp():scale(1.25 * station:getRadius() + ship:getRadius())
+ship:setPos(dockPos)
+ship:pushAction(DockAt(station))
+ship:updateActions({ dt = 1 / 60 })
+check('DockAt action completes and parents the ship', ship:getParent() == station and ship:isIdle(),
+  string.format('atStation=%s actions=%d current=%s', tostring(ship:getParent() == station), #ship.actions,
+    tostring(ship.actions[1] and ship.actions[1].getName and ship.actions[1]:getName())))
+ship:pushAction(Undock())
+ship:pushAction(Undock())
+ship:updateActions({ dt = 1 / 60 })
+ship:updateActions({ dt = 1 / 60 })
+check('duplicate Undock actions are safe and leave an idle stack',
+  ship:getParent() == system and ship:isIdle())
 
 if failures == 0 then
   print(string.format('docking: %d checks passed', checks))

@@ -74,12 +74,19 @@ function LTheory:generate ()
 
   if self.system then self.system:delete() end
   self.system = Entities.System(self.seed)
+  self.system.app = self
+  local pending = self.pendingSaveData
+  if pending then SaveGame.RestoreWorld(self.system, pending) end
 
   self.system:addChild(Entities.GPUParticles())
 
   local ship
   do -- Player Ship
-    ship = self.system:spawnShip()
+    ship = self.system:spawnShip('fighter', {
+      shipId = 'ship:player',
+      modules = pending and type(pending.playerShip) == 'table'
+        and type(pending.playerShip.modules) == 'table' and pending.playerShip.modules or nil,
+    })
     ship:setInventoryCapacity(100) -- player retains the original cargo rating
     ship:setPos(Config.gen.origin)
     ship:setFriction(0)
@@ -111,7 +118,9 @@ function LTheory:generate ()
   -- names -- which is what makes the player's map of it a map of something
   -- real rather than of a fresh random world every time.
   self.sectors = SectorGraph.layout(self.seed, Config.game.sectorRadius or 60000)
-  self.sectorIndex = 0
+  self.system.sectors = self.sectors
+  self.sectorIndex = pending and math.floor(tonumber(pending.sectorIndex) or 0) or 0
+  self.sectorIndex = math.max(0, math.min(#self.sectors - 1, self.sectorIndex))
   self:buildGates()
 
   -- Spawn 60 procedural asteroids. The ship is repositioned below after the
@@ -120,7 +129,8 @@ function LTheory:generate ()
   local startupField
   if ship then
     local fieldPos = ship:getPos() + Vec3f(0, 0, -3000)
-    startupField = self.system:spawnAsteroidField(60, 1000, fieldPos)
+    startupField = self.system:spawnAsteroidField(60, 1000, fieldPos,
+      { deferTombstones = true })
   end
 
   for i = 1, 1 do
@@ -184,7 +194,7 @@ function LTheory:generate ()
   -- uses its own seeds/positions and does not reshuffle world generation.
   local aiBrains = {}
   if (Config.game.aiShips or 0) > 0 and ship then
-    aiBrains = self.system:spawnNPCPopulation(self.sectors[1].seed, {
+    aiBrains = self.system:spawnNPCPopulation(self.sectors[self.sectorIndex + 1].seed, {
       center = ship:getPos(),
       radius = 12000,
       mix = NpcPopulation.ScaleMix(Config.game.aiShips),
@@ -240,6 +250,7 @@ function LTheory:generate ()
 
     printf('[dbg] visibility-cloud rocks=%d', #rockPos)
   end
+  self.pendingSaveData = nil
 end
 
 function LTheory:onInit ()
@@ -892,6 +903,7 @@ function LTheory:saveGameNow (slotName)
     systemName = (state and state.sectorName)
                  or (self.sectors and self.sectors[1] and self.sectors[1].name) or '',
     regionName = region and region.name or 'Deep space',
+    sectorIndex = self.sectorIndex or 0,
     seedHex    = seedToHex(self.seed),
   }, self.system)
   local name, why = SaveGame.Write(slotName or SaveGame.DefaultSlotName(), data)
@@ -922,9 +934,10 @@ function LTheory:loadGame (slotName)
   -- Pin the seed: the same invariant every path already keeps -- the same
   -- seed always makes the same galaxy, now also for one loaded from disk.
   Config.gen.seedGlobal = seed
+  self.pendingSaveData = data
   self:generate()
   SaveGame.Restore(self.player and self.player:getControlling(), data, self.system)
-  self:regenerateSectorContent(0)
+  self:regenerateSectorContent(self.sectorIndex)
   self:settleAfterGenerate()
   -- THE TOAST: the old game's GAME LOADED plate (queued while the menu is
   -- still up; it shows the moment the world returns). settleAfterGenerate
@@ -987,8 +1000,20 @@ function LTheory:buildGates ()
   end
   self.gates = {}
 
+  -- Places are sector-local just like gates and rails. Reset without removal
+  -- used to leave A's markets alive after A -> B -> A, duplicating routes.
+  if self.sectorPlaces then
+    for _, place in ipairs(self.sectorPlaces) do
+      if place:getParent() then place:getParent():removeChild(place) end
+      place:delete()
+    end
+  end
+  self.sectorPlaces = {}
+
   local here = self.sectors[self.sectorIndex + 1]
   if not here then return end
+  self.system.sectorIndex = self.sectorIndex
+  self.system.sectors = self.sectors
 
   -- The sector's own regions -- the lanes are built from them. (The lanes
   -- themselves are built by buildRails, which the debug window's switch can
@@ -1013,7 +1038,6 @@ function LTheory:buildGates ()
   -- YARD with a factory on it, a veil gets a RELAY (a beacon in the gas).
   -- Every one of them has a market, so the ore you mine has somewhere to
   -- go.
-  self.sectorPlaces = {}
   for _, r in ipairs(regions) do
     local place = self:buildPlace(r, sectorName)
     if place then self.sectorPlaces[#self.sectorPlaces + 1] = place end
@@ -1042,6 +1066,7 @@ function LTheory:buildGates ()
     -- will be, which the sector you are standing in obviously does not.
     local wormhole = Entities.Wormhole({
       name          = gate.otherName .. ' Wormhole',
+      stableId      = format('gate:%d:%d:%d', self.sectorIndex, gate.partner, #self.gates + 1),
       homeSector    = self.sectorIndex,
       partnerSector = gate.partner,
       partnerName   = gate.otherName,
@@ -1162,15 +1187,20 @@ end
   a direction.
 ---------------------------------------------------------------------------]]
 function LTheory:buildPlace (region, sectorName)
+  local sector = self.sectors[self.sectorIndex + 1]
+  local stableId = format('place:%s:region:%d', sector and sector.seed or self.seed, region.index)
+  if self.system:isTombstoned(stableId) then return nil end
   local kind = region.kind or 'yard'
   local suffix = kind == 'belt' and 'Rig' or kind == 'veil' and 'Relay' or 'Yard'
   local name = format('%s %s', region.name, suffix)
 
   local place = Entities.Station(Seed.rng('ltheory.place', region.index):managed():get31())
+  place.stableId = stableId
   place:setName(name)
   -- An outpost, not a station: the sector's one real station is the big
   -- one near the planet.
   place:setScale(45)
+  place.shipyard = kind == 'yard'
   place:setPos(Vec3f(region.center.x, region.center.y, region.center.z))
 
   -- The market.
@@ -1333,21 +1363,31 @@ end
 -----------------------------------------------------------------------------]]
 function LTheory:enterSector (index, ship)
   if index == nil or index == self.sectorIndex then return end
+  -- Stream outgoing actors into persistent sector holds before their places
+  -- disappear. They are restored with the same identity/state on return.
+  local previous = self.sectorIndex
+  local outgoing = self.system:holdNPCPopulation(previous)
   self.sectorIndex = index
   self:regenerateSectorContent(index)
   self:buildGates()
 
-  -- Reconcile one deterministic roster for the destination sector. The
-  -- outgoing actors are explicitly despawned first, so repeated jumps cannot
-  -- accumulate brains, ships, comms registrations, or engine voices.
+  -- Reconcile one deterministic roster for the destination sector. Actors
+  -- already in transit to this sector are excluded here and restored afterward
+  -- with their original identity, cargo, credits, and action stack.
   local sector = self.sectors[index + 1]
+  local incoming = self.system:transitIdsFor(index)
   if (Config.game.aiShips or 0) > 0 and ship then
     self.system:spawnNPCPopulation(sector and sector.seed or self.seed, {
-      center = ship:getPos(), radius = 12000,
+      center = ship:getPos(), radius = 12000, exclude = incoming,
       mix = NpcPopulation.ScaleMix(Config.game.aiShips),
     })
   else
     self.system:despawnNPCPopulation()
+  end
+  local arrived = self.system:restoreNpcTransit(index)
+  if Config.game and Config.game.npcLog then
+    printf('[NPC] sector %d -> %d: %d local actors streamed out, %d held/travelling actors restored',
+      previous, index, outgoing, arrived)
   end
 
   -- The ship is now somewhere else; its sector's state is recomputed from
@@ -1360,36 +1400,43 @@ function LTheory:enterSector (index, ship)
   end
 end
 
+function LTheory:syncDockScreen ()
+  local docked = self.masterControl and self.masterControl:isPlayerDocked()
+  if self.dockScreen then
+    if docked and not self.dockScreen:isOpen() then
+      self.dockScreen:refresh()
+      -- No menu/popup may remain modal above the station page. Close other
+      -- screens silently so their onClose callbacks cannot reopen the menu.
+      for _, screen in ipairs(self.screens or {}) do
+        if screen ~= self.dockScreen and screen:isOpen() then
+          local onClose = screen.onClose
+          screen.onClose = nil
+          screen:close()
+          screen.onClose = onClose
+        end
+      end
+      self.dockScreen:open()
+    elseif not docked and self.dockScreen:isOpen() then
+      self.dockScreen:close()
+    end
+  end
+  if docked ~= self.__lastDockState then
+    self.__lastDockState = docked
+    local ship = self.player and self.player:getControlling()
+    local station = ship and ship:getParent()
+    printf('[DOCK] state=%s station=%s actions=%d screen=%s', tostring(docked),
+      station and station.getName and station:getName() or '-',
+      ship and ship.actions and #ship.actions or 0,
+      self.dockScreen and self.dockScreen:isOpen() and 'open' or 'closed')
+  end
+end
+
 function LTheory:onUpdate (dt)
   -- The state the ESC toggle reads next frame (see LTheory:onInput).
   self.screenWasOpen = self:anyScreenOpen()
 
-  -- THE DOCK SCREEN: opened and closed BY THE DOCKED STATE, not by any
-  -- key. One watcher, here, where the docked predicate already lives:
-  -- MasterControl's control sets run the world half (the orbit camera),
-  -- and this runs the UI half.
-  local docked = self.masterControl and self.masterControl:isPlayerDocked()
-  if self.dockScreen then
-    if docked and not self.dockScreen:isOpen() then
-      self.dockScreen:refresh() -- retitle to the dock you pulled into
-      self.dockScreen:open()
-      -- THE MENU MUST NOT BE UNDER THE DOCK PAGE: its title band and
-      -- entry row render through the dock's translucent backdrop -- the
-      -- big title's glyphs sit right under the market table and read as
-      -- garbage ("the title gets messed up when navigating"). Closing it
-      -- silently: no onClose pop-back.
-      if self.menu:isOpen() then
-        local oc = self.menu.onClose
-        self.menu.onClose = nil
-        self.menu:close()
-        self.menu.onClose = oc
-      end
-    elseif not docked and self.dockScreen:isOpen() then
-      -- Silent close: the screen has no onClose, and none may grow here --
-      -- the menu must not pop open over the undocked ship.
-      self.dockScreen:close()
-    end
-  end
+  -- Keep the station page synchronized with the actual parent/state.
+  self:syncDockScreen()
 
   -- THE POINTER ONLY EXISTS ON UI.
   --
@@ -1459,8 +1506,10 @@ function LTheory:onUpdate (dt)
         if e.hasMarket and e:hasMarket() then target = e break end
       end
       if not target then fail('no market station in system') return end
-      s:setPos(target:getPos() + Vec3f(80, 0, 0))
-      target:addDocked(s)
+      local dockPos = target:getPos() - target:getUp():scale(
+        1.25 * target:getRadius() + s:getRadius() + 100)
+      s:setPos(dockPos)
+      s:pushAction(Actions.DockAt(target))
       self.__uiPlace = target
       -- Seed the ship so the trade stages actually exercise the
       -- market's buy/sell paths (the player otherwise starts broke).
@@ -1534,14 +1583,25 @@ function LTheory:onUpdate (dt)
       end
       if not hasBid then fail('bids vanished after trade (re-arm broken)') return end
       pass('bids re-arm after trade')
-      -- 8) Undock closes the dock screen.
-      s:pushAction(Actions.Undock())
+      -- 8) F undocks through the real canvas input route. A modal screen may
+      -- be visited by both focused and child input in one frame; the action
+      -- must remain idempotent.
+      local originalGetValue = Input.GetValue
+      Input.GetValue = function (button)
+        if button == Button.Keyboard.F then return 1 end
+        return originalGetValue(button)
+      end
+      require('WIP.Control').BeginFrame()
+      self.canvas:input()
+      Input.GetValue = originalGetValue
     elseif self.__uiStage == 7 and self.__uiT >= 5.0 then
       self.__uiStage = 8
       if self.dockScreen and self.dockScreen:isOpen() then
         fail('dock screen did not close on undock') return
       end
       pass('dock screen closes on undock')
+      if not s:isIdle() then fail('duplicate undock actions remain on the stack') return end
+      pass('undock input is idempotent within one frame')
       printf('[UITEST] ALL CHECKS PASSED')
       self.__uiDone = true
     end
@@ -1564,6 +1624,18 @@ function LTheory:onUpdate (dt)
         s:addCredits(1234)
         local silver = SaveGame.ItemByName('Silver')
         if silver then s:addItem(silver, 42) end
+        -- Complete one real scan before the snapshot so the round-trip also
+        -- exercises structural ship knowledge and the human pilot's ScannerDB.
+        local scanTarget = self.system:findScanTarget(s)
+        local scanKey, scanFingerprint
+        if scanTarget then
+          scanKey = scanTarget.stableId
+          scanFingerprint = scanTarget.depositFingerprint or scanTarget.generationFingerprint
+          local scan = Actions.Scan(scanTarget)
+          scan:resolve(s, scanTarget:hasYield())
+        end
+        local npcCount = #self.system.npcs.list
+        printf('[SAVE TEST] scanned rock = %s, npc roster = %d', tostring(scanKey), npcCount)
         -- The menu-open capture, exercised directly: the frame in hand has
         -- the menu over the world, but the machinery is what is under test.
         SaveGame.CaptureWorkingShot(self.gameView and self.gameView.renderer)
@@ -1583,10 +1655,28 @@ function LTheory:onUpdate (dt)
           printf('[SAVE TEST] post-load  (%.1f, %.1f, %.1f) credits %d silver %d',
             p3.x, p3.y, p3.z, s2:getCredits(),
             silver and s2:getItemCount(silver) or 0)
-          printf('[SAVE TEST] position + credits restored = %s',
-            tostring(math.abs(p3.x - p.x) < 1 and math.abs(p3.y - p.y) < 1
-              and math.abs(p3.z - p.z) < 1 and s2:getCredits() == 1234))
+          local restoredRock = scanKey and self.system:resolveStableId(scanKey)
+          local savedScan = scanKey and s2.knowledge and s2.knowledge.scans[scanKey]
+          local memoryOk = not scanKey or (savedScan
+            and savedScan.fingerprint == scanFingerprint
+            and self.player:getScannerDB().contacts[scanKey] ~= nil)
+          local rosterOk = #self.system.npcs.list == npcCount
+          local restoredOk = math.abs(p3.x - p.x) < 1 and math.abs(p3.y - p.y) < 1
+            and math.abs(p3.z - p.z) < 1 and s2:getCredits() == 1234
+            and silver and s2:getItemCount(silver) == 42 and memoryOk and rosterOk
+          printf('[SAVE TEST] position + credits + cargo restored = %s', tostring(restoredOk))
+          printf('[SAVE TEST] scan memory + scanner contact + roster restored = %s / %s',
+            tostring(memoryOk), tostring(rosterOk))
+          printf('[SAVE TEST] scan detail: rock=%s record=%s contact=%s fpMatch=%s',
+            tostring(restoredRock ~= nil), tostring(savedScan ~= nil),
+            tostring(scanKey and self.player:getScannerDB().contacts[scanKey] ~= nil),
+            tostring(savedScan and savedScan.fingerprint == scanFingerprint))
           printf('[SAVE TEST] location line: %s', self:currentLocationText())
+          if restoredOk then
+            print('[SAVE TEST] ALL CHECKS PASSED')
+          else
+            print('[SAVE TEST] FAIL: snapshot mismatch')
+          end
           -- Clean up: the slot, its thumbnail, and the working shot.
           if SaveGame.Delete(saveSlot) then
             print('[SAVE TEST] cleaned up the test slots')

@@ -4,6 +4,7 @@
 -- one instance per asset and feeds it immutable economy job templates; the
 -- selected template is cloned before execution.
 
+local RouteKey = require('Game.RouteKey')
 local Policy = {}
 
 local COMPLETED_COOLDOWN = 120.0
@@ -58,6 +59,64 @@ end
 function Policy.canAssign (policy, job, now)
   local route = policy.routes[job:getKey()]
   return not route or (route.cooldownUntil or 0) <= (now or 0)
+end
+
+function Policy.Capture (policy)
+  local routes = {}
+  for key, route in pairs(policy.routes or {}) do
+    if RouteKey.IsPersistent(key) then
+      routes[#routes + 1] = {
+        key = key,
+        runs = route.runs or 0,
+        completed = route.completed or 0,
+        failed = route.failed or 0,
+        cancelled = route.cancelled or 0,
+        lastOutcome = route.lastOutcome,
+        lastOutcomeAt = route.lastOutcomeAt or 0,
+        cooldownUntil = route.cooldownUntil or 0,
+      }
+    end
+  end
+  table.sort(routes, function (a, b) return a.key < b.key end)
+  return { seed = policy.seed or 0, routes = routes }
+end
+
+local function finite (value, fallback)
+  value = tonumber(value)
+  if value and value == value and value ~= math.huge and value ~= -math.huge then
+    return value
+  end
+  return fallback
+end
+
+local function count (value)
+  return math.max(0, math.floor(finite(value, 0)))
+end
+
+function Policy.Restore (policy, data)
+  data = type(data) == 'table' and data or {}
+  local seed = data.seed
+  if type(seed) == 'string' or (type(seed) == 'number' and finite(seed) ~= nil) then
+    policy.seed = seed
+  else
+    policy.seed = 0
+  end
+  policy.routes = {}
+  local routes = type(data.routes) == 'table' and data.routes or {}
+  for _, entry in ipairs(routes) do
+    if type(entry) == 'table' and type(entry.key) == 'string'
+       and RouteKey.IsPersistent(entry.key) then
+      policy.routes[entry.key] = {
+        runs = count(entry.runs),
+        completed = count(entry.completed),
+        failed = count(entry.failed),
+        cancelled = count(entry.cancelled),
+        lastOutcome = type(entry.lastOutcome) == 'string' and entry.lastOutcome or nil,
+        lastOutcomeAt = finite(entry.lastOutcomeAt, 0),
+        cooldownUntil = finite(entry.cooldownUntil, 0),
+      }
+    end
+  end
 end
 
 function Policy.recordOutcome (policy, job, outcome, now)

@@ -47,7 +47,12 @@ function Action:flyToward (e, targetPos, targetForward, targetUp)
   course = course - e:getVelocity():scale(kLeadTime)
 
   -- TODO : Fwd alignment can cause docking failure
-  local forward  = (course + targetForward:scale(1.0)):normalize()
+  local forward = course + targetForward:scale(1.0)
+  -- Lead compensation can put the desired course exactly opposite the
+  -- requested heading (for example, when a fast ship is almost on its target).
+  -- Keep the current heading in that degenerate case instead of normalizing 0.
+  if forward:length() < 1e-6 then forward = e:getForward() end
+  forward = forward:normalize()
   local yawPitch = e:getForward():cross(forward)
   local roll     = e:getUp():cross(targetUp)
 
@@ -60,6 +65,8 @@ function Action:flyToward (e, targetPos, targetForward, targetUp)
 
   if Config.game.aiUsesBoost then
     c.boost = 1.0 - exp(-max(0.0, (dist / 150.0) - 1.0))
+  else
+    c.boost = 0
   end
 end
 

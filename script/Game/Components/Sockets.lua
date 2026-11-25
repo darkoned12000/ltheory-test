@@ -13,8 +13,8 @@ local function iterateSocketsByType (s)
   return s.entity.sockets[s.i] and s.entity.sockets[s.i].child
 end
 
-function Entity:addSocket (type, pos, external)
-  insert(self.sockets, LTheory_Socket(type, pos, external))
+function Entity:addSocket (type, pos, external, typeIndex, moduleId)
+  insert(self.sockets, LTheory_Socket(type, pos, external, typeIndex, moduleId))
 end
 
 function Entity:addSockets ()
@@ -44,12 +44,16 @@ function Entity:iterSocketsByType (type)
   return iterateSocketsByType, { entity = self, type = type, i = 0 }
 end
 
-function Entity:plug (child)
+function Entity:plug (child, typeIndex)
   assert(self.sockets)
   local type = child:getSocketType()
   for i, socket in ipairs(self.sockets) do
-    if socket.type == type and socket.child == nil then
+    if socket.type == type and socket.child == nil
+       and (typeIndex == nil or socket.typeIndex == typeIndex) then
       socket.child = child
+      child.stableId = socket.moduleId
+      child.moduleType = socket.type
+      child.moduleIndex = socket.typeIndex
       self:attach(child, socket.pos, Quat.Identity())
 
       local SocketType = require('Game.SocketKind')
