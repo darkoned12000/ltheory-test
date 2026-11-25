@@ -88,6 +88,11 @@ local function commit ()
     f:writeStr(string.format('Config.gpu.colorContrast    = %s\n', fmt(Config.gpu.colorContrast)))
     f:writeStr(string.format('Config.gpu.colorTemp        = %s\n', fmt(Config.gpu.colorTemp)))
     f:writeStr(string.format('Config.gpu.colorTint        = %s\n', fmt(Config.gpu.colorTint)))
+    f:writeStr('-- Radar contact filters\n')
+    for _, key in ipairs({ 'asteroids', 'ships', 'stations', 'planets', 'stars' }) do
+      f:writeStr(string.format('Config.ui.radarFilters.%s = %s\n', key,
+        tostring(Config.ui.radarFilters[key] ~= false)))
+    end
     f:close()
   end)
   if not ok then
@@ -352,6 +357,24 @@ function SettingsScreen.Create (opts)
   line('')
   line('')
   line('')
+  line('RADAR', Color(0.45, 0.80, 1.0, 1.0))
+  local function radarOption (key, label)
+    local toggle = OptionSlider.Create(
+      function () return Config.ui.radarFilters[key] ~= false and 2 or 1 end,
+      function (i) Config.ui.radarFilters[key] = (i == 2); commit() end,
+      { 'OFF', 'ON' })
+    body:add(buildRow(Label(label), toggle))
+  end
+  radarOption('asteroids', 'Asteroids')
+  radarOption('ships', 'Ships')
+  radarOption('stations', 'Stations')
+  radarOption('planets', 'Planets')
+  radarOption('stars', 'Stars')
+
+  line('')
+  line('')
+  line('')
+  line('')
   line('')
   line('AUDIO', Color(0.45, 0.80, 1.0, 1.0))
   body:add(buildRow(Label('Music volume'),
@@ -374,6 +397,8 @@ function SettingsScreen.Create (opts)
   body:add(buildRow(Label('Boost'), Label('LShift')))
   body:add(buildRow(Label('Fire'), Label('LMB')))
   body:add(buildRow(Label('Dock'), Label('F')))
+  body:add(buildRow(Label('Scan'), Label('C (target or nearest asteroid)')))
+  body:add(buildRow(Label('Mine'), Label('X (target asteroid with T)')))
   body:add(buildRow(Label('Target'), Label('T / G')))
   body:add(buildRow(Label('Map'), Label('V / F10')))
   body:add(buildRow(Label('Menu'), Label('Esc')))

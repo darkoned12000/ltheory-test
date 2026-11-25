@@ -19,6 +19,7 @@
 ]]
 
 local Actions = requireAll('Game.Actions')
+local Cargo = require('Game.Cargo')
 local ShipBindings = require('Game.Controls.ShipBindings')
 local Screen = require('Game.GUI.Screen')
 local Grid = require('UI.Grid')
@@ -172,18 +173,22 @@ function DockScreen:sellAll ()
   local _, market = self:dock()
   if not market then return end
   local sold, earned = 0, 0
+  local details = {}
   for _, q in ipairs(market:quotes()) do
     if q.bid then
       local have = ship:getItemCount(q.item)
       if have > 0 then
         local n, credits = market:sell(ship, q.item, have)
-        sold = sold + n
-        earned = earned + credits
+        if n > 0 then
+          sold = sold + n
+          earned = earned + credits
+          details[#details + 1] = format('%d %s', n, q.item:getName())
+        end
       end
     end
   end
   if sold > 0 then
-    self.message = format('Sold %d for %d credits', sold, earned)
+    self.message = format('Sold %s for %d credits', table.concat(details, ', '), earned)
   else
     self.message = 'Nothing here the market wants'
   end
@@ -224,12 +229,13 @@ function DockScreen:refresh ()
   -- THE MARKET'S STATE: OPEN (green) or CLOSED (red). A closed market
   -- sells its stock but buys nothing -- abandoned, damaged, or a depot
   -- that only sells equipment; the knob gameplay mechanics will flip.
-  local head = Grid():setCols(2):setStretch(0, 0)
+  local head = Grid():setCols(3):setStretch(0, 0)
   head:add(cell(
     market and (market:isOpen() and 'MARKET (OPEN)' or 'MARKET (CLOSED)'),
-    300,
+    260,
     market and market:isOpen() and GOOD or CLOSED_C))
-  head:add(cell(format('YOUR CREDITS:  %d', ship and ship:getCredits() or 0), 280, WHITE))
+  head:add(cell(format('YOUR CREDITS:  %d', ship and ship:getCredits() or 0), 240, WHITE))
+  head:add(cell(ship and ship:hasInventory() and Cargo.FormatSummary(ship) or 'NO CARGO', 280, WHITE))
   self.body:add(head)
 
   local tabs = Grid():setCols(2):setStretch(0, 0)
@@ -251,6 +257,21 @@ function DockScreen:refresh ()
   -- A 25px BREATH before and after the table: the tab buttons and the
   -- UNDOCK button sat touching its outline.
   self.body:add(spacer(44))
+
+  if ship and ship:hasInventory() then
+    local manifest = Grid():setCols(1):setStretch(0, 0)
+    local lines = Cargo.Lines(ship)
+    if #lines == 0 then
+      manifest:add(cell('HOLD EMPTY', nil, MUTED))
+    else
+      for _, entry in ipairs(lines) do
+        manifest:add(cell(format('%s  x%d   (%d mass)',
+          entry.name, entry.count, entry.mass), nil, WHITE))
+      end
+    end
+    self.body:add(manifest)
+    self.body:add(spacer(18))
+  end
 
   if market then
     local list = Grid():setCols(1):setStretch(0, 0)

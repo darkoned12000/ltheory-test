@@ -486,8 +486,12 @@ function AsteroidField:update (shipPos)
            and not self.chunks[chunkSalt(cx, cy, cz)] then
           if not solids then solids = self:solids() end
           local chunk = self:generateChunk(cx, cy, cz, solids)
+          local sector = tostring(self.system.sectorSeed or self.system.seed or 0)
           for i = 1, #chunk.rocks do
-            self.system:addChild(chunk.rocks[i].entity)
+            local asteroid = chunk.rocks[i].entity
+            self.system:addChild(asteroid)
+            asteroid:setDepositKey(string.format('%s:%s:%d:%d:%d:%d',
+              self.streamTag, sector, cx, cy, cz, i))
           end
           touched = touched + 1
           loadedN = loadedN + 1

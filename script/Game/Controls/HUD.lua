@@ -1,9 +1,13 @@
 local CameraBindings = require('Game.Controls.CameraBindings')
+local Cargo = require('Game.Cargo')
 local ShipBindings = require('Game.Controls.ShipBindings')
 local Disposition = require('Game.Components.Dispositions')
 local Frustum = require('Game.Frustum')
+local Radar = require('Game.Radar')
+local ScannerDB = require('Game.ScannerDB')
 local Sector = require('Game.Region')
 local Seed = require('Game.Seed')
+local Targeting = require('Game.Targeting')
 local Container = require('UI.Container')
 
 -- Scratch vector for the frustum pre-cull in drawTargets. The target list
@@ -26,6 +30,7 @@ function HUD:onEnable ()
   local camera = self.gameView.camera
   camera:warp()
   camera:lerpFrom(pCamera.pos, pCamera.rot)
+  self:refreshRadarContacts()
 end
 
 --[[
@@ -51,6 +56,57 @@ function HUD:addNpcBox (e, bx, by, bw, bh)
   self.npcBoxes[#self.npcBoxes + 1] = { e = e, x = bx, y = by, w = bw, h = bh }
 end
 
+function HUD:usesMouseAim ()
+  return Targeting.UsesMouseAim(Input.GetActiveDeviceType())
+end
+
+function HUD:getAimPoint ()
+  local camera = self.gameView.camera
+  if self:usesMouseAim() then
+    return camera:windowToScreen(Input.GetMousePosition())
+  end
+  return Vec2f(self.sx * 0.5 + self.sx * 0.5 * (self.aimX or 0),
+    self.sy * 0.5 - self.sy * 0.5 * (self.aimY or 0))
+end
+
+function HUD:getAimRay ()
+  local camera = self.gameView.camera
+  if self:usesMouseAim() then
+    return camera:mouseToRay(1e9)
+  end
+  return camera:ndcToRay(Vec3f(self.aimX or 0, self.aimY or 0, 0), 1e9)
+end
+
+function HUD:getScannerDirection ()
+  local ray = self:getAimRay()
+  return Vec3f(ray.dirx, ray.diry, ray.dirz)
+end
+
+function HUD:pickTarget ()
+  local ray = self:getAimRay()
+  local planes = Frustum.getCurrent()
+  local playerShip = self.player:getControlling()
+  local best, bestDistance
+  for i = 1, #self.targets.tracked do
+    local target = self.targets.tracked[i]
+    if target ~= playerShip and Targeting.IsTargetable(target) then
+      target.body:getPos(scratchPos)
+      local radius = target.body:getBoundingRadius()
+      if not planes or Frustum.sphereVisible(planes, scratchPos.x, scratchPos.y,
+                                              scratchPos.z, radius * 1.15) then
+        local distance = Targeting.RaySphereDistance(
+          ray.px, ray.py, ray.pz, ray.dirx, ray.diry, ray.dirz,
+          scratchPos.x, scratchPos.y, scratchPos.z, radius)
+        if distance and distance >= ray.tMin and distance <= ray.tMax
+           and (not bestDistance or distance < bestDistance) then
+          best, bestDistance = target, distance
+        end
+      end
+    end
+  end
+  return best
+end
+
 function HUD:drawTargets (a)
   local camera = self.gameView.camera
   self:resetNpcBoxes()
@@ -62,9 +118,10 @@ function HUD:drawTargets (a)
   local playerShip = player:getControlling()
   local playerTarget = playerShip:getTarget()
 
-  local closest = nil
-  local minDist = 128
-  local center = Vec2f(self.sx / 2, self.sy / 2)
+  local closest, closestDistance = nil, math.huge
+  local aim = self:getAimPoint()
+  local showTrackers = Config.ui.showTrackers
+  local ray = showTrackers and self:getAimRay() or nil
 
   -- The tracked list is EVERY live, damageable entity in the system. With a
   -- streamed asteroid field that is ~10,600 rocks, and this loop ran over all
@@ -84,11 +141,10 @@ function HUD:drawTargets (a)
   -- bounding radius: a big rock straddling the screen edge still has geometry
   -- on screen, and the bracket is drawn from its bounding box, not its centre.
   local planes = Frustum.getCurrent()
-  local showTrackers = Config.ui.showTrackers
 
   for i = 1, #self.targets.tracked do
     local target = self.targets.tracked[i]
-    if target ~= playerShip and target:isAlive() and target.body then
+    if target ~= playerShip and Targeting.IsTargetable(target) then
       local disp = target:getOwnerDisposition(player)
       local culled = false
       local hasScratchPos = false
@@ -104,6 +160,16 @@ function HUD:drawTargets (a)
       end
       if not culled then
         local pos = hasScratchPos and scratchPos or target:getPos()
+        if ray then
+          local radius = target.body:getBoundingRadius()
+          local pickDistance = Targeting.RaySphereDistance(
+            ray.px, ray.py, ray.pz, ray.dirx, ray.diry, ray.dirz,
+            pos.x, pos.y, pos.z, radius)
+          if pickDistance and pickDistance >= ray.tMin and pickDistance <= ray.tMax
+             and pickDistance < closestDistance then
+            closest, closestDistance = target, pickDistance
+          end
+        end
         local ndc = camera:worldToNDC(pos)
         local ndcMax = max(abs(ndc.x), abs(ndc.y))
 
@@ -112,7 +178,7 @@ function HUD:drawTargets (a)
             local c = Disposition.GetColor(disp)
             c.a = a * c.a
             do -- Draw rounded box corners
-              local bx1, by1, bsx, bsy = camera:entityToScreenRect(target)
+              local bx1, by1, bsx, bsy = camera:entityToScreenSphere(target)
               local bx2, by2 = bx1 + bsx, by1 + bsy
               UI.DrawEx.Wedge(bx2, by1, 4, 4, 0.125, 0.2, c)
               UI.DrawEx.Wedge(bx1, by1, 4, 4, 0.375, 0.2, c)
@@ -133,7 +199,7 @@ function HUD:drawTargets (a)
           end
 
           local ss = camera:ndcToScreen(ndc)
-          local dist = ss:distance(center)
+          local dist = ss:distance(aim)
           -- Bluish clickable boxes for NPC caps near the player (docs/npcwork.md).
           -- The click handler is HUD:onInput; setSubject opens the info panel.
           -- Passive boxes are range-gated to visual range; the player's own
@@ -146,12 +212,9 @@ function HUD:drawTargets (a)
           end
           -- NPC cap names: draw near the bracket, above the box.
           if target.name and (playerTarget == target or dist < 6000) then
-            UI.DrawEx.TextAdditive('NovaMono', target:getName(), 14,
+            local name = target.getRegistryName and target:getRegistryName(false) or target:getName()
+            UI.DrawEx.TextAdditive('NovaMono', name, 14,
               ss.x + 8, ss.y - 8, 0, 0, 1, 1, 1, a, 0.0, 0.0)
-          end
-          if disp < 0.5 and dist < minDist then
-            closest = target
-            minDist = dist
           end
         else
           if showTrackers then
@@ -172,7 +235,7 @@ function HUD:drawTargets (a)
 
   -- Stash the best lock candidate for controlTargetLock to consume (see
   -- HUD:onInput -> ShipBindings.LockTarget).
-  self.target = closest
+  self.target = showTrackers and closest or nil
 end
 
 --[[
@@ -189,17 +252,41 @@ function HUD:drawLock (a)
   -- Dead or swept target: drop the stale lock. (A cap killed by
   -- System:sweepDestroyed() gets its body invalidated on the same frame the
   -- next draw runs -- see docs/npcwork.md.)
-  if target and (not target:isAlive() or not target.body) then
+  if target and not Targeting.IsTargetable(target) then
     playerShip:setTarget(nil)
     target = nil
   end
   if not target or target:isDestroyed() then
     -- Target died (or was swept from the world): drop the lock.
     if target then playerShip:setTarget(nil) end
+    self:updateInfoPanel(nil)
     return
   end
   local camera = self.gameView.camera
   local center = Vec2f(self.sx / 2, self.sy / 2)
+
+  -- Registry-style target bracket. This remains visible even when passive
+  -- trackers are disabled, so the player always sees what T has locked.
+  local bx, by, bw, bh = camera:entityToScreenSphere(target)
+  local box = math.min(140, math.max(28, math.max(bw, bh) * 1.25))
+  local mx, my = bx + bw * 0.5 - box * 0.5, by + bh * 0.5 - box * 0.5
+  local hostile = target:getOwnerDisposition(self.player) < 0
+  local pulse = 0.82 + 0.18 * math.sin(Time.GetRaw() * 0.006)
+  local bracket = hostile and Color(1.0, 0.15, 0.1, a * pulse)
+    or Color(0.1, 0.75, 1.0, a * pulse)
+  local outer = box + 8
+  local ox, oy = mx - 4, my - 4
+  local echo = hostile and Color(1.0, 0.15, 0.1, 0.25 * a)
+    or Color(0.1, 0.75, 1.0, 0.25 * a)
+  UI.DrawEx.Wedge(ox + outer, oy, 18, 18, 0.125, 0.22, echo)
+  UI.DrawEx.Wedge(ox, oy, 18, 18, 0.375, 0.22, echo)
+  UI.DrawEx.Wedge(ox, oy + outer, 18, 18, 0.625, 0.22, echo)
+  UI.DrawEx.Wedge(ox + outer, oy + outer, 18, 18, 0.875, 0.22, echo)
+  UI.DrawEx.Wedge(mx + box, my, 18, 18, 0.125, 0.34, bracket)
+  UI.DrawEx.Wedge(mx, my, 18, 18, 0.375, 0.34, bracket)
+  UI.DrawEx.Wedge(mx, my + box, 18, 18, 0.625, 0.34, bracket)
+  UI.DrawEx.Wedge(mx + box, my + box, 18, 18, 0.875, 0.34, bracket)
+  UI.DrawEx.Cross(mx + box * 0.5, my + box * 0.5, 4, bracket)
 
   -- Health bar for the locked target (only if it is damageable)
   if target.health then
@@ -263,6 +350,201 @@ function HUD:drawLock (a)
   end
 end
 
+function HUD:setNotice (text)
+  self.notice = text
+  self.noticeTime = 3
+end
+
+function HUD:drawInteractionPrompt (a)
+  local ship = self.player:getControlling()
+  if not (ship and ship.body) then return end
+  local x, y, sx, sy = self:getRectGlobal()
+  local text = self.noticeTime > 0 and self.notice or nil
+  local target = ship:getTarget()
+  if not text and ship.actions then
+    for i = #ship.actions, 1, -1 do
+      local action = ship.actions[i]
+      if action.getName and action:getName():sub(1, 4) == 'Scan' then
+        text = string.format('SCANNING %d%%', math.min(100,
+          math.floor(((action.t or 0) / math.max(0.01, action.duration or 1)) * 100)))
+        break
+      end
+    end
+  end
+  if not text and ship.actions then
+    for i = #ship.actions, 1, -1 do
+      local action = ship.actions[i]
+      if action.getName and action:getName():sub(1, 6) == 'MineAt' then
+        if action.maxCount then
+          local item = action.target:getYield().item:getName()
+          local left = action.target.getYieldRemaining and action.target:getYieldRemaining() or 0
+          text = string.format('EXTRACTING %s  %d / %d  LEFT %d', item,
+            action.extracted or 0, action.maxCount, left)
+        else
+          text = 'BRAKING TO MINE'
+        end
+        break
+      end
+    end
+  end
+  if not text and target and target.hasYield then
+    local scanStatus = ship:getScanStatus(target)
+    local mineStatus = ship:getMiningStatus(target)
+    if scanStatus == 'ready' then text = 'C  SCAN'
+    elseif scanStatus == 'out of range' then text = string.format('SCAN RANGE %d m', (Config.game and Config.game.scanRange) or 2000)
+    elseif mineStatus == 'ready' then text = 'X  MINE'
+    elseif mineStatus == 'mining' then text = 'EXTRACTING'
+    elseif mineStatus == 'approach' then text = string.format('APPROACH %d m TO MINE', (Config.game and Config.game.miningRange) or 250)
+    elseif mineStatus == 'stop' then text = 'X  BRAKE & MINE'
+    elseif mineStatus == 'align' then text = 'ALIGN WITH DEPOSIT TO MINE'
+    elseif mineStatus == 'cargo full' then text = 'CARGO FULL - DEPOSIT REMAINS'
+    end
+  end
+  local root = ship:getRoot()
+  if not text and ship.scanNotice and root and root.getTime and root:getTime() < (ship.scanNoticeUntil or 0) then
+    text = ship.scanNotice
+  end
+  if text then
+    UI.DrawEx.TextAdditive('NovaMono', text, 15, x + sx * 0.5, y + sy - 118,
+      0, 0, 0.4, 0.9, 1.0, a, 0.5, 0)
+  end
+end
+
+function HUD:drawCargoPanel (a)
+  local ship = self.player:getControlling()
+  if not (ship and ship.body and ship.hasInventory and ship:hasInventory()) then return end
+  local x, y, sx, sy = self:getRectGlobal()
+  local lines = Cargo.Lines(ship)
+  local shown = math.min(#lines, 4)
+  local width = math.min(230, sx * 0.24)
+  local height = 42 + shown * 17 + (#lines > shown and 17 or 0)
+  local left, top = x + sx - width - 12, y + sy - height - 58
+  UI.DrawEx.Panel(left, top, width, height, Color(0.02, 0.03, 0.06, 0.72 * a), 0.5)
+  UI.DrawEx.RectOutline(left, top, width, height, Color(0.25, 0.55, 0.75, 0.55 * a))
+  UI.DrawEx.TextAdditive('NovaMono', Cargo.FormatSummary(ship), 13,
+    left + 10, top + 8, 0, 0, 0.45, 0.85, 1.0, a, 0, 0)
+  if #lines == 0 then
+    UI.DrawEx.TextAdditive('NovaMono', 'HOLD EMPTY', 12,
+      left + 10, top + 29, 0, 0, 0.65, 0.75, 0.8, a, 0, 0)
+    return
+  end
+  for i = 1, shown do
+    local entry = lines[i]
+    UI.DrawEx.TextAdditive('NovaMono', string.format('%s  x%d  (%d)',
+      entry.name, entry.count, entry.mass), 12,
+      left + 10, top + 28 + (i - 1) * 17, 0, 0, 0.75, 0.82, 0.88, a, 0, 0)
+  end
+  if #lines > shown then
+    UI.DrawEx.TextAdditive('NovaMono', string.format('+%d MORE', #lines - shown), 12,
+      left + 10, top + 28 + shown * 17, 0, 0, 0.65, 0.75, 0.8, a, 0, 0)
+  end
+end
+
+function HUD:drawRadar (a)
+  local ship = self.player:getControlling()
+  if not (ship and ship.body) then return end
+  local x, y, sx, sy = self:getRectGlobal()
+  local base = math.min(72, sx * 0.08)
+  local radius = math.min(sy * 0.28, base * (self.radarExpanded and 1.45 or 1) * (self.radarScale or 1))
+  local range = ((Config.game and Config.game.radarRange) or 50000) * (self.radarScale or 1)
+  local cx, cy = x + radius + 24, y + sy - radius - 28
+  self.radarBounds = { x = cx, y = cy, radius = radius }
+  local dim = Color(0.05, 0.35, 0.55, 0.55 * a)
+  UI.DrawEx.Ring(cx, cy, radius, dim)
+  UI.DrawEx.Ring(cx, cy, radius * 0.5, dim)
+  UI.DrawEx.Line(cx - radius, cy, cx + radius, cy, dim)
+  UI.DrawEx.Line(cx, cy - radius, cx, cy + radius, dim)
+  UI.DrawEx.TextAdditive('NovaMono', Radar.FormatRange(range), 10,
+    cx + radius * 0.68, cy - radius * 0.72, 0, 0, 0.35, 0.75, 0.9, 0.7 * a, 0, 0)
+  UI.DrawEx.TextAdditive('NovaMono', Radar.FormatRange(range * 0.5), 10,
+    cx + radius * 0.34, cy - radius * 0.36, 0, 0, 0.35, 0.75, 0.9, 0.7 * a, 0, 0)
+  local sweep = Time.GetRaw() * 0.001
+  UI.DrawEx.Line(cx, cy, cx + math.cos(sweep) * radius,
+    cy + math.sin(sweep) * radius, Color(0.1, 0.8, 1.0, 0.35 * a))
+
+  local origin = ship:getPos()
+  local right, forward = ship:getRight(), ship:getForward()
+  local contacts = self.radarContacts or {}
+  for _, contact in ipairs(contacts) do
+    if Radar.ShowSignal(contact.signal, Config.ui and Config.ui.radarFilters) then
+    local p = contact.position
+    if p then
+      local delta = Vec3f(p.x - origin.x, p.y - origin.y, p.z - origin.z)
+      local blip = Radar.Blip(delta, right, forward, range, radius)
+      if blip then
+        local tier = contact.tier or 1
+        local color
+        if contact.signal == 'star' then color = Color(1.0, 0.85, 0.35, a)
+        elseif contact.signal == 'planet' then color = Color(0.65, 0.45, 1.0, a)
+        elseif contact.signal == 'station' then color = Color(0.2, 0.9, 1.0, a)
+        elseif contact.signal == 'ore' then color = Color(0.2, 1.0, 0.5, a)
+        elseif contact.signal == 'asteroid' then color = Color(0.12, 0.65, 0.35, 0.8 * a)
+        else color = tier >= 3 and Color(0.1, 0.9, 1.0, a) or Color(0.1, 0.45, 0.9, 0.7 * a) end
+        UI.DrawEx.Point(cx + blip.x, cy + blip.y,
+          contact.signal == 'star' and 6 or (tier >= 3 and 4 or 3), color)
+      end
+    end
+    end
+  end
+
+  local buttonSize = 22
+  local plusX, minusX = cx + radius + 8, cx + radius + 8
+  local plusY, minusY = cy - buttonSize - 4, cy + 4
+  self.radarButtons = {
+    plus = { x = plusX, y = plusY, sx = buttonSize, sy = buttonSize },
+    minus = { x = minusX, y = minusY, sx = buttonSize, sy = buttonSize },
+  }
+  for _, button in pairs(self.radarButtons) do
+    UI.DrawEx.Rect(button.x, button.y, button.sx, button.sy, Color(0.01, 0.05, 0.08, 0.8 * a))
+    UI.DrawEx.RectOutline(button.x, button.y, button.sx, button.sy, Color(0.1, 0.7, 1.0, 0.8 * a))
+  end
+  UI.DrawEx.TextAdditive('NovaMono', '+', 16, plusX, plusY, buttonSize, buttonSize,
+    1, 1, 1, a, 0.5, 0.5)
+  UI.DrawEx.TextAdditive('NovaMono', '-', 16, minusX, minusY, buttonSize, buttonSize,
+    1, 1, 1, a, 0.5, 0.5)
+  local rockCount = 0
+  for _, contact in ipairs(contacts) do
+    if contact.signal == 'ore' or contact.signal == 'asteroid' then rockCount = rockCount + 1 end
+  end
+  UI.DrawEx.TextAdditive('NovaMono', string.format('RADAR %s  ROCKS %d',
+    Radar.FormatRange(range), rockCount), 11,
+    cx - radius, cy + radius + 4, 0, 0, 0.4, 0.8, 1.0, 0.8 * a, 0, 0)
+  UI.DrawEx.TextAdditive('NovaMono', 'SPACE expand / wheel zoom', 10,
+    cx - radius, cy + radius + 20, 0, 0, 0.3, 0.7, 1.0, 0.6 * a, 0, 0)
+end
+
+function HUD:drawScannerSpectrum (a)
+  local ship = self.player:getControlling()
+  if not (ship and ship.body) then return end
+  local x, y, sx, sy = self:getRectGlobal()
+  local width = math.min(440, sx * 0.42)
+  local height = 58
+  local left = x + (sx - width) * 0.5
+  local top = y + sy - height - 28
+  UI.DrawEx.Panel(left - 10, top - 12, width + 20, height + 30,
+    Color(0.01, 0.03, 0.06, 0.45 * a), 0.4)
+  local bars = (Config.game and Config.game.scannerBars) or 64
+  local contacts = self.radarContacts or {}
+  local aperture = (Config.game and Config.game.scannerAperture) or 45
+  local values = Radar.Spectrum(contacts, ship:getPos(), Time.GetRaw() * 0.001, bars,
+    self:getScannerDirection(), math.cos(math.rad(aperture)))
+  local step = width / bars
+  for i = 1, bars do
+    local h = math.max(1, values[i] * height)
+    UI.DrawEx.Rect(left + (i - 1) * step, top + height - h,
+      math.max(1, step - 1), h, Color(0.08, 0.65, 1.0, (0.35 + values[i] * 0.65) * a))
+  end
+  UI.DrawEx.Line(left, top + height, left + width, top + height, Color(0.1, 0.7, 1.0, 0.7 * a))
+  UI.DrawEx.TextAdditive('NovaMono', 'Hz', 10, left, top + height + 4,
+    0, 0, 0.3, 0.8, 1.0, 0.7 * a, 0, 0)
+  UI.DrawEx.TextAdditive('NovaMono', 'MHz', 10, left + width * 0.45, top + height + 4,
+    0, 0, 0.3, 0.8, 1.0, 0.7 * a, 0, 0)
+  UI.DrawEx.TextAdditive('NovaMono', 'GHz', 10, left + width * 0.78, top + height + 4,
+    0, 0, 0.3, 0.8, 1.0, 0.7 * a, 0, 0)
+  UI.DrawEx.TextAdditive('NovaMono', 'THz', 10, left + width - 24, top + height + 4,
+    0, 0, 0.3, 0.8, 1.0, 0.7 * a, 0, 0)
+end
+
 function HUD:drawReticle (a)
   -- The reticle does not draw over the debug panel: the custom pointer is
   -- there. The reticle tracks the aim input; with a mouse the aim point is
@@ -275,24 +557,11 @@ function HUD:drawReticle (a)
                       Input.GetMousePosition().x, Input.GetMousePosition().y)
   if overPanel then return end
 
-  local cx, cy = self.sx / 2, self.sy / 2
   local c = Color(0.1, 0.5, 1.0, a)
-  local x, y
-  -- Design: reticle tracks the aim input. With a mouse the aim point is the
-  -- cursor (and turrets fire along camera:mouseToRay, so the ring == impact
-  -- point on screen). With a controller (no cursor) it tracks the aim stick
-  -- (self.aimX/aimY from the thrust controller).
-  if Input.GetActiveDeviceType() == DeviceType.Mouse then
-    -- GameView's UI pass now scales the whole subtree through the mViewUI
-    -- autovar (ss-scaled), so DrawEx coordinates are 1:1 with the OS-window
-    -- pixels Input.GetMousePosition returns; the cursor needs no extra ss scale.
-    local w  = self.gameView.camera:windowToScreen(Input.GetMousePosition())
-    x, y = w.x, w.y
-  else
-    x = cx + 0.5 * self.sx * (self.aimX or 0)
-    y = cy - 0.5 * self.sy * (self.aimY or 0)
-  end
+  local aim = self:getAimPoint()
+  local x, y = aim.x, aim.y
   UI.DrawEx.Ring(x, y, 16, c)
+  UI.DrawEx.Cross(x, y, 5, Color(0.2, 0.8, 1.0, 0.8 * a))
 end
 
 -- The name of the key a binding is bound to, if it is a plain key.
@@ -427,7 +696,7 @@ function HUD:controlTurrets (e)
   -- drawReticle() uses the same branch, so the ring == impact point in both
   -- cases. Keep mouse path unchanged to avoid regressing KBM.
   local fallback
-  if Input.GetActiveDeviceType() == DeviceType.Mouse then
+  if self:usesMouseAim() then
     fallback = camera:mouseToRay(1):getPoint(e.socketRangeMin)
   else
     local ndc = Vec3f(self.aimX or 0, self.aimY or 0)
@@ -447,24 +716,70 @@ for turret in e:iterSocketsByType(SocketType.Turret) do
   end
 end
 
+function HUD:updateInfoPanel (target)
+  local panel = self.gameView.infoPanel
+  if not panel then return end
+  if target then
+    panel:setSubject(target)
+    panel:enable()
+  else
+    panel:setSubject(nil)
+    panel:disable()
+  end
+end
+
 function HUD:controlTargetLock (e)
-  if ShipBindings.LockTarget:get() > 0.5 then e:setTarget(self.target) end
+  if ShipBindings.LockTarget:get() > 0.5 then
+    self.target = self:pickTarget()
+    e:setTarget(self.target)
+  end
   if ShipBindings.ClearTarget:get() > 0.5 then e:setTarget(nil) end
   -- NPC targeting keys (docs/npcwork.md).
   if ShipBindings.TargetNearestNpc:get() > 0.5 then e:targetNearestNpc() end
   if ShipBindings.CycleNpcTarget:get() > 0.5 then e:cycleNpcTarget() end
   if ShipBindings.TargetNearestThreat:get() > 0.5 then e:targetNearestThreat() end
-
-  -- Open the NPC info panel on the player's selected target when it is a
-  -- cap (has an owner -- the AI brain -- see docs/npcwork.md).
-  local target = e:getTarget()
-  if target and target:getOwner() then
-    local panel = self.gameView.infoPanel
-    if panel then panel:setSubject(target); panel:enable() end
+  if ShipBindings.Scan:get() > 0.5 then
+    local ok, reason = e:scanForResources()
+    if not ok then self:setNotice('SCAN: ' .. tostring(reason or 'unavailable')) end
   end
+  if ShipBindings.Mine:get() > 0.5 then
+    local ok, reason = e:mineTarget(e:getTarget())
+    if not ok then self:setNotice('MINE: ' .. tostring(reason or 'unavailable')) end
+  end
+
+  -- Any targetable object can occupy the generic target-info panel.
+  self:updateInfoPanel(e:getTarget())
 end
 
 function HUD:onInput (state)
+  local mp = Input.GetMousePosition()
+  local bounds = self.radarBounds
+  if bounds and Radar.Contains(bounds.x, bounds.y, bounds.radius + 36, mp.x, mp.y) then
+    local handled = false
+    if Input.GetPressed(Button.Keyboard.Space) then
+      self.radarExpanded = not self.radarExpanded
+      handled = true
+    end
+    local wheel = Input.GetValue(Button.Mouse.ScrollY)
+    if wheel ~= 0 then
+      self.radarScale = Radar.ClampScale((self.radarScale or 1) + (wheel > 0 and 0.25 or -0.25))
+      self:refreshRadarContacts()
+      handled = true
+    end
+    if Input.GetPressed(Button.Mouse.Left) then
+      for name, button in pairs(self.radarButtons or {}) do
+        if mp.x >= button.x and mp.x <= button.x + button.sx
+           and mp.y >= button.y and mp.y <= button.y + button.sy then
+          self.radarScale = Radar.ClampScale((self.radarScale or 1) + (name == 'plus' and 0.25 or -0.25))
+          self:refreshRadarContacts()
+          handled = true
+          break
+        end
+      end
+    end
+    if handled then return end
+  end
+
   -- Click handling for the bluish NPC-cap boxes (docs/npcwork.md): open the
   -- info panel for the clicked cap.
   if Input.GetDown(Button.Mouse.Left) then
@@ -503,14 +818,20 @@ function HUD:onInput (state)
   -- camera:modPitch(0.005 * CameraBindings.Pitch:get())
 
   local e = self.player:getControlling()
-  if not mapOpen then self:controlThrust(e) end
+  local busy = not e:isIdle()
+  if not mapOpen and not busy then self:controlThrust(e) end
 
-  if not overPanel and not mapOpen then self:controlTurrets(e) end
+  if not overPanel and not mapOpen and not busy then self:controlTurrets(e) end
 
-  self:controlTargetLock(e)
+  if busy then
+    if ShipBindings.ClearTarget:get() > 0.5 then e:setTarget(nil) end
+    self:updateInfoPanel(e:getTarget())
+  else
+    self:controlTargetLock(e)
+  end
   camera:pop()
 
-  if self.dockable then
+  if self.dockable and not busy then
     if ShipBindings.Dock:get() > 0 then
       local d = self.dockable
       if d.warpOnDock and d.warp then
@@ -526,9 +847,58 @@ function HUD:onInput (state)
   end
 end
 
+function HUD:refreshRadarContacts ()
+  local ship = self.player:getControlling()
+  if not (ship and ship.body) then self.radarContacts = {}; return end
+  local origin = ship:getPos()
+  local range = ((Config.game and Config.game.radarRange) or 50000) * (self.radarScale or 1)
+  local range2 = range * range
+  local limit = 64
+  local contacts = {}
+  local db = self.player:getScannerDB()
+  for i = 1, #self.targets.tracked do
+    local entity = self.targets.tracked[i]
+    if entity ~= ship and entity.body and not entity.deleted then
+      entity.body:getPos(scratchPos)
+      local dx, dy, dz = scratchPos.x - origin.x, scratchPos.y - origin.y, scratchPos.z - origin.z
+      local dist2 = dx*dx + dy*dy + dz*dz
+      if dist2 <= range2 then
+        local key = entity.getRegistryId and entity:getRegistryId() or ('entity:' .. tostring(entity.id))
+        local saved = ScannerDB.Get(db, key)
+        local tier = math.max(ScannerDB.TierForRange(math.sqrt(dist2)) or 1, saved and saved.tier or 0)
+        local signal = Radar.SignalFor(entity)
+        if Radar.ShowSignal(signal, Config.ui and Config.ui.radarFilters) then
+          contacts[#contacts + 1] = { key = key, entity = entity, tier = tier,
+            signal = signal, distance2 = dist2,
+            position = { x = scratchPos.x, y = scratchPos.y, z = scratchPos.z } }
+        end
+      end
+    end
+  end
+  local world = ship:getRoot()
+  if world and world.starDir and Radar.ShowSignal('star', Config.ui and Config.ui.radarFilters) then
+    local sd = world.starDir
+    contacts[#contacts + 1] = { key = 'system:star', signal = 'star', tier = 1,
+      distance2 = 1e10,
+      position = { x = origin.x + sd.x * 100000, y = origin.y + sd.y * 100000,
+        z = origin.z + sd.z * 100000 } }
+  end
+  self.radarContacts = Radar.SelectContacts(contacts, limit)
+end
+
 function HUD:onUpdate (state)
+  self.noticeTime = math.max(0, (self.noticeTime or 0) - state.dt)
   self.targets:update()
   self.dockables:update()
+  self.radarTimer = (self.radarTimer or 0) + state.dt
+  local screenOpen = self.ltheory and self.ltheory:anyScreenOpen()
+  if screenOpen then
+    -- Keep the menu/dock screens responsive; refresh immediately on close.
+    self.radarTimer = 0.5
+  elseif self.radarTimer >= 0.5 then
+    self.radarTimer = 0
+    self:refreshRadarContacts()
+  end
 
   -- V opens the map on the GALAXY level, and swaps between the two levels
   -- when it is already open.
@@ -740,6 +1110,10 @@ function HUD:onDraw (focus, active)
   Profiler.Begin('HUD.DrawTargets') self:drawTargets   (self.enabled) Profiler.End()
   Profiler.Begin('HUD.DrawLock')    self:drawLock      (self.enabled) Profiler.End()
   Profiler.Begin('HUD.DrawReticle') self:drawReticle   (self.enabled) Profiler.End()
+  Profiler.Begin('HUD.DrawCargo') self:drawCargoPanel (self.enabled) Profiler.End()
+  Profiler.Begin('HUD.DrawRadar') self:drawRadar (self.enabled) Profiler.End()
+  Profiler.Begin('HUD.DrawSpectrum') self:drawScannerSpectrum (self.enabled) Profiler.End()
+  Profiler.Begin('HUD.DrawInteraction') self:drawInteractionPrompt (self.enabled) Profiler.End()
   Profiler.Begin('HUD.DrawPrompt')  self:drawDockPrompt(self.enabled) Profiler.End()
   Profiler.Begin('HUD.AtmoWarn')    self:drawAtmosphereWarning(self.enabled) Profiler.End()
   Profiler.Begin('HUD.DrawSector')  self:drawSectorPanel(self.enabled) Profiler.End()
@@ -868,7 +1242,7 @@ function HUD.Create (gameView, player)
     icon            = UI.Icon(),
 
     target          = nil,
-    targets         = TrackingList(player, Entity.isAlive),
+    targets         = TrackingList(player, Targeting.IsTargetable),
 
     -- TODO Probably want a reusable prompt thing
     dockPromptAlpha = 0,
@@ -877,6 +1251,12 @@ function HUD.Create (gameView, player)
     aimX            = 0,
     aimY            = 0,
     impacts         = 0,
+    radarScale      = 1,
+    radarExpanded   = false,
+    radarButtons    = {},
+    radarContacts   = {},
+    notice          = nil,
+    noticeTime      = 0,
 
     children  = List(),
   }, HUD)

@@ -93,6 +93,63 @@ def run_shadow_quality_tests():
         luajit = 'luajit'
     return subprocess.run([luajit, exe]).returncode
 
+def run_ship_movement_tests():
+    print('[configure.py] Validating ship speed/acceleration vs hull size and cargo')
+    exe = os.path.join('tools', 'validate_ship_movement.lua')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_ship_movement.lua found - skipping')
+        return 0
+    luajit = os.path.join('libphx', 'ext', 'bin', 'linux64', 'luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    return subprocess.run([luajit, exe]).returncode
+
+def run_npc_tests():
+    print('[configure.py] Validating NPC identity and lifecycle')
+    luajit = os.path.join('libphx', 'ext', 'bin', 'linux64', 'luajit')
+    if not os.path.exists(luajit):
+        luajit = 'luajit'
+    result = 0
+    for exe in [os.path.join('tools', 'validate_npc_identity.lua'),
+                os.path.join('tools', 'validate_npc_lifecycle.lua'),
+                os.path.join('tools', 'validate_npc_policy.lua'),
+                os.path.join('tools', 'validate_npc_jobs.lua'),
+                os.path.join('tools', 'validate_npc_safety.lua'),
+                os.path.join('tools', 'validate_npc_cooperation.lua'),
+                os.path.join('tools', 'validate_npc_communication.lua'),
+                os.path.join('tools', 'validate_npc_trade.lua'),
+                os.path.join('tools', 'validate_npc_save.lua'),
+                os.path.join('tools', 'validate_npc_actions.lua'),
+                os.path.join('tools', 'validate_control_delta.lua'),
+                os.path.join('tools', 'validate_camera_bracket.lua'),
+                os.path.join('tools', 'validate_hud_lifecycle.lua'),
+                os.path.join('tools', 'validate_docking.lua'),
+                os.path.join('tools', 'validate_cargo.lua'),
+                os.path.join('tools', 'validate_deposits.lua'),
+                os.path.join('tools', 'validate_startup_field.lua'),
+                os.path.join('tools', 'validate_player_mining.lua'),
+                os.path.join('tools', 'validate_stop_action.lua'),
+                os.path.join('tools', 'validate_scan_action.lua'),
+                os.path.join('tools', 'validate_scan_effect.lua'),
+                os.path.join('tools', 'validate_npc_scanning.lua'),
+                os.path.join('tools', 'validate_npc_population.lua'),
+                os.path.join('tools', 'validate_patrol_action.lua'),
+                os.path.join('tools', 'validate_ship_archetypes.lua'),
+                os.path.join('tools', 'validate_ship_generator_profile.lua'),
+                os.path.join('tools', 'validate_ship_type_fallback.lua'),
+                os.path.join('tools', 'validate_radar.lua'),
+                os.path.join('tools', 'validate_target_info.lua'),
+                os.path.join('tools', 'validate_registry_scanner.lua'),
+                os.path.join('tools', 'validate_mining_beam.lua'),
+                os.path.join('tools', 'validate_npc_panel.lua'),
+                os.path.join('tools', 'validate_capital_ship.lua'),
+                os.path.join('tools', 'validate_startup_placement.lua')]:
+        if os.path.exists(exe):
+            result |= subprocess.run([luajit, exe]).returncode
+        else:
+            print(f'[configure.py] No {exe} found - skipping')
+    return result
+
 def run_renderqueue_tests():
     print('[configure.py] Validating RenderJobQueue threading (barrier, order, shutdown)')
     exe = os.path.join('tools', 'validate_renderqueue.lua')
@@ -233,6 +290,8 @@ def run_tests():
     result |= run_immdraw_tests()
     result |= run_billboard_math_tests()
     result |= run_shadow_quality_tests()
+    result |= run_ship_movement_tests()
+    result |= run_npc_tests()
     result |= run_renderqueue_tests()
     result |= run_frustum_tests()
     result |= run_spacefield_tests()

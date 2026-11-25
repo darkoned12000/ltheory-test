@@ -1,7 +1,4 @@
 local Action = require('Game.Action')
-local Seed = require('Game.Seed')
-
-local nextId = 0
 
 -- TODO : Dock range should be specified by the dockable component
 local kDockRange = 500
@@ -16,9 +13,6 @@ end
 
 local DockAt = subclass(Action, function (self, target)
   self.target = target
-  -- See MoveTo: per-instance stream instead of one shared clock-seeded one.
-  nextId = nextId + 1
-  self.rng = Seed.rng('action.dockat', nextId):managed()
 end)
 
 function DockAt:clone ()
@@ -37,15 +31,9 @@ function DockAt:onUpdateActive (e, dt)
     return
   end
 
-  if Config.debug.instantJobs then
-    local p = e:getPos()
-    local dp = tp - p
-    e:setPos(p + dp:normalize():scale(self.rng:getUniform() * min(dp:length(), dt * Config.debug.jobSpeed)))
-  else
-    local tf = self.target:getForward()
-    local tu = self.target:getUp()
-    self:flyToward(e, tp, -tf, tu)
-  end
+  local tf = self.target:getForward()
+  local tu = self.target:getUp()
+  self:flyToward(e, tp, -tf, tu)
 end
 
 -- TODO : Update this when we have real dock positions.

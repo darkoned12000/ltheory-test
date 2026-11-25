@@ -9,13 +9,15 @@ local Grid     = require('UI.Grid')
 local Label    = require('UI.Label')
 local Widget   = require('UI.Widget')
 local DrawEx   = require('UI.DrawEx')
+local ScannerDB = require('Game.ScannerDB')
+local TargetInfo = require('Game.TargetInfo')
 local ffi      = require('ffi')
 
 local NpcInfoPanel = {}
 NpcInfoPanel.__index = NpcInfoPanel
 setmetatable(NpcInfoPanel, Container)
 
-NpcInfoPanel.name = 'NPC Info'
+NpcInfoPanel.name = 'Target Info'
 
 local Preview = {}
 Preview.__index = Preview
@@ -62,7 +64,7 @@ function Preview:_buildLines (mesh)
   end
 
   local ntri = math.floor(icnt / 3)
-  local step = math.max(1, math.ceil(ntri / 1400))
+  local step = math.max(1, math.ceil(ntri / 360))
   local lines, n = {}, 0
   local ti = 0
   while ti * 3 + 2 < icnt do
@@ -82,10 +84,11 @@ function Preview:onDraw (focus, active)
   local x, y, sx, sy = self:getRectGlobal()
   DrawEx.RectOutline(x, y, sx, sy, Color(0.20, 0.35, 0.50, 0.55))
   local e = self.panel and self.panel.subject
-  if not (e and e:isAlive() and e.body and e.mesh) then return end
-  if self.mesh ~= e.mesh then
-    self.mesh = e.mesh
-    self.lines = self:_buildLines(e.mesh)
+  if not (e and e.body and e.mesh) then return end
+  local mesh = TargetInfo.ResolveMesh(e)
+  if self.mesh ~= mesh then
+    self.mesh = mesh
+    self.lines = self:_buildLines(mesh)
   end
   local cxs, cys = x + sx * 0.5, y + sy * 0.5
   local scale = math.min(sx, sy) * 0.36
@@ -108,10 +111,10 @@ end
 
 function NpcInfoPanel:onLayoutPos (px, py, psx, psy)
   Widget.onLayoutPos(self, px, py, psx, psy)
-  -- Inset from the lower-right corner: the sector/region readout occupies the
-  -- upper-left, and this keeps the target readout clear at every window size.
-  self.x = self.x - 12
-  self.y = self.y + 12
+  -- Match SectorPanel's 10px widget inset. Together with the HUD's 8px pad,
+  -- both corner panels sit 18px from their screen edges.
+  self.x = self.x - 10
+  self.y = self.y + 10
 end
 
 function NpcInfoPanel:onDraw (focus, active)
@@ -137,38 +140,69 @@ function NpcInfoPanel.Create (ltheory)
     subject  = nil,
     children = List(),
   }, NpcInfoPanel)
-  self:setAlign(1.0, 1.0):setStretch(0, 0):setPadUniform(12)
+  self:setAlign(1.0, 0.0):setStretch(0, 0):setPadUniform(12)
 
   local function liveSubject ()
     local e = self.subject
-    if e and e:isAlive() and e.body then return e end
+    if e and (e:isAlive() or e.isPlanet) and e.body then return e end
     return nil
   end
 
-  local title = Label('NPC Info')
+  local title = Label('Target Info')
   title:setFontColor(Config.ui.color.accent)
 
   local preview = setmetatable({ panel = self }, Preview)
 
   local details = Grid():setCols(2):setPadCellX(12):setPadCellY(3)
   local function row (name, poll)
-    local key = Label(name):setFontColor(Config.ui.color.textTitle)
+    local key = Label(type(name) == 'function' and '' or name)
+      :setFontColor(Config.ui.color.textTitle)
+    if type(name) == 'function' then key:setPollFn(name) end
     local val = Label(''):setFontColor(Config.ui.color.textNormal):setPollFn(poll)
     details:add(key):add(val)
+  end
+  local function contactFor (e)
+    local player = self.ltheory and self.ltheory.player
+    if not (e and player) then return nil end
+    local key = e.getRegistryId and e:getRegistryId() or ('entity:' .. tostring(e.id))
+    return ScannerDB.Get(player:getScannerDB(), key)
   end
 
   row('Name', function ()
     local e = liveSubject()
-    return e and shorten(e:getName(), 30) or ''
+    return e and shorten(TargetInfo.Name(e), 30) or ''
   end)
-  row('Health', function ()
+  row(function ()
     local e = liveSubject()
-    return e and e.health and format('%d / %d', e:getHealth(), e.healthMax) or ''
+    return e and e.isPlanet and 'Radius' or 'Health'
+  end, function ()
+    local e = liveSubject()
+    if not e then return '' end
+    if e.isPlanet then return format('%.0f', e:getRadius()) end
+    return e.health and format('%d / %d', e:getHealth(), e.healthMax) or ''
   end)
-  row('Disposition', function ()
+  row(function ()
+    local e = liveSubject()
+    return e and e.isAsteroid and 'Composition' or ''
+  end, function ()
+    local e = liveSubject()
+    return e and TargetInfo.Composition(e, contactFor(e)) or ''
+  end)
+  row(function ()
+    local e = liveSubject()
+    local contact = e and contactFor(e)
+    return e and e.isAsteroid and contact and contact.yieldIdentified and 'Remaining' or ''
+  end, function ()
+    local e = liveSubject()
+    return e and TargetInfo.Deposit(e, contactFor(e)) or ''
+  end)
+  row(function ()
+    local e = liveSubject()
+    return e and TargetInfo.HasDisposition(e) and 'Disposition' or ''
+  end, function ()
     local e = liveSubject()
     local player = self.ltheory and self.ltheory.player
-    if not (e and player) then return '' end
+    if not (e and player and TargetInfo.HasDisposition(e)) then return '' end
     return format('%+.1f', e:getOwnerDisposition(player))
   end)
   row('Distance', function ()
@@ -177,6 +211,13 @@ function NpcInfoPanel.Create (ltheory)
     local ship = player and player:getControlling()
     if not (e and ship and ship.body) then return '' end
     return format('%.0f', (e:getPos() - ship:getPos()):length())
+  end)
+  row('Surface gap', function ()
+    local e = liveSubject()
+    local player = self.ltheory and self.ltheory.player
+    local ship = player and player:getControlling()
+    if not (e and ship and ship.body) then return '' end
+    return format('%.0f', TargetInfo.SurfaceGap(e, ship))
   end)
 
   local body = Grid():setCols(2):setPadCellX(14):setPadCellY(0)

@@ -18,6 +18,11 @@ local Frustum = require('Game.Frustum')
 require('Game.Content')
 local Item = require('Game.Item')
 local Production = require('Game.Production')
+local ShipArchetypes = require('Game.ShipArchetypes')
+local Communication = require('Game.Communication')
+local Directives = require('Game.Directives')
+local NpcPopulation = require('Game.NpcPopulation')
+local NpcRegistry = require('Game.NpcRegistry')
 
 local System = subclass(Entity, function (self, seed)
   self:addChildren()
@@ -41,7 +46,16 @@ local System = subclass(Entity, function (self, seed)
   self.dust = Dust(self)
 
   self.players = {}
+  self.npcs = NpcRegistry.Create()
+  self.directives = Directives.Create()
+  self.comms = Communication.Create()
+  self.npcSerial = 0
+  self.seed = seed
+  self.time = 0
   self.zones = {}
+  -- Stable asteroid-key -> remaining deposit units. Additive to the seeded
+  -- world and serialized in saves, so streamed unload/reload cannot refill a rock.
+  self.depositState = {}
 
   -- The current sector's REGIONS and SEED, for the environmental field
   -- (13a/13f).
@@ -146,17 +160,22 @@ function System:endRender ()
   ShaderVar.Pop('rockFadeFar')
 end
 
+function System:getTime ()
+  return self.time or 0
+end
+
 function System:update (dt)
-  -- pre-physics update
+  self.time = self:getTime() + dt
+  Communication.update(self.comms, self:getTime())
+  Directives.update(self.directives, self:getTime())
+  -- Pre-physics update. Broadcast reaches NPC brains through their parent
+  -- link; sending directly to system.players as well would tick Think twice.
   local event = Event.Update(dt)
   Profiler.Begin('AI Update')
-  for _, player in ipairs(self.players) do player:send(event) end
+  self:broadcast(event)
   Profiler.End()
 
   self:send(event)
-  Profiler.Begin('Broadcast Update')
-  self:send(Event.Broadcast(event))
-  Profiler.End()
 
   Profiler.Begin('Physics Update')
   self.physics:update(dt)
@@ -165,9 +184,9 @@ function System:update (dt)
   self:handleRamming()
   self:sweepDestroyed()
 
-  -- post-physics update
+  -- Post-physics update, likewise exactly once per entity.
   event = Event.UpdatePost(dt)
-  self:send(Event.Broadcast(event))
+  self:broadcast(event)
   self:send(event)
 end
 
@@ -183,17 +202,27 @@ end
 
   `removeChild` triggers the entity's `RemovedFromParent` event, which (for a
   RigidBody) calls `physics:removeRigidBody`, pulling it out of the simulation.
-  We iterate BACKWARDS because removeChild shrinks the array we are scanning.
+  Removal is lazy, so the sweep walks backwards and skips stale parent slots;
+  nested children are swept as well (for example, a ship docked at a station).
 ]]
 function System:sweepDestroyed ()
-  local children = self.children
-  if not children then return end
-  for i = #children, 1, -1 do
-    local e = children[i]
-    if e.deleted or (e.health and e.health <= 0) then
-      self:removeChild(e)
+  local function sweep (parent)
+    local children = parent.children
+    if not children then return end
+    for i = #children, 1, -1 do
+      local e = children[i]
+      -- removeChild is deliberately lazy; a prior reparent/removal can leave a
+      -- stale array slot until the next broadcast compacts it.
+      if e.parent == parent then
+        if e.deleted or (e.health and e.health <= 0) then
+          parent:removeChild(e)
+        elseif e.children then
+          sweep(e)
+        end
+      end
     end
   end
+  sweep(self)
 end
 
 --[[
@@ -449,29 +478,156 @@ local NameGen = require('Game.NameGen')
 local genName = NameGen.genName
 
 
-function System:spawnAI (shipCount)
-  local player = Entities.Player()
+function System:spawnAI (shipCount, opts)
+  opts = opts or {}
+  self.npcSerial = (self.npcSerial or 0) + 1
+  local npcId = opts.npcId or (tostring(self.seed or Seed.get() or 0) .. ':' .. self.npcSerial)
+  local role = opts.role or 'capital'
+  local roleDef = NpcPopulation.Roles[role] or NpcPopulation.Roles.capital
+  local player = Entities.Player({
+    isNpc = true,
+    npcId = npcId,
+    profile = opts.profile,
+    organization = opts.organization or roleDef.organization,
+  })
   -- THE BRAIN MUST BE IN THE WORLD: the capital's Think action ticks via
   -- Event.Update, which only fires for entities in the tree. The capital
   -- was never added to the system -- its Think never ran, and every ship
   -- it owned sat idle forever (the whole AI economy was a no-op).
   self:addChild(player)
-  -- THE AI ECONOMY: Think gates on `root:hasEconomy()` -- without an economy
-  -- on the brain the whole AI economy is a no-op (the gate was the reason
-  -- the AI never started). The economy scans the SYSTEM's registry
-  -- (markets, traders, yields -- what NPC miners trade against); the brain
-  -- is the brain, so point the economy at the system.
-  player:addEconomy()
-  player.economy.parent = self
+  self:registerNpc(player)
+  self:registerCommunicator(player)
+  player:register(Event.RemovedFromParent, function (self, event)
+    event.parent:unregisterCommunicator(self)
+    event.parent:unregisterNpc(self)
+  end)
+  -- Think queries each ship's root (the System), which already owns the one
+  -- shared economy cache. A second Economy on every brain rebuilt the same
+  -- job list once per NPC each frame; keep only the System instance.
   for i = 1, shipCount do
-    local ship = self:spawnShip('capital')
-    ship:setOwner(player) -- routes through addAsset: the capital's ship book
-    ship:setName(NameGen.npcShipName(self.rng)) -- NPC cap names (docs/npcwork.md)
+    local ship = self:spawnShip(opts.shipType or roleDef.shipType, {
+      seed = opts.prototypeSeed,
+      variant = opts.variant,
+      scale = roleDef.scale,
+      pos = opts.pos,
+    })
+    ship.npcRole = role
+    ship:setInventoryCapacity(roleDef.cargo)
+    ship:setOwner(player) -- routes through addAsset: the ship book
+    ship:setName(opts.name or NameGen.npcShipName(self.rng))
   end
   player:addItem(Item.Credit, kStartCredits)
   player:pushAction(Actions.Think())
-  insert(self.players, player)
+  self:addPlayer(player)
   return player
+end
+
+function System:despawnNPCPopulation ()
+  local actors = self.npcPopulationActors or {}
+  local count = #actors
+  for _, npc in ipairs(actors) do
+    local assets = {}
+    for _, ship in ipairs(npc:getAssets()) do assets[#assets + 1] = ship end
+    for _, ship in ipairs(assets) do
+      ship:clearActions()
+      local parent = ship:getParent()
+      if parent and parent.hasDockable and parent:hasDockable() then
+        parent:removeDocked(ship)
+        parent = ship:getParent()
+      end
+      local controller = ship.thrustController
+      if controller and controller.engineSound then
+        controller.engineSound:free()
+        controller.engineSound = nil
+      end
+      ship:delete()
+      if ship:getParent() then ship:getParent():removeChild(ship) end
+    end
+    npc:clearActions()
+    npc:delete()
+    if npc:getParent() then npc:getParent():removeChild(npc) end
+  end
+  self.npcPopulationActors = {}
+  return count
+end
+
+function System:spawnNPCPopulation (seed, opts)
+  self:despawnNPCPopulation()
+  opts = opts or {}
+  local plan = NpcPopulation.Plan(seed or self.seed, opts.mix)
+  local center = opts.center or Vec3f(0, 0, 0)
+  local radius = math.max(500, opts.radius or 12000)
+  local actors = {}
+  for i, entry in ipairs(plan) do
+    local roleDef = NpcPopulation.Roles[entry.role]
+    local angle = (entry.seed % 628318) / 1000.0
+    local distance = radius * (0.35 + (entry.seed % 1000) / 1800.0)
+    local height = ((entry.seed % 17) - 8) * radius * 0.025
+    local pos = center + Vec3f(math.cos(angle) * distance, height, math.sin(angle) * distance)
+    local npc = self:spawnAI(1, {
+      npcId = entry.id,
+      name = roleDef.name .. ' ' .. i,
+      role = entry.role,
+      shipType = roleDef.shipType,
+      prototypeSeed = entry.seed,
+      variant = entry.variant,
+      pos = pos,
+      profile = { role = entry.role, variant = entry.variant },
+      organization = roleDef.organization,
+    })
+    actors[i] = npc
+  end
+  self.npcPopulationActors = actors
+  return actors
+end
+
+function System:registerCommunicator (actor)
+  return Communication.register(self.comms, actor)
+end
+
+function System:unregisterCommunicator (actor)
+  return Communication.unregister(self.comms, actor)
+end
+
+function System:registerNpc (npc)
+  if not (npc and npc.isNpc and npc:isNpc()) then return false end
+  return NpcRegistry.register(self.npcs, npc)
+end
+
+function System:unregisterNpc (npc)
+  local removed = NpcRegistry.unregister(self.npcs, npc)
+  self:removePlayer(npc)
+  return removed
+end
+
+function System:getNpc (id)
+  return NpcRegistry.get(self.npcs, id)
+end
+
+function System:createDefendDirective (issuer, target, opts)
+  opts = opts or {}
+  opts.now = opts.now or self:getTime()
+  opts.expiresAt = opts.expiresAt or (opts.now + 60)
+  return Directives.create(self.directives, issuer, 'defend', target, opts)
+end
+
+function System:addPlayer (player)
+  for _, e in ipairs(self.players) do
+    if e == player then return false end
+  end
+  insert(self.players, player)
+  return true
+end
+
+function System:removePlayer (player)
+  for i = 1, #self.players do
+    if self.players[i] == player then
+      self.players[i] = self.players[#self.players]
+      self.players[#self.players] = nil
+      return true
+    end
+  end
+  return false
 end
 
 --[[
@@ -491,24 +647,51 @@ end
 -- The NPC caps of this system: ships that have an owner (the brain -- see
 -- spawnAI). Used by the targeting keys (Ship:targetNearestNpc etc.) and the
 -- NPC info panel (GameView.infoPanel). docs/npcwork.md.
+function System:getPatrolCenter ()
+  for _, entity in ipairs(self.children or {}) do
+    if entity.parent == self and entity.hasDockable and entity:hasDockable() then
+      return entity:getPos()
+    end
+  end
+  return Vec3f(0, 0, 0)
+end
+
+function System:findScanTarget (scanner, maxRange)
+  local range = maxRange or (Config.game and Config.game.scanSearchRange) or 15000
+  local range2 = range * range
+  local origin = scanner:getPos()
+  local scanned = scanner.scannedAsteroids or {}
+  local best, bestDist = nil, range2
+  for _, entity in ipairs(self.children or {}) do
+    if entity ~= scanner and entity.parent == self and entity.isAsteroid and entity.body
+       and not entity.deleted and not (entity.isDestroyed and entity:isDestroyed())
+       and not scanned[entity] then
+      local delta = entity:getPos() - origin
+      local dist = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z
+      if dist < bestDist then best, bestDist = entity, dist end
+    end
+  end
+  return best
+end
+
 function System:npcTargets (exclude)
   local out = {}
   for _, e in ipairs(self.children or {}) do
     local owner = e:getOwner()
-    -- Filter dead/bodyless entities and the querying ship itself. The human
-    -- player's ship also has an owner, so without `exclude` J selects it at
-    -- distance zero and K/U cycle back onto it.
-    if e ~= exclude and owner and e:isAlive() and e.body and not e.deleted then
+    -- Target only ships owned by explicit NPC actors. Human-owned escorts are
+    -- not NPCs, and stale children awaiting broadcast compaction are ignored.
+    if e ~= exclude and e.parent == self and owner and owner.isNpc and owner:isNpc()
+       and e:isAlive() and e.body and not e.deleted then
       insert(out, e)
     end
   end
   return out
 end
 
-function System:spawnAsteroidField (count, oreCount)
+function System:spawnAsteroidField (count, oreCount, fieldPos)
   local rng = self.rng
   local zone = Entities.Zone(format('%s Field', genName(rng)))
-  zone.pos = rng:getDir3():scale(kSystemScale * (1.0 + rng:getExp()))
+  zone.pos = fieldPos or rng:getDir3():scale(kSystemScale * (1.0 + rng:getExp()))
 
   for i = 1, count do
     local pos
@@ -542,8 +725,21 @@ function System:spawnAsteroidField (count, oreCount)
 
     zone:add(asteroid)
     self:addChild(asteroid)   -- <-- this is what puts it in the live world
+    asteroid:setDepositKey('startup:' .. i)
   end
   self:addZone(zone)
+  return zone
+end
+
+function System:moveAsteroidField (zone, pos)
+  local dx, dy, dz = pos.x - zone.pos.x, pos.y - zone.pos.y, pos.z - zone.pos.z
+  zone.pos = pos
+  for _, child in ipairs(zone.children or {}) do
+    if child.body and not child.deleted then
+      local childPos = child:getPos()
+      child:setPos(Vec3f(childPos.x + dx, childPos.y + dy, childPos.z + dz))
+    end
+  end
 end
 
 -- Spawn a planet.
@@ -696,19 +892,28 @@ function System:spawnMoon (planet, index)
   return moon
 end
 
-function System:spawnShip (kind)
+function System:spawnShip (kind, opts)
+  opts = opts or {}
+  if not ShipArchetypes.Defs[kind] then kind = 'fighter' end
   kind = kind or 'fighter'
-  local cacheKey = kind .. 'Type'
+  local def = ShipArchetypes.Get(kind)
+  local variant = math.max(1, math.floor(opts.variant or 1))
+  local cacheKey = kind .. ':v' .. variant .. ':Type'
   if not self[cacheKey] then
-    if kind == 'capital' then
-      self[cacheKey] = ShipType(self.rng:get31(), Gen.Ship.ShipCapital, 64)
-    else
-      self[cacheKey] = ShipType(self.rng:get31(), Gen.Ship.ShipFighter, 4)
-    end
+    local seed = opts.seed or self.rng:get31()
+    local generator = Gen.Ship[ShipArchetypes.Generator(kind, variant)]
+    assert(generator, 'Unknown ship generator for ' .. kind)
+    self[cacheKey] = ShipType(seed, generator, opts.scale or def.scale, {
+      kind = kind, classId = def.classId, model = def.model,
+    })
   end
   local ship = self[cacheKey]:instantiate()
-  ship:setInventoryCapacity(kInventory)
-  ship:setPos(self.rng:getDir3():scale(kSystemScale * (1.0 + self.rng:getExp())))
+  ship:setInventoryCapacity(opts.cargo or def.cargo)
+  if opts.pos then
+    ship:setPos(opts.pos)
+  else
+    ship:setPos(self.rng:getDir3():scale(kSystemScale * (1.0 + self.rng:getExp())))
+  end
   self:addChild(ship)
 
   if true then

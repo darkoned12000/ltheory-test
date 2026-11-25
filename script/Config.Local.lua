@@ -2,9 +2,9 @@
 -- Loaded after Config.App.lua (see Main.lua:14) and seeds the debug-panel
 -- Settings at boot; the panel stays live-editable.
 
--- Pre-existing local setup (kept).
-Config.debug.instantJobs = true
-Config.debug.jobSpeed = 10000
+-- NPC jobs always use real propulsion and dt-invariant work. The old
+-- instantJobs/jobSpeed debug overrides were removed because they teleported
+-- ships past thrust, collision, and engine trails.
 
 -- MUTED. The engine has no master volume, so this zeroes the music and
 -- every SFX gain -- including the continuous engine loop, which has a

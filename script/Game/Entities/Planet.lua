@@ -147,6 +147,7 @@ end
 
 local Planet = subclass(Entity, function (self, seed, opts)
   opts = opts or {}
+  self.isPlanet = true
   local detail  = opts.detail  or 5
   local cubeRes = opts.cubeRes or 2048
 

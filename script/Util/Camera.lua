@@ -233,6 +233,33 @@ function Camera:entityToScreenRect (entity)
   return xMin, yMin, xMax - xMin, yMax - yMin
 end
 
+-- Stable screen-space bounds for target brackets. Projecting all eight local
+-- bounding-box corners is unreliable close up: corners behind the near plane
+-- flip the rectangle and make the bracket drift off a large asteroid. A sphere
+-- uses the collision radius and three projections, so it stays finite and
+-- centered through the whole approach.
+function Camera:entityToScreenSphere (entity)
+  local center = entity:getPos()
+  local radius = math.max(0, entity:getRadius())
+  local vs = self:worldToView(center)
+  local ndc, w = self:viewToNDC(vs)
+  if w <= 0 then
+    local size = 56
+    return self.sx * 0.5 - size * 0.5, self.sy * 0.5 - size * 0.5, size, size
+  end
+  local ss = self:ndcToScreen(ndc)
+  local right = self.mViewInv:mulDir(Vec3f(1, 0, 0))
+  local up = self.mViewInv:mulDir(Vec3f(0, 1, 0))
+  local nr = self:viewToNDC(self:worldToView(Vec3f(
+    center.x + right.x * radius, center.y + right.y * radius, center.z + right.z * radius)))
+  local nu = self:viewToNDC(self:worldToView(Vec3f(
+    center.x + up.x * radius, center.y + up.y * radius, center.z + up.z * radius)))
+  local rx = math.abs(nr.x - ndc.x) * self.sx * 0.5
+  local ry = math.abs(nu.y - ndc.y) * self.sy * 0.5
+  local r = math.max(4, rx, ry)
+  return ss.x - r, ss.y - r, r * 2, r * 2
+end
+
 function Camera:ndcToRay (ndc, length)
   ndc.z = 0.9
   local vs = self:ndcToView(ndc)

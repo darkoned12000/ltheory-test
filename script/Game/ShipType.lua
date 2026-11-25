@@ -7,11 +7,41 @@
 
 local Ship = require('Game.Entities.Ship')
 local LTheory_SocketType = require('Game.SocketKind')
+local MeshValidate = require('ffi.libphx').lib.Mesh_Validate
 
-local ShipType = class(function (self, seed, generator, scale)
+local ShipType = class(function (self, seed, generator, scale, meta)
   local rng = RNG.Create(seed)
   self.seed = seed
-  self.mesh = generator(seed, Config.gen.shipRes):managed()
+  meta = meta or {}
+  self.kind = meta.kind
+  self.classId = meta.classId
+  self.model = meta.model
+  local mesh, meshSeed
+  self.rejectedMeshes = {}
+  for attempt = 0, 7 do
+    local candidateSeed = seed + attempt
+    local candidate = generator(candidateSeed, Config.gen.shipRes)
+    candidate = candidate and candidate:managed()
+    if candidate and MeshValidate(candidate) == 0 then
+      mesh, meshSeed = candidate, candidateSeed
+      break
+    end
+    if candidate then self.rejectedMeshes[#self.rejectedMeshes + 1] = candidate end
+  end
+  if not mesh and Gen.Ship and Gen.Ship.ShipFighter then
+    for attempt = 0, 7 do
+      local candidateSeed = seed + 101 + attempt
+      local candidate = Gen.Ship.ShipFighter(candidateSeed, Config.gen.shipRes):managed()
+      if MeshValidate(candidate) == 0 then
+        mesh, meshSeed = candidate, candidateSeed
+        break
+      end
+      self.rejectedMeshes[#self.rejectedMeshes + 1] = candidate
+    end
+  end
+  assert(mesh, 'Unable to generate a valid ship mesh')
+  self.seed = meshSeed
+  self.mesh = mesh
   self.bsp = BSP.Create(self.mesh):managed()
   self.scale = scale
 
@@ -44,7 +74,8 @@ local ShipType = class(function (self, seed, generator, scale)
 end)
 
 function ShipType:instantiate ()
-  return Ship(self)
+  self.instanceSerial = (self.instanceSerial or 0) + 1
+  return Ship(self, self.instanceSerial)
 end
 
 return ShipType

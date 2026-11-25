@@ -41,7 +41,23 @@ function ShipCapital.EngineSingle (rng)
   return engine:finalize()
 end
 
-function ShipCapital.Sausage (rng)
+function ShipCapital.ApplyProfile (shape, opts)
+  if not opts then return shape end
+  local aspect = opts.aspect or { 1, 1, 1 }
+  shape:scale(aspect[1] or 1, aspect[2] or 1, aspect[3] or 1)
+  shape:center()
+  if opts.radius then
+    local aabb = shape:getAABB()
+    local dx = aabb.upper.x - aabb.lower.x
+    local dy = aabb.upper.y - aabb.lower.y
+    local dz = aabb.upper.z - aabb.lower.z
+    local radius = 0.5 * math.sqrt(dx*dx + dy*dy + dz*dz)
+    if radius > 1e-6 then shape:scale(opts.radius / radius) end
+  end
+  return shape
+end
+
+function ShipCapital.Sausage (rng, opts)
   local shape = Shape()
 
   -- settings
@@ -94,7 +110,7 @@ function ShipCapital.Sausage (rng)
   -- random scale
   shape:scale(rng:getUniformRange(minS, maxS), rng:getUniformRange(minS, maxS), 1)
 
-  return shape:finalize()
+  return ShipCapital.ApplyProfile(shape, opts):finalize()
 end
 
 function ShipCapital.Top (rng)

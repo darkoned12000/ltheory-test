@@ -25,7 +25,7 @@ end
 local ControlSets = {
   -- Undocked
   {
-    predicate = function (self) return not self.player:getControlling():getCurrentAction() end,
+    predicate = function (self) return self:isUndocked() end,
     container = nil,
     controls  = List(
       {
@@ -65,6 +65,10 @@ local ControlSets = {
 
 function MasterControl:isPlayerDocked ()
   return isPlayerDocked(self)
+end
+
+function MasterControl:isUndocked ()
+  return not isPlayerDocked(self)
 end
 
 function MasterControl:onInput (state)

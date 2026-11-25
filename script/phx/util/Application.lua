@@ -1,4 +1,5 @@
 local Bindings = require('phx.util.ApplicationBindings')
+local Control = require('WIP.Control')
 local CaptureHarness = require('phx.util.CaptureHarness')
 local Displays = require('phx.util.Displays')
 
@@ -199,6 +200,7 @@ function Application:run ()
 
     Profiler.SetValue('gcmem', GC.GetMemory())
     Profiler.Begin('Frame')
+    Control.BeginFrame()
     Engine.Update()
 
     self:profiled('App.onResize', function ()

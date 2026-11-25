@@ -82,11 +82,88 @@ local function vec3 (v)
   return {x = tonumber(v.x), y = tonumber(v.y), z = tonumber(v.z)}
 end
 
+local function copyProfile (profile)
+  local out = {}
+  for key, value in pairs(profile or {}) do
+    if type(value) == 'string' or type(value) == 'number' or type(value) == 'boolean' then
+      out[key] = value
+    end
+  end
+  return out
+end
+
+-- Actor state is additive to the deterministic world snapshot. Ships and the
+-- economy regenerate from the seed; stable NPC ids let us put persistent
+-- identity, wealth, affiliation, and profile back onto those fresh actors.
+function SaveGame.CaptureNpcs (system)
+  local out = {}
+  if not system or not system.npcs then return out end
+  for _, npc in ipairs(system.npcs.list) do
+    local organizationId = npc:getOrganization()
+    out[#out + 1] = {
+      id = npc:getNpcId(),
+      profile = copyProfile(npc:getNpcProfile()),
+      organization = organizationId,
+      standing = organizationId and npc:getOrganizationStanding(organizationId) or 0,
+      credits = npc:getItemCount(Item.Credit),
+      assetCount = #npc:getAssets(),
+    }
+  end
+  return out
+end
+
+function SaveGame.RestoreNpcs (system, data)
+  if not system or not data or not data.npcs then return end
+  for _, entry in ipairs(data.npcs) do
+    local npc = system:getNpc(entry.id)
+    if npc then
+      npc:setNpcProfile(entry.profile or {})
+      npc:setOrganization(entry.organization)
+      if entry.organization then
+        npc:setOrganizationStanding(entry.organization, entry.standing or 0)
+      end
+      local credits = math.max(0, math.floor(tonumber(entry.credits) or 0))
+      local current = npc:getItemCount(Item.Credit)
+      if current > credits then npc:removeItem(Item.Credit, current - credits) end
+      if credits > current then npc:addItem(Item.Credit, credits - current) end
+    end
+  end
+end
+
+-- Asteroid deposits are the mutable part of an otherwise deterministic world.
+-- Keys identify a generated rock; values are remaining units. The map is small
+-- (only mined rocks acquire entries) and survives stream unload/reload.
+function SaveGame.CaptureDeposits (system)
+  local out = {}
+  for key, remaining in pairs(system and system.depositState or {}) do
+    out[#out + 1] = { key = key, remaining = remaining }
+  end
+  table.sort(out, function (a, b) return a.key < b.key end)
+  return out
+end
+
+function SaveGame.RestoreDeposits (system, data)
+  if not system or not data then return end
+  system.depositState = {}
+  for _, entry in ipairs(data) do
+    if type(entry.key) == 'string' and tonumber(entry.remaining) then
+      system.depositState[entry.key] = math.max(0, math.floor(entry.remaining))
+    end
+  end
+  -- Usually restore runs before streaming creates the field, but applying to
+  -- already-loaded rocks makes the function safe for in-place restores too.
+  for _, child in ipairs(system.children or {}) do
+    if child.depositKey and child.yield and system.depositState[child.depositKey] ~= nil then
+      child.yield.remaining = system.depositState[child.depositKey]
+    end
+  end
+end
+
 -- The state a save carries about the player's ship. `ship` may be nil
 -- (saved from the menu before the ship exists... it cannot: the world is
 -- live behind the menu, but a dead ship's save must be refused by the
 -- caller, not silently dropped here).
-function SaveGame.Capture (ship, meta)
+function SaveGame.Capture (ship, meta, system)
   local data = {
     saveVersion   = SAVE_VERSION,
     dateCreated   = false, -- stamped by SaveGame.Write
@@ -120,6 +197,10 @@ function SaveGame.Capture (ship, meta)
       data.items = items
     end
   end
+  if system then
+    data.npcs = SaveGame.CaptureNpcs(system)
+    data.deposits = SaveGame.CaptureDeposits(system)
+  end
   return data
 end
 
@@ -127,8 +208,13 @@ end
 -- hull, credits, cargo. Setters only (the fresh ship's other components --
 -- thrusters, turrets, mass -- are regenerated identical to the saved
 -- one's, being proto + seed driven).
-function SaveGame.Restore (ship, data)
-  if ship == nil or data == nil then return end
+function SaveGame.Restore (ship, data, system)
+  if data == nil then return end
+  if system then
+    SaveGame.RestoreDeposits(system, data.deposits)
+    SaveGame.RestoreNpcs(system, data)
+  end
+  if ship == nil then return end
   if data.playerPos then
     ship:setPos(Vec3f(data.playerPos.x, data.playerPos.y, data.playerPos.z))
   end

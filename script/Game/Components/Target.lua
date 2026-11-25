@@ -13,4 +13,10 @@ end
 
 function Entity:setTarget (target)
   self.target = target
+  if not (target and target.register) then return end
+  local function clearIfCurrent ()
+    if self.target == target then self.target = nil end
+  end
+  target:register(Event.Destroyed, clearIfCurrent)
+  target:register(Event.RemovedFromParent, clearIfCurrent)
 end

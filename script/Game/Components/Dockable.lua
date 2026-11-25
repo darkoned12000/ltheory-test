@@ -19,8 +19,18 @@ function Entity:addDockable ()
   self:register(Event.Destroyed, destroyed)
 end
 
+local function parkShip (station, ship)
+  local clearance = 1.25 * station:getRadius() + ship:getRadius() + 100
+  ship:setPos(station:getPos() - station:getUp():scale(clearance))
+  ship:setVelocity(Vec3f(0, 0, 0))
+  if ship.hasThrustController and ship:hasThrustController() then
+    ship:getThrustController():clear()
+  end
+end
+
 function Entity:addDocked (e)
   assert(self.dockable)
+  parkShip(self, e)
   self:addChild(e)
 end
 
@@ -40,5 +50,6 @@ end
 
 function Entity:removeDocked (e)
   assert(self.dockable)
+  parkShip(self, e)
   self:getParent():addChild(e)
 end

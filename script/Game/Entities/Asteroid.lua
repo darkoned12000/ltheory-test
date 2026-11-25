@@ -70,6 +70,8 @@ end
 
 Asteroid = subclass(Entity, function (self, seed, scale, opts)
   opts = opts or {}
+  self.isAsteroid = true
+  self.seed = seed
   local mesh = getMesh(seed)
   self:addRigidBody(true, mesh:get(0))
   self:addVisibleLodMesh(mesh, Material.Rock())

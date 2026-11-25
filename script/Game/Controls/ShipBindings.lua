@@ -57,6 +57,11 @@ local self = {
   TargetNearestThreat = WIP.Control.Key(Button.Keyboard.U)
     :delta(),
 
+  Scan = WIP.Control.Key(Button.Keyboard.C)
+    :delta(),
+  Mine = WIP.Control.Key(Button.Keyboard.X)
+    :delta(),
+
   Dock = WIP.Control.Or(
     WIP.Control.Key(Button.Keyboard.F),
     WIP.Control.GamepadButton(Button.Gamepad.Y))

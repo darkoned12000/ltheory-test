@@ -18,6 +18,8 @@ local Productions = require('Game.Production')
 local DebugControl = require('Game.Controls.DebugControl')
 local Sector = require('Game.Region')
 local SectorGraph = require('Game.SectorGraph')
+local NpcPopulation = require('Game.NpcPopulation')
+local StartupPlacement = require('Game.StartupPlacement')
 
 local LTheory = Application()
 
@@ -78,12 +80,14 @@ function LTheory:generate ()
   local ship
   do -- Player Ship
     ship = self.system:spawnShip()
+    ship:setInventoryCapacity(100) -- player retains the original cargo rating
     ship:setPos(Config.gen.origin)
     ship:setFriction(0)
     ship:setSleepThreshold(0, 0)
     ship:setOwner(self.player)
     self.system:addChild(ship)
     self.player:setControlling(ship)
+    self.system:registerCommunicator(self.player)
 
     local ships = {}
     for i = 1, 0 do
@@ -110,20 +114,13 @@ function LTheory:generate ()
   self.sectorIndex = 0
   self:buildGates()
 
-  -- THE AI POPULATION: the economy's participants. Each spawnAI is one
-  -- capital whose ships pick jobs by PAYOUT (Actions/Think.lua): mining
-  -- the belts into the stations' standing bids, riding the flows. The
-  -- count is opt-in until play-tested (the asteroid field's rule):
-  -- Config.game.aiShips, 0 = no AI.
-  local aiBrain
-  if (Config.game.aiShips or 0) > 0 then
-    aiBrain = self.system:spawnAI(Config.game.aiShips)
-  end
-
-  -- Spawn 60 procedural asteroids 3,000 units directly in front of player
+  -- Spawn 60 procedural asteroids. The ship is repositioned below after the
+  -- planet is known, so retain the zone and translate the whole field once the
+  -- final spawn position is available (without changing seeded draw order).
+  local startupField
   if ship then
     local fieldPos = ship:getPos() + Vec3f(0, 0, -3000)
-    self.system:spawnAsteroidField(60, 1000, fieldPos)
+    startupField = self.system:spawnAsteroidField(60, 1000, fieldPos)
   end
 
   for i = 1, 1 do
@@ -178,21 +175,26 @@ function LTheory:generate ()
     end
   end
 
-  -- Place two AI capitals in the player's forward hemisphere after the
-  -- player's final planet stand-off is known. NPC generation still uses the
-  -- seeded capital prototype; this only prevents the demo from spawning every
-  -- hull 10-30 km away/off-screen where only fixed-size HUD names are visible.
-  if aiBrain and ship then
-    local assets = aiBrain:getAssets()
-    local forward = ship:getForward()
-    local right = ship:getRight()
-    local up = ship:getUp()
-    for i = 1, math.min(2, #assets) do
-      local offset = forward:scale(4500 + i * 1200)
-                 + right:scale(i == 1 and -1400 or 1800)
-                 + up:scale(i == 1 and 500 or -350)
-      assets[i]:setPos(ship:getPos() + offset)
-    end
+  if startupField then
+    self.system:moveAsteroidField(startupField, ship:getPos() + Vec3f(0, 0, -3000))
+  end
+
+  -- Deterministic mixed NPC population, created after the player's final
+  -- sector position is known. The planner guarantees role variety; spawning
+  -- uses its own seeds/positions and does not reshuffle world generation.
+  local aiBrains = {}
+  if (Config.game.aiShips or 0) > 0 and ship then
+    aiBrains = self.system:spawnNPCPopulation(self.sectors[1].seed, {
+      center = ship:getPos(),
+      radius = 12000,
+      mix = NpcPopulation.ScaleMix(Config.game.aiShips),
+    })
+  end
+
+  -- Put representatives of the largest/most visible roles in front of the
+  -- player. StartupPlacement scales the layout to each hull's actual radius.
+  if #aiBrains > 0 then
+    StartupPlacement.place(aiBrains, ship)
   end
 
   -- Visibility cloud: debug ring of 30 rocks placed around player
@@ -891,7 +893,7 @@ function LTheory:saveGameNow (slotName)
                  or (self.sectors and self.sectors[1] and self.sectors[1].name) or '',
     regionName = region and region.name or 'Deep space',
     seedHex    = seedToHex(self.seed),
-  })
+  }, self.system)
   local name, why = SaveGame.Write(slotName or SaveGame.DefaultSlotName(), data)
   if name then
     SaveGame.SaveThumbnail(name)
@@ -921,7 +923,7 @@ function LTheory:loadGame (slotName)
   -- seed always makes the same galaxy, now also for one loaded from disk.
   Config.gen.seedGlobal = seed
   self:generate()
-  SaveGame.Restore(self.player and self.player:getControlling(), data)
+  SaveGame.Restore(self.player and self.player:getControlling(), data, self.system)
   self:regenerateSectorContent(0)
   self:settleAfterGenerate()
   -- THE TOAST: the old game's GAME LOADED plate (queued while the menu is
@@ -1334,6 +1336,19 @@ function LTheory:enterSector (index, ship)
   self.sectorIndex = index
   self:regenerateSectorContent(index)
   self:buildGates()
+
+  -- Reconcile one deterministic roster for the destination sector. The
+  -- outgoing actors are explicitly despawned first, so repeated jumps cannot
+  -- accumulate brains, ships, comms registrations, or engine voices.
+  local sector = self.sectors[index + 1]
+  if (Config.game.aiShips or 0) > 0 and ship then
+    self.system:spawnNPCPopulation(sector and sector.seed or self.seed, {
+      center = ship:getPos(), radius = 12000,
+      mix = NpcPopulation.ScaleMix(Config.game.aiShips),
+    })
+  else
+    self.system:despawnNPCPopulation()
+  end
 
   -- The ship is now somewhere else; its sector's state is recomputed from
   -- its new position.

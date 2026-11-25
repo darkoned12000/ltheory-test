@@ -4,15 +4,23 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
 
 **This file is the ONLY tracker.** The finished design and implementation records live in `docs/` (`docs/ltheory-planets.md`, `docs/procedural-space-environment.md`, `docs/ssao-gtao-implementation.md`, `docs/fog-nebula-implementation.md`, `docs/multithreading.md`, `docs/debug-panel-update.md`, `docs/SDL_Migration.md`, `docs/ltheory-node-ui.md`, `docs/ltheory-ui-gui-research.md`) — those are the *why*, and they stay exactly as they were written. Anything still open is listed **here**, so nothing hides in a 165 KB file.
 
-## Open (genuinely remaining, as of 2026-10-27)
+## Open (genuinely remaining, as of 2026-11-24)
 The roadmap above is largely complete. What is actually still unimplemented:
 
 1. **Graphics-options parity (#14)** — motion blur, shadow-quality master + PCF radius, SSR, anamorphic lens flares, AMD CAS. (FXAA/SMAA already shipped via `postfx.fxaa`.)
 2. **Economy's last mile** — energy cells have no use (ship capacitor not wired, no upgrades); old game's **market escrow** (per-owner storage lockers, midpoint settlement) not ported (current port does instant trades).
 3. **Three SpaceField channels with no consumer** — `starVisibility` (medium's extinction of stars), `turbulence` (plume warp), `radiation` (region hazard).
 4. **Gas giants (W7d) + atmosphere entry/landing (W7e)** — explicitly deferred 2026-10-14; design in `docs/ltheory-planets.md` §11.3.
-5. **Save format phase 2** — market/belt state, destroyed-asteroid memory, missions.
-6. **Procedural content (#7/#8)** — L-system stations, biome terrain, NPC ships, main menu/settings screens (main menu done; settings screen still open).
+5. **Save format phase 2** — market/belt state, destroyed-asteroid memory, missions, and durable ship-by-ship NPC state. Asteroid deposit remainders and additive NPC actor snapshots are now saved; see `docs/npcwork.md`.
+6. **Procedural content (#7/#8)** — L-system stations and biome terrain. The mixed procedural NPC fleet, main menu, and settings screens are implemented on `npc-work` (pending approval).
+7. **NPC progression and social gameplay** — repair/refit/ship purchases, durable cross-sector continuation, player-facing comms, escort/rescue cooperation, wreck salvage, gas harvesting, and missions. Prioritized in `docs/npcwork.md` → “Next steps”.
+
+## Completed on `npc-work` (uncommitted, 2026-11-24)
+- **Mixed autonomous NPC fleet** — deterministic fighters, freighters, industrials, and a capital; role-specific procedural hulls, scale/mass/cargo, visible engine trails, real thrust-based movement, startup placement, and sector-roster reconciliation.
+- **NPC identity, policy, and lifecycle** — stable NPC registry/IDs, one simulation clock, route-aware utility and memory, cloned committed jobs, cooldowns, patrols, damage-driven flee, shared defense directives, and ranged organization communication. Deleted/docked actors and target locks clean up correctly.
+- **Resource gameplay** — 5–10 second scans, directional spectrum, persistent per-pilot ScannerDB records, active-brake mining, finite asteroid deposits randomized deterministically from **120–5,000 units** (size-weighted), remaining-deposit display, stream-reload persistence, and save/load persistence.
+- **Flight/dock HUD hardening** — ray/sphere reticle targeting, stable close-range brackets, real mesh previews, cargo/extraction readouts, radar category filters and range labels, safe dock/undock physics, per-frame input edges, and HUD visibility during scan/mine/move actions.
+- **Verification** — 462 focused checks plus the full `configure.py test` suite and UI integration pass; real boot is clean. Full implementation record and remaining limitations: `docs/npcwork.md`.
 
 ## Completed (recent, 2026-10-27)
 - **cascadedmaps merged to main** — single-pass CSM box culling + cached/pooled economy mining jobs (commit `bd7d5e0`).
@@ -69,7 +77,7 @@ The roadmap above is largely complete. What is actually still unimplemented:
 
 ## Content & gameplay
 7. **Procedural content expansion**: L-system stations, SDF planets with biome terrain, procedural nebulae, procedural sky/env cubemaps.
-8. **Game screens**: Main menu / settings screen app on `script/UI/`.
+8. **Game screens**: ✅ Main menu and settings screens are implemented on `script/UI/`; settings includes persisted radar category toggles. Remaining work is content/polish rather than the base screen framework.
    - **The design note is `docs/ltheory-ui-gui-research.md`** — the map of the
      three GUI systems (HmGui, the engine's own ImGui, and `script/UI/`), the
      guide to which to use, and the widget API. It was corrected against the
@@ -141,6 +149,8 @@ The roadmap above is largely complete. What is actually still unimplemented:
    the hardcoded 100 in `Ship:getTopSpeed` had never matched the physics).
    A region is a minute away and the sector is two. The ramming damage, the
    chase camera's lead and the turning torques were all rescaled with it.
+   `Game.ShipMovement` now also applies hull-size and cargo-load factors: full
+   cargo cuts top speed by up to 35% and reduces acceleration more sharply.
 17. **A save format** — ✅ **done (phase 1, 2026-10-23)**: save slots are
    JSON files at `./saves/<slot>.json` (`script/Game/SaveGame.lua`), one
    per save, **10 max**, sanitised names, timestamped slots (the old
@@ -161,9 +171,11 @@ The roadmap above is largely complete. What is actually still unimplemented:
    instead of breaking the boot. Verified end to end headlessly: save →
    move ship → load restores position, credits and cargo; a second
    process loading the file from disk; and real injected clicks through
-   the CUSTOM GAME → F6 → F7 flow. NOT in yet: market/belt state,
-   destroyed-asteroid memory, missions — those need universes whose state
-   deviates from the seed.
+   the CUSTOM GAME → F6 → F7 flow. Additive state now also includes NPC actor
+   identity/profile/organization/credits and finite asteroid deposit remainders
+   (120–5,000 units per rock, persisted through stream unload/reload). NOT in
+   yet: market/belt state, destroyed-asteroid tombstones, ship-by-ship NPC
+   state, policy memory, and missions.
 18. **Gas giants (W7d)** — deferred 2026-10-14. A banded generator plus a
    no-solid-surface path. It was explicitly the expensive one, so it was
    held back until the FPS budget had been re-measured under load. The

@@ -295,12 +295,46 @@ Config.game = {
   aiFire                 = function (dt, rng) return rng:getExp() ^ 2 < dt end,
 
   dockRange              = 500,
+  miningRange            = 250,
+  miningStopSpeed        = 2,
+  miningSpeedTolerance   = 3,
+  miningAlignment        = 0.85,
+  miningAccuracyDrain    = 0.35,
+  -- Finite ore deposits. Deterministic per-rock randomness inside this band,
+  -- biased richer for larger asteroids; remaining units persist through
+  -- streaming and save/load.
+  depositMin             = 120,
+  depositMax             = 5000,
+  depositSizeReference   = 900,
+  scanRange              = 2000,
+  scanSearchRange        = 15000,
+  patrolRadius           = 5000,
+  radarRange             = 50000,
+  scannerBars            = 64,
+  scannerAperture        = 45,
 
-  -- THE AI POPULATION (the economy's participants): NPC capital ships
-  -- whose Think action picks jobs by payout -- mining the belts into
-  -- the stations' standing bids, riding the trade flows. 0 = none
-  -- (default until the jobs path is play-tested); raise for traffic.
-  aiShips                = 6,
+  -- Seconds to fill a standard 100-mass-unit hold from one asteroid. The
+  -- player and NPCs share this table: common material takes ~5-8 seconds,
+  -- strategic/rare material ~12-40 seconds. MineAt scales the rate by the
+  -- asteroid's Yield.size and the ship's actual item capacity.
+  miningDurations = {
+    ['Water Ice'] = 5,
+    ['Iron Ore'] = 6,
+    ['Copper Ore'] = 8,
+    ['Silver'] = 12,
+    ['Radioactive Isotopes'] = 16,
+    ['Titanium Ore'] = 20,
+    ['Platinum'] = 28,
+    ['Gold'] = 40,
+  },
+
+  -- THE AI POPULATION: deterministic mixed roles (fighters, freighters,
+  -- industrials, capital). ScaleMix preserves variety when this count changes;
+  -- 0 = none. Each actor controls one ship and receives role-compatible jobs.
+  aiShips                = 8,
+
+  -- NPC organization communication/threat range in world units.
+  commRange              = 20000,
 
   -- The SECTOR's extent, in world units. A sector is a volume of space with
   -- its own name and its own regions; this is how big it is.
@@ -703,7 +737,14 @@ Config.gpu = {
 Config.ui = {
   showTrackers     = true,
   defaultControl   = 'Ship',
-  controlBarHeight = 48
+  controlBarHeight = 48,
+  radarFilters = {
+    asteroids = true,
+    ships = true,
+    stations = true,
+    planets = true,
+    stars = true,
+  },
 }
 
 Config.ui.color = {

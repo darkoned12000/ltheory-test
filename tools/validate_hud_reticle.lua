@@ -16,7 +16,7 @@ print('[validate_hud_reticle] reticle/turret parity (mouse vs gamepad)')
 
 local src = io.open('script/Game/Controls/HUD.lua'):read('*a')
 check('HUD exists and readable', src~=nil)
-check('controlTurrets branches on GetActiveDeviceType', src:find('GetActiveDeviceType')~=nil)
+check('HUD routes aim through Targeting.UsesMouseAim', src:find('Targeting.UsesMouseAim')~=nil)
 check('controlTurrets mouse path uses mouseToRay', src:find('mouseToRay')~=nil)
 check('controlTurrets gamepad path uses ndcToRay', src:find('ndcToRay')~=nil)
 -- Ensure the old bug (unconditional mouseToRay with unused ndc) is gone: there should be no
@@ -27,7 +27,10 @@ local ndcRayIdx = src:find('ndcToRay')
 -- ndc + ndcToRay must both exist in controlTurrets (dead-code guard)
 check('ndc fallback is actually used (not dead code)', ndcIdx and src:find('camera:ndcToRay%(ndc')~=nil)
 
-check('drawReticle branches on GetActiveDeviceType', src:find('drawReticle') and src:find('DeviceType%.Mouse')~=nil)
+_G.DeviceType = { Mouse = 1, Keyboard = 2, Gamepad = 3 }
+local Targeting = dofile('script/Game/Targeting.lua')
+check('keyboard retains mouse aim', Targeting.UsesMouseAim(DeviceType.Keyboard))
+check('gamepad retains stick aim', not Targeting.UsesMouseAim(DeviceType.Gamepad))
 -- Verify Camera API has both rays
 local camSrc = io.open('script/Util/Camera.lua'):read('*a')
 check('Camera has ndcToRay', camSrc:find('function Camera:ndcToRay')~=nil)
@@ -37,7 +40,7 @@ check('Camera has mouseToRay', camSrc:find('function Camera:mouseToRay')~=nil)
 local function simulatedFallback(active, aimX, aimY, sx, sy, mouseX, mouseY)
   -- mirrors HUD:drawReticle + HUD:controlTurrets
   local rx, ry, fx, fy
-  if active=='Mouse' then
+  if active=='Mouse' or active=='Keyboard' then
     -- reticle = windowToScreen(mouse)*superSample; fallback = mouseToRay point
     rx, ry = mouseX*1, mouseY*1; fx, fy = mouseX, mouseY
   else
@@ -53,6 +56,8 @@ check('mouse reticle == turret fallback (sim)', rx1==fx1 and ry1==fy1)
 local rx2,ry2,fx2,fy2 = simulatedFallback('Gamepad', 0.3,-0.2,800,600,0,0)
 check('gamepad reticle == turret fallback (sim)', math.abs(rx2-fx2)<1e-6 and math.abs(ry2-fy2)<1e-6)
 check('gamepad vs mouse differ', rx1~=rx2)
+local rx3,ry3,fx3,fy3 = simulatedFallback('Keyboard', 0,0,800,600,100,200)
+check('keyboard reticle stays on the mouse cursor', rx3==rx1 and ry3==ry1 and fx3==fx1 and fy3==fy1)
 
 print(failures==0 and '\n[HUD reticle] ALL PASS' or ('\n[HUD reticle] '..failures..' FAILED'))
 os.exit(failures==0 and 0 or 1)

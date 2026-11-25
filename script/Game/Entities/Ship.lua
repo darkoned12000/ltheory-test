@@ -1,7 +1,10 @@
 local Entity = require('Game.Entity')
 local Material = require('Game.Material')
+local Movement = require('Game.ShipMovement')
+local Registry = require('Game.Registry')
+local Targeting = require('Game.Targeting')
 
-local Ship = subclass(Entity, function (self, proto)
+local Ship = subclass(Entity, function (self, proto, instanceSerial)
   self:addActions()
   self:addCapacitor(100, 10)
   self:addChildren()
@@ -11,9 +14,20 @@ local Ship = subclass(Entity, function (self, proto)
   -- TODO : This will create a duplicate BSP because proto & RigidBody do not
   --        share the same BSP cache. Need unified cache.
   self:addRigidBody(true, proto.mesh)
+  -- ShipType.scale is part of the prototype, not just preview metadata. Apply
+  -- it before sockets, collision radius, visible matrix, and mass are derived.
+  self:setScale(proto.scale or 1)
   self:addSockets()
   self:addVisibleMesh(proto.mesh, Material.Metal())
   self:addThrustController()
+  self:addRegistryInfo({
+    id = Registry.NewId('ship', proto.seed or self.id, instanceSerial or 1),
+    classId = proto.classId or ((proto.scale or 1) >= 32 and 3 or 2),
+    manufacturer = 'LimTech',
+    model = proto.model or ((proto.scale or 1) >= 32 and 'Capital' or 'Fighter'),
+    year = 150,
+    materialTier = 2,
+  })
 
   -- TODO : Suggestive that JS-style prototype objects + 'clone' would work
   --        better for ShipType et al
@@ -37,7 +51,8 @@ end)
 -- over the top speed), so it has to agree with what the thrusters actually
 -- do -- see ThrustController's thrust constants, which are what set it.
 function Ship:getTopSpeed ()
-  return 500
+  local cargo = self:hasInventory() and (self:getInventoryCapacity() - self:getInventoryFree()) or 0
+  return Movement.topSpeed(self:getRadius(), cargo, self:getInventoryCapacity())
 end
 
 -- Targeting for NPC caps (docs/npcwork.md): the ship queries the system for
@@ -76,6 +91,82 @@ end
 
 -- Nearest cap with a hostile (negative) disposition toward the player, else
 -- the nearest cap (all caps are neutral today -- see Dispositions).
+function Ship:getScanStatus (target)
+  if not self:isIdle() then return 'busy' end
+  if not target or not target.body then return 'no target' end
+  if not (target.isAsteroid or target:hasYield()) then return 'invalid target' end
+  self.scannedAsteroids = self.scannedAsteroids or {}
+  if self.scannedAsteroids[target] then return 'already scanned' end
+  local range = (Config.game and Config.game.scanRange) or 2000
+  if self:getMinDistance(target) > range then return 'out of range' end
+  return 'ready'
+end
+
+function Ship:scanTarget (target)
+  local status = self:getScanStatus(target)
+  if status ~= 'ready' then return false, status end
+  local Scan = require('Game.Actions.Scan')
+  self:pushAction(Scan(target))
+  return true
+end
+
+function Ship:scanForResources ()
+  local target = self:getTarget()
+  self.scannedAsteroids = self.scannedAsteroids or {}
+  if not target or not (target.isAsteroid or target:hasYield()) or self.scannedAsteroids[target] then
+    local root = self:getRoot()
+    local range = (Config.game and Config.game.scanRange) or 2000
+    target = root and root.findScanTarget and root:findScanTarget(self, range)
+  end
+  return self:scanTarget(target)
+end
+
+function Ship:getMiningStatus (target)
+  if not Targeting.IsTargetable(target) or not target:hasYield() then return 'no minable target' end
+  local current = self:getCurrentAction()
+  if current and current.target == target and current.getName
+     and current:getName():sub(1, 6) == 'MineAt' then
+    return 'mining'
+  end
+  if current then return 'busy' end
+  local range = (Config.game and Config.game.miningRange) or 250
+  if self:getMinDistance(target) > range then return 'approach' end
+  if self.getForward and target.getPos then
+    local dx = target:getPos().x - self:getPos().x
+    local dy = target:getPos().y - self:getPos().y
+    local dz = target:getPos().z - self:getPos().z
+    local length = math.sqrt(dx*dx + dy*dy + dz*dz)
+    local forward = self:getForward()
+    local alignment = length > 1e-6
+      and (forward.x*dx + forward.y*dy + forward.z*dz) / length or 1
+    if alignment < ((Config.game and Config.game.miningAlignment) or 0.85) then
+      return 'align'
+    end
+  end
+  if self.hasInventory and self:hasInventory() and self.getInventoryFree then
+    local mass = target:getYield().item:getMass()
+    if self:getInventoryFree() < mass then return 'cargo full' end
+  end
+  local speed = self.getSpeed and self:getSpeed() or 0
+  local tolerance = (Config.game and Config.game.miningSpeedTolerance) or 3
+  if speed > tolerance then return 'stop' end
+  return 'ready'
+end
+
+function Ship:mineTarget (target)
+  local status = self:getMiningStatus(target)
+  if status == 'mining' then return true end
+  if status ~= 'ready' and status ~= 'stop' then return false, status end
+  local range = (Config.game and Config.game.miningRange) or 250
+  local MineAt = require('Game.Actions.MineAt')
+  local Stop = require('Game.Actions.Stop')
+  -- MineAt stays underneath the active brake; its beam is hidden until Stop
+  -- pops and the hull is genuinely stationary.
+  self:pushAction(MineAt(target, range))
+  self:pushAction(Stop())
+  return true
+end
+
 function Ship:targetNearestThreat ()
   local nps = self:getNpcs()
   if #nps == 0 then return end
@@ -88,6 +179,12 @@ function Ship:targetNearestThreat ()
     end
   end
   if not best then self:targetNearestNpc() end
+end
+
+function Ship:delete ()
+  local owner = self:getOwner()
+  if owner then owner:removeAsset(self) end
+  Entity.delete(self)
 end
 
 return Ship

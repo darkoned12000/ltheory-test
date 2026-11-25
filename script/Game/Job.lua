@@ -10,6 +10,21 @@ function Job:getFlows (e)
   assert(false, 'NYI @ Job.getFlows')
 end
 
+function Job:finish (e, outcome)
+  self.result = outcome or 'completed'
+  e:popAction()
+end
+
+function Job:onStop (e)
+  local policy = e.npcPolicy
+  if policy then
+    local root = e:getRoot()
+    local now = root and root.getTime and root:getTime() or 0
+    policy.recordOutcome(policy, self, self.result or 'cancelled', now)
+  end
+  self.result = nil
+end
+
 function Job:getName ()
   assert(false, 'NYI @ Job.getName')
 end

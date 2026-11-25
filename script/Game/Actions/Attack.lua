@@ -11,6 +11,10 @@ local Attack = subclass(Action, function (self, target)
   self.rng = Seed.rng('action.attack', nextId):managed()
 end)
 
+function Attack:clone ()
+  return Attack(self.target)
+end
+
 function Attack:getName ()
   return format('Attack %s', self.target:getName())
 end
@@ -60,7 +64,16 @@ function Attack:onUpdateActive (e, dt)
   self:flyToward(e, targetPos, forward, target:getUp())
 end
 
+function Attack:onStop (e)
+  if e.getTarget and e:getTarget() == self.target then e:setTarget(nil) end
+end
+
 function Attack:onUpdatePassive (e, dt)
+  -- A temporary preemption such as Flee must suppress weapons from the lower
+  -- stacked Attack; otherwise the ship keeps fighting while retreating.
+  local current = e.getCurrentAction and e:getCurrentAction()
+  if current and current ~= self then return end
+  if not self.target:isAlive() then return end
   local align = (self.target:getPos() - e:getPos()):normalize():dot(e:getForward())
   if align < 0.25 then return end
   local firing = Config.game.aiFire(dt, self.rng)

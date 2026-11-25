@@ -1,5 +1,6 @@
 local Entity     = require('Game.Entity')
 local SocketType = require('Game.SocketKind')
+local Movement   = require('Game.ShipMovement')
 
 -- The thrusters, and the SPEED they buy.
 --
@@ -72,6 +73,12 @@ function ThrustController:setThrust (forward, right, up, yaw, pitch, roll, boost
 end
 
 function ThrustController:update (e, dt)
+  local parent = e.getParent and e:getParent()
+  if parent and ((parent.hasDockable and parent:hasDockable()) or not parent.physics) then
+    self:clear()
+    if self.engineSound then self.engineSound:setVolume(0) end
+    return
+  end
   local boost = 0.0
   if e:discharge(dt * self.boost * Config.game.boostCost) then
     boost = self.boost
@@ -81,13 +88,16 @@ function ThrustController:update (e, dt)
 
   -- The constants above were tuned for the player's ~5e4-mass, ~10-unit
   -- fighter. Capital hulls are much larger and their mass grows with volume;
-  -- using the same fixed force would leave them effectively immobile. Scale
-  -- force by mass and torque by mass*radius^2 so handling stays consistent in
-  -- ship-lengths across prototypes.
+  -- using the same fixed force would leave them effectively immobile. The
+  -- shared movement model also reduces top speed and turn rate with hull size
+  -- and cargo load, so capitals behave like large ships rather than fighters.
   local mass = e:getMass()
   local radius = e:getRadius()
-  local forceScale = mass / 5e4
-  local torqueScale = forceScale * (radius / 10.0) ^ 2.0
+  local cargo = e:hasInventory() and (e:getInventoryCapacity() - e:getInventoryFree()) or 0
+  local capacity = e:hasInventory() and e:getInventoryCapacity() or 0
+  local forceScale = Movement.forceScale(mass, radius, cargo, capacity)
+  local torqueScale = Movement.torqueScale(mass, radius, cargo, capacity)
+  e:setDrag(Movement.linearDrag(radius, cargo, capacity), 4.0)
 
   if abs(self.forward) > 1e-6 then
     local maxThrust = (self.forward > 0) and thrustForwardMax or thrustBackwardMax

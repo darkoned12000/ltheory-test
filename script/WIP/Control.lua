@@ -1,4 +1,9 @@
 local Control = {}
+local frame = 0
+
+function Control.BeginFrame ()
+  frame = frame + 1
+end
 
 local ControlT = class(function (self)
   self.mult = 1.0
@@ -99,10 +104,13 @@ end
 --        if deltas are the natural splitting point where we move to events
 --        rather than 'continuous' controls, which deltas are not.)
 function Control.Delta:getRaw ()
-  local curr = self.control:get()
-  local last = self.last
-  self.last = curr
-  return curr - last
+  if self.frame ~= frame then
+    local curr = self.control:get()
+    self.value = curr - self.last
+    self.last = curr
+    self.frame = frame
+  end
+  return self.value
 end
 
 Control.GamepadAxis = subclass(ControlT, function (self, axis)

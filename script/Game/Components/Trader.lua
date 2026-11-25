@@ -109,7 +109,7 @@ function Trader:buy (asset, item)
   assert(data.escrow > 0)
   if not player:hasItem(Credit, price) then return false end
 
-  asset:addItem(item, 1)
+  if not asset:addItem(item, 1) then return false end
   player:removeItem(Credit, price)
   self.credits = self.credits + price
   data.totalAsk = data.totalAsk + 1

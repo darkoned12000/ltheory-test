@@ -33,6 +33,14 @@ function Transport:getFlows (e)
   }
 end
 
+function Transport:getKind ()
+  return 'transport'
+end
+
+function Transport:getKey ()
+  return format('transport:%s:%s:%s', self.src.id, self.dst.id, self.item:getName())
+end
+
 function Transport:getName ()
   return format('Transport %s from %s to %s',
     self.item:getName(),
@@ -49,6 +57,12 @@ end
 
 function Transport:getTravelTime (e)
   return 2.0 * self.src:getDistance(self.dst) / e:getTopSpeed()
+end
+
+function Transport:onStop (e)
+  e.jobState = nil
+  e.tradeCount = nil
+  Job.onStop(self, e)
 end
 
 function Transport:onUpdateActive (e, dt)
@@ -73,8 +87,7 @@ function Transport:onUpdateActive (e, dt)
   elseif e.jobState == 6 then
     e:pushAction(Actions.Undock())
   elseif e.jobState == 7 then
-    e:popAction()
-    e.jobState = nil
+    self:finish(e, 'completed')
   end
 end
 
