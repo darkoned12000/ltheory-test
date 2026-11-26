@@ -16,6 +16,9 @@ local ShipType = class(function (self, seed, generator, scale, meta)
   self.kind = meta.kind
   self.classId = meta.classId
   self.model = meta.model
+  self.health = meta.health
+  self.shield = meta.shield
+  self.turrets = meta.turrets
   local mesh, meshSeed
   self.rejectedMeshes = {}
   for attempt = 0, 7 do
@@ -51,7 +54,8 @@ local ShipType = class(function (self, seed, generator, scale, meta)
     [LTheory_SocketType.Turret] = {}
   }
 
-  for i = 1, Config.gen.nTurrets do
+  local turretPairs = self.turrets or Config.gen.nTurrets
+  for i = 1, turretPairs do
     local p = Gen.GenUtil.FindMountPoint(self.mesh, self.bsp, rng, Vec3f(0, 1, 0), Vec3f(0, 0, 1), 1000)
     if p then
       insert(self.sockets[LTheory_SocketType.Turret], p * Vec3f( 1, 1, 1))

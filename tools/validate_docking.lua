@@ -98,6 +98,7 @@ local station = Entity()
 station:addChildren()
 station:addDockable()
 station.pos, station.radius, station.up = vec(0, 0, 0), 800, vec(0, 1, 0)
+station.body = {}
 function station:getPos () return self.pos end
 function station:getRadius () return self.radius end
 function station:getUp () return self.up end
@@ -158,6 +159,24 @@ local dockPos = station:getPos() - station:getUp():scale(1.25 * station:getRadiu
 ship:setPos(dockPos)
 ship:pushAction(DockAt(station))
 ship:updateActions({ dt = 1 / 60 })
+local staleStation = Entity()
+staleStation:addChildren()
+staleStation:addDockable()
+function staleStation:getName () return 'Stale station' end
+function staleStation:getPos () return vec(0, 0, 0) end
+function staleStation:getRadius () return 800 end
+function staleStation:getUp () return vec(0, 1, 0) end
+function staleStation:getForward () return vec(1, 0, 0) end
+local staleShip = Entity()
+staleShip:addActions()
+staleShip:addRigidBody(true, {})
+staleShip:addThrustController()
+function staleShip:getPos () return vec(0, 0, 0) end
+function staleShip:getRadius () return 10 end
+local staleDock = DockAt(staleStation)
+staleShip:pushAction(staleDock)
+local staleOk = pcall(function () staleDock:onUpdateActive(staleShip, 0) end)
+check('DockAt safely aborts when its target body is gone', staleOk and staleShip:isIdle())
 check('DockAt action completes and parents the ship', ship:getParent() == station and ship:isIdle(),
   string.format('atStation=%s actions=%d current=%s', tostring(ship:getParent() == station), #ship.actions,
     tostring(ship.actions[1] and ship.actions[1].getName and ship.actions[1]:getName())))

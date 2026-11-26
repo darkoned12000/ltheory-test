@@ -1,6 +1,7 @@
 local Entity     = require('Game.Entity')
 local SocketType = require('Game.SocketKind')
 local Movement   = require('Game.ShipMovement')
+local ShipEquipment = require('Game.ShipEquipment')
 
 -- The thrusters, and the SPEED they buy.
 --
@@ -95,8 +96,9 @@ function ThrustController:update (e, dt)
   local radius = e:getRadius()
   local cargo = e:hasInventory() and (e:getInventoryCapacity() - e:getInventoryFree()) or 0
   local capacity = e:hasInventory() and e:getInventoryCapacity() or 0
-  local forceScale = Movement.forceScale(mass, radius, cargo, capacity)
-  local torqueScale = Movement.torqueScale(mass, radius, cargo, capacity)
+  local equipment = ShipEquipment.ThrustFactors(e)
+  local forceScale = Movement.forceScale(mass, radius, cargo, capacity) * equipment.thrust
+  local torqueScale = Movement.torqueScale(mass, radius, cargo, capacity) * equipment.turn
   e:setDrag(Movement.linearDrag(radius, cargo, capacity), 4.0)
 
   if abs(self.forward) > 1e-6 then
@@ -169,6 +171,12 @@ local function killThrust (self)
     self.thrustController.engineSound:free()
     self.thrustController.engineSound = nil
   end
+end
+
+function Entity:shutdownThrustController ()
+  if not self.thrustController then return false end
+  killThrust(self)
+  return true
 end
 
 function Entity:addThrustController ()

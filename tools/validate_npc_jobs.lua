@@ -379,7 +379,7 @@ local progressionStation = { getName = function () return 'Yard' end,
   getPos = function () return { x = 0, y = 0, z = 0 } end,
   addItem = function () return true end, removeItem = function () return true end }
 rootEntity.children = { progressionStation }
-local progressionOwner = { credits = 1000 }
+local progressionOwner = { credits = 10000 }
 function progressionOwner:getItemCount (item) return item == creditItem and self.credits or 0 end
 function progressionOwner:hasItem (item, count) return item == creditItem and self.credits >= count end
 function progressionOwner:removeItem (item, count)
@@ -403,8 +403,59 @@ check('progression completion schedules a normal undock', progressionAsset:getCu
   and progressionAsset:getCurrentAction():getName() == 'Undock')
 progressionAsset.actions = {}
 think:manageUpkeep(progressionAsset, 3600)
-check('upkeep accrues and charges in simulation hours', progressionOwner.credits == 997
+check('upkeep accrues and charges in simulation hours', progressionOwner.credits == 9996
   and progressionAsset.npcUpkeepElapsed == 0)
+
+progressionOwner.credits = 100000
+local serviceAsset = asset(17)
+serviceAsset.shipKind, serviceAsset.npcRole = 'fighter', 'fighter'
+serviceAsset.owner = progressionOwner
+serviceAsset.getSockets = function () return {
+  { type = 'Turret', typeIndex = 1, child = { equipmentId = 'turret-mk1', equipmentTier = 1 } },
+} end
+rootEntity.sectors = {
+  { index = 0, neighbours = { 1 }, hasStation = true, hasShipyard = false },
+  { index = 1, neighbours = { 0 }, hasStation = true, hasShipyard = true },
+}
+rootEntity.sectorIndex, rootEntity.gates = 0, { correctGate }
+rootEntity.npcStations = { progressionStation }
+think:manageProgression(serviceAsset)
+check('ordinary market docks are not selected for shipyard refits',
+  serviceAsset:isIdle() and serviceAsset.travelTargetSector == 1
+  and serviceAsset.npcServiceNeed == 'shipyard')
+think:manageTravel(serviceAsset)
+check('NPC without a local shipyard travels toward a sector that has one',
+  serviceAsset:getCurrentAction() and serviceAsset:getCurrentAction().gate == correctGate)
+
+serviceAsset.actions = {}
+serviceAsset.travelTargetSector, serviceAsset.npcServiceNeed = nil, nil
+progressionStation.shipyard = true
+think:manageProgression(serviceAsset)
+check('a capable local shipyard receives the refit job',
+  serviceAsset:getCurrentAction() and serviceAsset:getCurrentAction():getName() == 'Refit'
+  and serviceAsset:getCurrentAction().target == progressionStation)
+
+local stranded = asset(18)
+stranded.shipKind, stranded.npcRole, stranded.owner = 'fighter', 'fighter', progressionOwner
+stranded.health, stranded.healthMax = 20, 100
+rootEntity.npcStations = {}
+think:manageProgression(stranded)
+check('NPC needing repairs with no local station routes to a station sector',
+  stranded:isIdle() and stranded.travelTargetSector == 1
+  and stranded.npcServiceNeed == 'station')
+stranded.npcNextServiceAt = rootEntity.now + 60
+stranded.travelTargetSector, stranded.npcServiceNeed = nil, nil
+think:manageProgression(stranded)
+check('failed service retries respect a cooldown', stranded:isIdle()
+  and stranded.travelTargetSector == nil)
+local cargoCarrier = asset(19)
+cargoCarrier.owner = progressionOwner
+cargoCarrier.hasInventory = function () return true end
+cargoCarrier.getInventory = function () return { [item] = 1 } end
+think:manageProgression(cargoCarrier)
+check('NPC carrying goods with no local market routes to a station sector',
+  cargoCarrier:isIdle() and cargoCarrier.travelTargetSector == 1
+  and cargoCarrier.npcServiceNeed == 'station')
 rootEntity.children = nil
 check('safety does not stack duplicate retreats', #victim.actions == 2)
 victim:popAction()

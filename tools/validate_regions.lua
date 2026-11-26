@@ -44,7 +44,9 @@ local src = debug.getinfo(1, 'S').source:match('^@(.+)$') or '.'
 if src:sub(1,1) ~= '/' then src = (io.popen('pwd'):read('*l') or '.')..'/'..src end
 local root = src:gsub('/tools/validate_regions%.lua$', '')
 if root == src then root = '.' end
-package.path = root..'/script/?.lua;'..root..'/script/?/init.lua;'..package.path
+package.path = root..'/script/?.lua;'..root..'/script/?/init.lua;'
+  ..root..'/libphx/script/?.lua;'..root..'/libphx/script/?/init.lua;'
+  ..package.path
 
 local RegionMod = dofile(root..'/script/Game/Region.lua')
 local Region = RegionMod.Region

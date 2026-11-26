@@ -19,6 +19,10 @@ end
 function Flee:onUpdateActive (e, dt)
   self.t = self.t + dt
   if self.t >= self.duration then
+    e.npcNeedsRegroup = true
+    local root = e.getRoot and e:getRoot()
+    local now = root and root.getTime and root:getTime() or 0
+    e.npcRegroupUntil = now + ((Config.game and Config.game.npcRegroupTimeout) or 45)
     e:popAction()
     return
   end

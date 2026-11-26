@@ -32,7 +32,9 @@ local src = debug.getinfo(1, 'S').source:match('^@(.+)$') or '.'
 if src:sub(1,1) ~= '/' then src = (io.popen('pwd'):read('*l') or '.')..'/'..src end
 local root = src:gsub('/tools/validate_sectors%.lua$', '')
 if root == src then root = '.' end
-package.path = root..'/script/?.lua;'..root..'/script/?/init.lua;'..package.path
+package.path = root..'/script/?.lua;'..root..'/script/?/init.lua;'
+  ..root..'/libphx/script/?.lua;'..root..'/libphx/script/?/init.lua;'
+  ..package.path
 
 local SectorGraph = dofile(root..'/script/Game/SectorGraph.lua')
 
@@ -72,6 +74,14 @@ do
   check('every sector is reachable from every other',
     reached == #sectors,
     string.format('%d of %d reachable', reached, #sectors))
+  local servicesKnown, shipyards = true, 0
+  for _, sector in ipairs(sectors) do
+    servicesKnown = servicesKnown and type(sector.hasStation) == 'boolean'
+      and type(sector.hasShipyard) == 'boolean'
+    if sector.hasShipyard then shipyards = shipyards + 1 end
+  end
+  check('sectors carry deterministic station and shipyard service metadata',
+    servicesKnown and shipyards >= 1, string.format('shipyards=%d', shipyards))
 end
 
 -- ---------------------------------------------------------------------------

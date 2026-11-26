@@ -123,6 +123,7 @@ local data = { npcs = {
 } }
 -- SaveGame sets owner after spawn, so provide a no-owner path for this fixture.
 function system:spawnShip (_, opts)
+  self.lastSpawnOpts = opts
   local ship = makeShip(opts.shipId)
   self.stableIndex[opts.shipId] = ship
   return ship
@@ -133,6 +134,10 @@ check('tombstoned actor stays retired', system:getNpc('npc:dead') == nil)
 check('saved actor is recreated by stable id', system:getNpc('npc:saved') ~= nil)
 check('saved ship is recreated and restored', system:resolveStableId('ship:saved')
   and system:resolveStableId('ship:saved').pos.x == 12)
+check('NPC restore supplies a temporary position instead of advancing world RNG',
+  system.lastSpawnOpts and system.lastSpawnOpts.pos
+  and system.lastSpawnOpts.pos.x == 0 and system.lastSpawnOpts.pos.y == 0
+  and system.lastSpawnOpts.pos.z == 0)
 check('saved primary ship is controlling', system:getNpc('npc:saved'):getControlling()
   == system:resolveStableId('ship:saved'))
 check('restored roster is registered for sector cleanup', #system.npcPopulationActors == 1
@@ -254,7 +259,8 @@ travellerShip.getParent = function (self) return self.parent end
 local gate = { getPartnerSector = function () return 2 end,
   getPartnerPos = function () return { x = 9000, y = 0, z = 0 } end,
   getName = function () return 'Gate to sector 2' end }
-local began = system:beginNpcTransit(traveller, travellerShip, gate, 'test')
+travellerShip.npcServiceNeed = 'shipyard'
+local began = system:beginNpcTransit(traveller, travellerShip, gate, 'station-service')
 check('gate approach detaches NPC into persistent sector transit', began
   and traveller.parent == nil and travellerShip.parent == nil and not traveller.deleted
   and not travellerShip.deleted and #system.npcTransit == 1)
@@ -272,7 +278,8 @@ check('destination entry restores the same NPC ship and job checkpoint', restore
   and traveller.parent == system and travellerShip.parent == system
   and system:getNpc('npc:traveller') == traveller and traveller:getControlling() == travellerShip
   and travellerShip.pendingJob and travellerShip.pendingJob.kind == 'mine'
-  and #travellerShip.actions == 0 and traveller.transit == nil)
+  and #travellerShip.actions == 0 and traveller.transit == nil
+  and traveller.npcNextTravelAt == system:getTime())
 check('transit actor is excluded from duplicate roster spawning',
   system.npcPopulationActors[1] == traveller)
 system.sectorIndex = 0

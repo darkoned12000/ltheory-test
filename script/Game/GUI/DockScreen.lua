@@ -20,6 +20,11 @@
 
 local Actions = requireAll('Game.Actions')
 local Cargo = require('Game.Cargo')
+local Item = require('Game.Item')
+local Progression = require('Game.NpcProgression')
+local ShipArchetypes = require('Game.ShipArchetypes')
+local ShipEquipment = require('Game.ShipEquipment')
+local Wallet = require('Game.ProgressionWallet')
 local ShipBindings = require('Game.Controls.ShipBindings')
 local Screen = require('Game.GUI.Screen')
 local Grid = require('UI.Grid')
@@ -56,6 +61,22 @@ local function cell (text, width, color)
   l:setFontColor(color or WHITE)
   if width then l:setWidth(width) end
   return l
+end
+
+local function moduleSummary (ship, moduleType)
+  local low, high
+  for _, socket in ipairs(ship.getSockets and ship:getSockets() or ship.sockets or {}) do
+    if socket.type == moduleType and socket.child and not socket.child.deleted then
+      local id = socket.child.equipmentId
+      if ShipEquipment.Get(id) then
+        low = low and math.min(low, socket.child.equipmentTier) or socket.child.equipmentTier
+        high = high and math.max(high, socket.child.equipmentTier) or socket.child.equipmentTier
+      end
+    end
+  end
+  if not low then return 'NONE' end
+  if low == high then return 'MK ' .. tostring(low) end
+  return 'MK ' .. tostring(low) .. ' - MK ' .. tostring(high)
 end
 
 -- A VERTICAL BREATH of a given height: an empty label with a FIXED
@@ -112,6 +133,7 @@ function DockScreen:undock ()
   local ship = self.player and self.player:getControlling()
   local station = ship and ship:getParent()
   if not (station and station.hasDockable and station:hasDockable()) then return false end
+  if self:serviceBusy() then return false end
   local current = ship.getCurrentAction and ship:getCurrentAction()
   if current and current:getName() == 'Undock' then return false end
   ship:pushAction(Actions.Undock())
@@ -149,6 +171,117 @@ end
 
 -- One trade through the book, then the page rebuilds (prices, depth,
 -- credits and the hold all moved).
+function DockScreen:serviceBusy ()
+  local ship = self.player and self.player:getControlling()
+  if not ship then return false end
+  for _, action in ipairs(ship.actions or {}) do
+    if action.isDockService then return true end
+    local name = action.getName and action:getName() or ''
+    if name:sub(1, 6) == 'Repair' or name:sub(1, 5) == 'Refit'
+       or name:sub(1, 12) == 'PurchaseShip' then
+      return true
+    end
+  end
+  return false
+end
+
+function DockScreen:repair ()
+  local ship = self.player and self.player:getControlling()
+  local station = ship and ship:getParent()
+  if not (station and station.hasDockable and station:hasDockable()) then return false end
+  if self:serviceBusy() then return false end
+  local hullMissing = math.max(0, ship.healthMax - ship.health)
+  local shieldMissing = ship.hasShield and ship:hasShield()
+    and math.max(0, ship:getShieldMax() - ship:getShield()) or 0
+  if hullMissing + shieldMissing <= 1e-9 then
+    self.message = 'Hull and shields are already at full strength.'
+    self:refresh()
+    return false
+  end
+  local cost = Progression.RepairCost(ship)
+  if not Wallet.Has(ship, cost) then
+    self.message = format('Repair requires %d credits.', cost)
+    self:refresh()
+    return false
+  end
+  ship:pushAction(Actions.Repair(station))
+  self.message = format('Repair started (%d credits).', cost)
+  self:refresh()
+  return true
+end
+
+function DockScreen:refit (equipmentId, slot)
+  local ship = self.player and self.player:getControlling()
+  local station = ship and ship:getParent()
+  if not (station and station.shipyard) then
+    self.message = 'This dock does not have a shipyard.'
+    self:refresh()
+    return false
+  end
+  if self:serviceBusy() then return false end
+  equipmentId = equipmentId or Progression.NextEquipment(ship)
+  local equipment = ShipEquipment.Get(equipmentId)
+  if not equipment then
+    self.message = 'No further module upgrade is available.'
+    self:refresh()
+    return false
+  end
+  local cost = Progression.RefitCost(ship, equipment.type, nil, equipmentId)
+  if not Wallet.Has(ship, cost) then
+    self.message = format('Refit requires %d credits.', cost)
+    self:refresh()
+    return false
+  end
+  ship:pushAction(Actions.Refit(station, equipment.type, {
+    equipment = equipmentId, slot = slot, replace = true,
+  }))
+  self.message = format('Refit started: %s (%d credits).', equipment.name, cost)
+  self:refresh()
+  return true
+end
+
+function DockScreen:buyShip (kind)
+  local ship = self.player and self.player:getControlling()
+  local station = ship and ship:getParent()
+  if not (station and station.shipyard) then
+    self.message = 'This dock does not have a shipyard.'
+    self:refresh()
+    return false
+  end
+  if self:serviceBusy() then return false end
+  if not ShipArchetypes.Defs[kind] then
+    self.message = 'That hull is not in the shipyard catalog.'
+    self:refresh()
+    return false
+  end
+  if ship.shipKind == kind then
+    self.message = 'You already control that hull.'
+    self:refresh()
+    return false
+  end
+  local quote = Progression.PurchaseQuote(ship, kind, true)
+  local used = select(1, Cargo.Summary(ship))
+  if used > ShipArchetypes.Get(kind).cargo then
+    self.message = 'Your cargo will not fit in that hull.'
+    self:refresh()
+    return false
+  end
+  if not Wallet.Has(ship, quote.due) then
+    self.message = format('%s requires %d credits after trade-in.', kind, quote.due)
+    self:refresh()
+    return false
+  end
+  if not Wallet.CanPay(station, quote.excess) then
+    self.message = 'This shipyard cannot fund the trade-in excess.'
+    self:refresh()
+    return false
+  end
+  ship:pushAction(Actions.PurchaseShip(station, { kind = kind, tradeIn = true }))
+  self.message = format('Purchase started: %s (%d credits after trade-in).', kind, quote.due)
+  self:refresh()
+  return true
+end
+
 function DockScreen:trade (item, count, selling)
   local ship = self.player:getControlling()
   local _, market = self:dock()
@@ -223,6 +356,27 @@ function DockScreen:buyOne ()
   self:trade(best.item, 1, false)
 end
 
+function DockScreen:serviceStateKey (ship)
+  local current = ship.getCurrentAction and ship:getCurrentAction()
+  return format('%s:%s:%d:%d:%d:%s:%s',
+    tostring(ship.stableId), tostring(ship:getParent()),
+    Wallet.Balance(ship), select(1, Cargo.Summary(ship)), #(ship.actions or {}),
+    current and current.getName and current:getName() or '',
+    current and tostring(current.result) or '')
+end
+
+function DockScreen:onUpdate (state)
+  Screen.onUpdate(self, state)
+  if not self:isOpen() then return end
+  local ship = self.player and self.player:getControlling()
+  if not ship then return end
+  local key = self:serviceStateKey(ship)
+  if key ~= self.serviceState then
+    self.serviceState = key
+    self:refresh()
+  end
+end
+
 -- The whole page body, rebuilt: on open, on every tab switch, and after
 -- every trade. ONE swapped child grid of the content, so the framework's
 -- add/remove keeps the widget bookkeeping honest (and no CLOSE-button
@@ -244,11 +398,11 @@ function DockScreen:refresh ()
     market and (market:isOpen() and 'MARKET (OPEN)' or 'MARKET (CLOSED)'),
     260,
     market and market:isOpen() and GOOD or CLOSED_C))
-  head:add(cell(format('YOUR CREDITS:  %d', ship and ship:getCredits() or 0), 240, WHITE))
+  head:add(cell(format('YOUR CREDITS:  %d', ship and Wallet.Balance(ship) or 0), 240, WHITE))
   head:add(cell(ship and ship:hasInventory() and Cargo.FormatSummary(ship) or 'NO CARGO', 280, WHITE))
   self.body:add(head)
 
-  local tabs = Grid():setCols(2):setStretch(0, 0)
+  local tabs = Grid():setCols(3):setStretch(0, 0)
   tabs:setPadCellX(8)
   local buyBtn = MenuButton.Create('BUY', function ()
     if self.tab ~= 'market' then self.tab = 'market'; self:refresh() end
@@ -256,12 +410,17 @@ function DockScreen:refresh ()
   local sellBtn = MenuButton.Create('SELL', function ()
     if self.tab ~= 'sell' then self.tab = 'sell'; self:refresh() end
   end)
+  local serviceBtn = MenuButton.Create('SHIP SERVICES', function ()
+    if self.tab ~= 'services' then self.tab = 'services'; self:refresh() end
+  end)
   -- THE ACTIVE TAB IS UNMISSABLE: the selected plate reads like a
   -- focused one and stays that way (see MenuButton:setSelected).
   buyBtn:setSelected(self.tab == 'market')
   sellBtn:setSelected(self.tab == 'sell')
+  serviceBtn:setSelected(self.tab == 'services')
   tabs:add(buyBtn)
   tabs:add(sellBtn)
+  tabs:add(serviceBtn)
   self.body:add(tabs)
 
   -- A 25px BREATH before and after the table: the tab buttons and the
@@ -283,7 +442,11 @@ function DockScreen:refresh ()
     self.body:add(spacer(18))
   end
 
-  if market then
+  if self.tab == 'services' then
+    local list = Grid():setCols(1):setStretch(0, 0)
+    self:buildServiceRows(list, ship, station)
+    self.body:add(list)
+  elseif market then
     local list = Grid():setCols(1):setStretch(0, 0)
     if self.tab == 'sell' then self:buildSellRows(list, ship, market)
                            else self:buildBuyRows(list, ship, market) end
@@ -325,6 +488,78 @@ function DockScreen:refresh ()
   end))
 
   self.content:add(self.body)
+end
+
+function DockScreen:buildServiceRows (grid, ship, station)
+  if not ship then return end
+  local hull = math.max(0, ship.healthMax - ship.health)
+  local shield = ship.hasShield and ship:hasShield()
+    and math.max(0, ship:getShieldMax() - ship:getShield()) or 0
+  local repairCost = Progression.RepairCost(ship)
+  local repairRow = Grid():setCols(2):setStretch(0, 0)
+  repairRow:add(cell(format('HULL  %d / %d   SHIELD  %s',
+    ship.health, ship.healthMax,
+    ship.hasShield and ship:hasShield()
+      and format('%d / %d', ship:getShield(), ship:getShieldMax()) or 'NONE'), 420, WHITE))
+  if hull + shield > 0 then
+    repairRow:add(MenuButton.Create(format('REPAIR  %d CR', repairCost), function ()
+      self:repair()
+    end))
+  else
+    repairRow:add(cell('FULLY REPAIRED', nil, GOOD))
+  end
+  grid:add(repairRow)
+
+  if not station.shipyard then
+    grid:add(cell('This dock offers repairs only; no shipyard is installed.', nil, MUTED))
+    return
+  end
+
+  grid:add(spacer(12))
+  grid:add(cell('MODULE UPGRADES', nil, ACCENT))
+  local SocketType = require('Game.SocketKind')
+  for _, moduleType in ipairs({ SocketType.Thruster, SocketType.Turret }) do
+    local equipmentId = Progression.NextEquipment(ship, moduleType)
+    local row = Grid():setCols(2):setStretch(0, 0)
+    row:add(cell(format('%s  %s', string.upper(moduleType), moduleSummary(ship, moduleType)), 420, WHITE))
+    if equipmentId then
+      local refitCost = Progression.RefitCost(ship, moduleType, nil, equipmentId)
+      row:add(MenuButton.Create(format('UPGRADE  %d CR', refitCost), function ()
+        self:refit(equipmentId)
+      end):setDisabled(not Wallet.Has(ship, refitCost)))
+    else
+      row:add(cell('MAX TIER', nil, GOOD))
+    end
+    grid:add(row)
+  end
+
+  local tradeIn = Progression.TradeInValue(ship)
+  grid:add(cell(format('CURRENT HULL TRADE-IN VALUE  %d CR', tradeIn), nil, MUTED))
+  grid:add(spacer(12))
+  grid:add(cell('HULL CATALOG', nil, ACCENT))
+  local used = select(1, Cargo.Summary(ship))
+  for _, kind in ipairs(ShipArchetypes.Order) do
+    local def = ShipArchetypes.Get(kind)
+    local quote = Progression.PurchaseQuote(ship, kind, true)
+    local row = Grid():setCols(2):setStretch(0, 0)
+    local detail = format('%s  HULL %d  SHIELD %d  CARGO %d  TRADE-IN %d',
+      string.upper(def.name), def.health, def.shield, def.cargo, quote.tradeIn)
+    if quote.excess > 0 then
+      detail = detail .. format('  RETURN %d', quote.excess)
+    end
+    row:add(cell(detail, 420, WHITE))
+    if ship.shipKind == kind then
+      row:add(cell('CURRENT HULL', nil, GOOD))
+    elseif used > def.cargo then
+      row:add(cell('CARGO TOO LARGE', nil, CLOSED_C))
+    else
+      row:add(MenuButton.Create(format('BUY  %d CR', quote.due), function ()
+        self:buyShip(kind)
+      end):setDisabled(not Wallet.Has(ship, quote.due)
+        or not Wallet.CanPay(station, quote.excess)))
+    end
+    grid:add(row)
+  end
 end
 
 -- The MARKET tab: ONE table, one row per commodity the station sells —

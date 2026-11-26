@@ -17,6 +17,15 @@ end
 
 local roles = { 'fighter', 'freighter', 'industrial', 'capital' }
 for _, role in ipairs(roles) do check('role exists: ' .. role, Population.Roles[role] ~= nil) end
+check('NPC roles have class-scale hull and shields',
+  Population.Roles.fighter.health >= 2500
+    and Population.Roles.fighter.shield >= 2500
+    and Population.Roles.freighter.health > Population.Roles.fighter.health
+    and Population.Roles.capital.health >= 150000
+    and Population.Roles.capital.shield >= 50000)
+check('capital hulls mount more turrets than fighters',
+  Population.Roles.capital.turrets > Population.Roles.fighter.turrets
+    and Population.Roles.capital.turrets >= 3)
 local total = 0
 for _, count in pairs(Population.DefaultMix) do total = total + count end
 check('default population has useful variety', total >= 6 and total <= 16, 'count=' .. total)

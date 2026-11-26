@@ -1,16 +1,21 @@
--- Refit(target, moduleType, opts). opts may select a slot, replace an occupied
--- slot, reserve temporary cargo clearance, and pay upkeep for upkeepElapsed
--- seconds. Modules use Ship:plug and retain their SocketObj's durable id.
+-- Refit(target, moduleType, opts). opts.equipment selects a canonical module
+-- tier; opts may also select a slot, replace an occupied slot, reserve temporary
+-- cargo clearance, and pay upkeep for upkeepElapsed seconds. Modules use
+-- Ship:plug and retain their SocketObj's durable id.
 
 local Action = require('Game.Action')
 local DockAt = require('Game.Actions.DockAt')
 local Item = require('Game.Item')
 local Progression = require('Game.NpcProgression')
 local StableId = require('Game.StableId')
+local ShipEquipment = require('Game.ShipEquipment')
+local DockService = require('Game.DockService')
+local Wallet = require('Game.ProgressionWallet')
 local SocketType = require('Game.SocketKind')
 
 local Credit = Item.Credit
 local Refit = subclass(Action, function (self, target, moduleType, opts)
+  self.isDockService = true
   self.target = target
   self.moduleType = moduleType
   self.opts = opts or {}
@@ -24,12 +29,15 @@ function Refit:clone ()
 end
 
 function Refit:getName ()
-  return format('Refit %s at %s', tostring(self.moduleType or 'preferred'), self.target:getName())
+  local name = self.equipmentId and ShipEquipment.Label(self.equipmentId)
+    or tostring(self.moduleType or 'preferred')
+  return format('Refit %s at %s', name, self.target:getName())
 end
 
 local function valid (ship, target)
   return ship and not ship.deleted and ship.isAlive and ship:isAlive()
-    and target and not target.deleted and (not target.isAlive or target:isAlive())
+    and target and not target.deleted and target.shipyard
+    and (not target.isAlive or target:isAlive())
     and target.hasDockable and target:hasDockable()
 end
 
@@ -38,14 +46,16 @@ function Refit:stopDockAction (ship)
 end
 
 function Refit:fail (ship, reason)
+  if self.result then return end
   self.result = 'failed'
+  DockService.DelayRetry(ship)
   printf('[NPC PROGRESSION] refit fail ship=%s reason=%s', tostring(ship.stableId or ship.id), reason)
 end
 
 function Refit:chooseSocket (ship, moduleType)
   local sockets = ship.getSockets and ship:getSockets() or ship.sockets
   if type(sockets) ~= 'table' then return nil, 'ship has no sockets' end
-  local occupied
+  local occupied, occupiedTier
   local matching = false
   for _, socket in ipairs(sockets) do
     local index = tonumber(socket.typeIndex)
@@ -53,19 +63,29 @@ function Refit:chooseSocket (ship, moduleType)
        and (self.opts.slot == nil or index == self.opts.slot) then
       matching = true
       if socket.child == nil then return socket, false end
-      if self.opts.replace and not occupied then occupied = socket end
+      if self.opts.replace then
+        local tier = ShipEquipment.TierOf(socket.child)
+        if not occupied or tier < occupiedTier then occupied, occupiedTier = socket, tier end
+      end
     end
   end
   if occupied then return occupied, true end
   return nil, matching and 'matching sockets occupied' or 'no matching socket'
 end
 
-function Refit:createModule (ship, moduleType)
-  local Entities = requireAll('Game.Entities')
-  local factory = Entities[moduleType]
+function Refit:createModule (ship, moduleType, equipmentId)
+  local factory
+  if moduleType == SocketType.Thruster then
+    factory = require('Game.Entities.Thruster')
+  elseif moduleType == SocketType.Turret then
+    factory = require('Game.Entities.Turret')
+  end
   if type(factory) ~= 'function' then return nil, 'module factory unavailable' end
   local ok, module = pcall(factory)
   if not ok or type(module) ~= 'table' then return nil, 'module construction failed' end
+  if not ShipEquipment.Apply(module, equipmentId) then
+    module:delete(); return nil, 'unsupported equipment definition'
+  end
   if module.setScale then
     local scale = moduleType == SocketType.Thruster and 0.5 * ship:getScale() or 2 * ship:getScale()
     local scaled = pcall(function () module:setScale(scale) end)
@@ -116,11 +136,6 @@ function Refit:refreshSocketStats (ship)
 end
 
 function Refit:perform (ship)
-  local owner = ship:getOwner()
-  if not owner or not owner.hasItem or not owner.removeItem or not owner.addItem then
-    self:fail(ship, 'missing actor inventory')
-    return
-  end
   if not self.target.addItem or not self.target.removeItem then
     self:fail(ship, 'station cannot accept credits')
     return
@@ -131,7 +146,14 @@ function Refit:perform (ship)
     self:fail(ship, 'unsupported module type')
     return
   end
-  self.moduleType = moduleType
+  local equipmentId = self.opts.equipment or self.opts.equipmentId
+    or ShipEquipment.DefaultId(moduleType)
+  local equipment = ShipEquipment.Get(equipmentId)
+  if not equipment or equipment.type ~= moduleType then
+    self:fail(ship, 'unsupported equipment definition')
+    return
+  end
+  self.moduleType, self.equipmentId = moduleType, equipmentId
 
   local socket, replacing = self:chooseSocket(ship, moduleType)
   if not socket then self:fail(ship, replacing); return end
@@ -147,10 +169,10 @@ function Refit:perform (ship)
   local clearance = math.max(0, tonumber(self.opts.cargo) or 0)
   if ship:getInventoryFree() < clearance then self:fail(ship, 'insufficient cargo clearance'); return end
 
-  local cost = Progression.RefitCost(ship, moduleType, self.opts.upkeepElapsed)
-  if not owner:hasItem(Credit, cost) then self:fail(ship, 'insufficient credits'); return end
+  local cost = Progression.RefitCost(ship, moduleType, self.opts.upkeepElapsed, equipmentId)
+  if not Wallet.Has(ship, cost) then self:fail(ship, 'insufficient credits'); return end
 
-  local module, err = self:createModule(ship, moduleType)
+  local module, err = self:createModule(ship, moduleType, equipmentId)
   if not module then self:fail(ship, err); return end
   local previous = replacing and socket.child or nil
   if previous then
@@ -172,15 +194,10 @@ function Refit:perform (ship)
   end
   self:refreshSocketStats(ship)
 
-  if not owner:removeItem(Credit, cost) then
+  local payment = Wallet.Pay(ship, self.target, cost)
+  if not payment then
     self:restore(ship, socket, previous, module)
     self:fail(ship, 'credit payment failed')
-    return
-  end
-  if not self.target:addItem(Credit, cost) then
-    owner:addItem(Credit, cost)
-    self:restore(ship, socket, previous, module)
-    self:fail(ship, 'station payment failed')
     return
   end
   if previous then previous:delete() end
@@ -190,8 +207,9 @@ function Refit:perform (ship)
   self.module = module
   self.socket = socket
   self.result = 'completed'
+  DockService.ClearRetry(ship)
   printf('[NPC PROGRESSION] refit complete ship=%s station=%s type=%s slot=%d id=%s cost=%d',
-    tostring(ship.stableId), tostring(self.target.stableId or self.target.id), moduleType,
+    tostring(ship.stableId), tostring(self.target.stableId or self.target.id), equipmentId,
     socket.typeIndex, tostring(module.stableId), cost)
   ship:popAction()
 end

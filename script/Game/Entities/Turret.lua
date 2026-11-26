@@ -1,6 +1,8 @@
 local Entity = require('Game.Entity')
 local Components = requireAll('Game.Components')
 local Seed = require('Game.Seed')
+local ShipEquipment = require('Game.ShipEquipment')
+local SocketType = require('Game.SocketKind')
 
 -- TODO : Constraints
 
@@ -50,6 +52,7 @@ Turret = subclass(Entity, function (self)
   self.projSpeed = Config.game.pulseSpeed
   self.projLife = self.projRange / self.projSpeed
   self.projSpread = Config.game.pulseSpread
+  ShipEquipment.Ensure(self, SocketType.Turret)
   -- Per-turret shot-spread stream (see Thruster: seeded from the entity id, not
   -- a process-wide stream, so turret N always shoots the same way).
   self.rng = Seed.rng('turret.fire', self.id):managed()
@@ -58,8 +61,12 @@ Turret = subclass(Entity, function (self)
 end)
 
 function Turret:getSocketType ()
-  local SocketType = require('Game.SocketKind')
-return SocketType.Turret
+  return SocketType.Turret
+end
+
+function Turret:getDps ()
+  return math.max(0, tonumber(self.projDamage) or 0)
+    * math.max(0, tonumber(self.rateOfFire) or 0)
 end
 
 function Turret:aimAt (pos)
@@ -101,6 +108,7 @@ function Turret:fire ()
   assert(e.dir:length() >= 0.9)
   e.lifeMax = self.projLife
   e.life = e.lifeMax
+  e.damage = self.projDamage
 
   -- Audio: one-shot blaster at the muzzle (one-shot voices free themselves).
   local sfx = Config.audio.sfx.blaster
@@ -144,7 +152,7 @@ function Turret:updateTurret (state)
     self.firing = 0
     if self.cooldown <= 0 then self:fire() end
   end
-  self.cooldown = max(0, self.cooldown - state.dt * Config.game.rateOfFire)
+  self.cooldown = max(0, self.cooldown - state.dt * self.rateOfFire)
   self.heat = self.heat * decay
 end
 

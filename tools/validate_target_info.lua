@@ -48,6 +48,10 @@ local ship = {
 check('ship uses registry name', Info.Name(ship) == 'Freighter')
 check('ship shows disposition', Info.HasDisposition(ship))
 check('ship has no asteroid composition', Info.Composition(ship, nil) == nil)
+local shielded = { hasShield = function () return true end,
+  getShield = function () return 35 end, getShieldMax = function () return 50 end }
+check('target info exposes shield state', Info.Shield and Info.Shield(shielded) == '35 / 50')
+check('targets without shields omit shield text', Info.Shield and Info.Shield(ship) == nil)
 
 local planet = { isPlanet = true, typeName = 'ice', getName = function () return 'Entity @ 0x1234' end }
 check('planet has a readable type name', Info.Name(planet) == 'Ice Planet')

@@ -1,8 +1,8 @@
--- PurchaseShip(target, opts) buys a role hull at a docked shipyard. opts accepts
--- kind, seed, and an optional explicit shipId. Credits remain in the actor's
--- Item.Credit inventory; cargo moves to the new hull. Success leaves it docked
--- and controlling, retires only the old ship, and records a purchase serial for
--- the next stable id (the parent integration may persist that serial).
+-- PurchaseShip(target, opts) buys any catalog hull at a docked shipyard. opts
+-- accepts kind, tradeIn, seed, and an optional explicit shipId. Cargo and the
+-- player's remaining ship credits move to the new hull; NPC actor credits stay
+-- on the actor. Success leaves the replacement docked and controlling, retires
+-- only the old ship, and records a durable purchase serial.
 
 local Action = require('Game.Action')
 local DockAt = require('Game.Actions.DockAt')
@@ -10,9 +10,12 @@ local Item = require('Game.Item')
 local Progression = require('Game.NpcProgression')
 local ShipArchetypes = require('Game.ShipArchetypes')
 local StableId = require('Game.StableId')
+local Wallet = require('Game.ProgressionWallet')
+local DockService = require('Game.DockService')
 
 local Credit = Item.Credit
 local PurchaseShip = subclass(Action, function (self, target, opts)
+  self.isDockService = true
   self.target = target
   self.opts = opts or {}
   self.result = nil
@@ -31,11 +34,10 @@ function PurchaseShip:getName ()
 end
 
 local function valid (ship, target)
-  local shipyard = target and (target.shipyard
-    or (target.hasMarket and target:hasMarket()) or (target.hasTrader and target:hasTrader()))
   return ship and not ship.deleted and ship.isAlive and ship:isAlive()
-    and target and not target.deleted and (not target.isAlive or target:isAlive())
-    and target.hasDockable and target:hasDockable() and shipyard
+    and target and not target.deleted and target.shipyard
+    and (not target.isAlive or target:isAlive())
+    and target.hasDockable and target:hasDockable()
 end
 
 function PurchaseShip:stopDockAction (ship)
@@ -43,19 +45,18 @@ function PurchaseShip:stopDockAction (ship)
 end
 
 function PurchaseShip:fail (ship, reason)
+  if self.result then return end
   self.result = 'failed'
+  DockService.DelayRetry(ship)
   printf('[NPC PROGRESSION] purchase fail ship=%s reason=%s', tostring(ship.stableId or ship.id), reason)
 end
 
 function PurchaseShip:refundCredits ()
   if self.charged then
-    self.owner:addItem(Credit, self.cost)
+    Wallet.Refund(self.payment, self.target, self.charge or self.cost or 0)
     self.charged = false
   end
-  if self.stationPaid then
-    if self.target.removeItem then self.target:removeItem(Credit, self.cost) end
-    self.stationPaid = false
-  end
+  self.stationPaid = false
 end
 
 function PurchaseShip:dispose (newShip)
@@ -148,6 +149,9 @@ function PurchaseShip:retire (oldShip, newShip, owner)
   local parent = oldShip:getParent()
   if parent and parent.hasDockable and parent:hasDockable() then parent:removeDocked(oldShip) end
   if oldShip:getOwner() == owner then oldShip:setOwner(nil) end
+  if oldShip.hasThrustController and oldShip:hasThrustController() then
+    oldShip:shutdownThrustController()
+  end
   oldShip:delete()
   parent = oldShip:getParent()
   if parent then parent:removeChild(oldShip) end
@@ -174,8 +178,8 @@ end
 function PurchaseShip:perform (oldShip)
   local owner = oldShip:getOwner()
   local root = oldShip:getRoot()
-  if not owner or not owner.hasItem or not owner.removeItem or not owner.addItem then
-    self:fail(oldShip, 'missing actor inventory'); oldShip:popAction(); return
+  if not owner then
+    self:fail(oldShip, 'missing owner'); oldShip:popAction(); return
   end
   if not root or type(root.spawnShip) ~= 'function' then
     self:fail(oldShip, 'root cannot spawn ships'); oldShip:popAction(); return
@@ -188,9 +192,17 @@ function PurchaseShip:perform (oldShip)
   if not ShipArchetypes.Defs[kind] then
     self:fail(oldShip, 'unsupported ship kind'); oldShip:popAction(); return
   end
-  local cost = Progression.ShipCost(oldShip, kind)
-  if not owner:hasItem(Credit, cost) then
+  local quote = Progression.PurchaseQuote(oldShip, kind, self.opts.tradeIn == true)
+  if not quote then
+    self:fail(oldShip, 'unsupported ship kind'); oldShip:popAction(); return
+  end
+  self.cost, self.charge = quote.price, quote.due
+  self.tradeIn, self.excess = quote.tradeIn, quote.excess
+  if not Wallet.Has(oldShip, self.charge) then
     self:fail(oldShip, 'insufficient credits'); oldShip:popAction(); return
+  end
+  if not Wallet.CanPay(self.target, self.excess) then
+    self:fail(oldShip, 'shipyard cannot fund trade-in'); oldShip:popAction(); return
   end
 
   local mass = cargoMass(oldShip)
@@ -198,12 +210,13 @@ function PurchaseShip:perform (oldShip)
     self:fail(oldShip, 'cargo exceeds new ship capacity'); oldShip:popAction(); return
   end
 
-  self.owner, self.root, self.cost = owner, root, cost
+  self.owner, self.root = owner, root
   local shipId, serial = self:nextShipId(oldShip, owner)
   if not shipId then self:fail(oldShip, 'no available stable ship id'); oldShip:popAction(); return end
 
   self.purchaseSerial = serial
-  if not owner:removeItem(Credit, cost) then
+  self.payment = Wallet.Pay(oldShip, self.target, self.charge)
+  if not self.payment then
     self:fail(oldShip, 'credit payment failed'); oldShip:popAction(); return
   end
   self.charged = true
@@ -226,7 +239,9 @@ function PurchaseShip:perform (oldShip)
   self.newShip = newShip
 
   local docked = pcall(function () self.target:addDocked(newShip) end)
-  if not docked then self:abort(oldShip, newShip, {}, 'new ship docking failed'); return end
+  if not docked or newShip:getParent() ~= self.target then
+    self:abort(oldShip, newShip, {}, 'new ship docking failed'); return
+  end
 
   if cargoMass(oldShip) > newShip:getInventoryCapacity() + 1e-9 then
     self:abort(oldShip, newShip, {}, 'spawned cargo capacity is insufficient'); return
@@ -234,18 +249,20 @@ function PurchaseShip:perform (oldShip)
   local transferred, moved = self:transferCargo(oldShip, newShip)
   if not transferred then self:abort(oldShip, newShip, moved, 'cargo transfer failed'); return end
 
-  newShip:setOwner(owner)
-  if not self.target:addItem(Credit, cost) then
-    self:abort(oldShip, newShip, moved, 'station payment failed'); return
+  if not Wallet.Receive(oldShip, self.target, self.excess) then
+    self:abort(oldShip, newShip, moved, 'trade-in payout failed'); return
   end
+  Wallet.MoveBalance(oldShip, newShip)
+  newShip:setOwner(owner)
   self.stationPaid = true
   self.charged = false -- payment is now settled; finalization cannot fail normally
 
   self:retire(oldShip, newShip, owner)
   self.result = 'completed'
+  DockService.ClearRetry(newShip)
   printf('[NPC PROGRESSION] purchase complete actor=%s old=%s new=%s kind=%s cost=%d cargo=%.1f',
     tostring(owner.getNpcId and owner:getNpcId() or StableId.For(owner)), tostring(oldShip.stableId),
-    tostring(newShip.stableId), kind, cost, mass)
+    tostring(newShip.stableId), kind, self.cost, mass)
 end
 
 function PurchaseShip:onUpdatePassive (ship)

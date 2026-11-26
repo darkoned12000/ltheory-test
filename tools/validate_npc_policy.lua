@@ -30,12 +30,29 @@ local function job (key, kind, payout, travel)
   }
 end
 
+local function assetState (overrides)
+  local asset = {
+    health = 100, healthMax = 100, charge = 100, chargeMax = 100,
+    inventoryCapacity = 100, inventoryFree = 100, owner = nil,
+  }
+  function asset:getHealthNormalized () return self.health / self.healthMax end
+  function asset:hasCharge () return true end
+  function asset:getChargeNormalized () return self.charge / self.chargeMax end
+  function asset:hasInventory () return true end
+  function asset:getInventoryCapacity () return self.inventoryCapacity end
+  function asset:getInventoryFree () return self.inventoryFree end
+  function asset:getOwner () return self.owner end
+  if overrides then for k, v in pairs(overrides) do asset[k] = v end end
+  return asset
+end
+
 local policy = Policy.Create(123)
 local richSlow = job('mine:A:B:ore', 'mine', 1000, 100)
 local leanFast = job('transport:C:D:fuel', 'transport', 500, 2)
 check('efficient route outscores raw-payout route',
   Policy.score(leanFast, {}, policy, 0) > Policy.score(richSlow, {}, policy, 0))
 check('score is finite for zero travel', Policy.score(job('zero', 'mine', 10, 0), {}, policy, 0) > 0)
+check('zero-payout jobs have no utility', Policy.score(job('no-pay', 'mine', 0, 1), {}, policy, 0) == 0)
 
 check('new route is eligible', Policy.canAssign(policy, leanFast, 0))
 Policy.recordOutcome(policy, leanFast, 'completed', 10)
@@ -50,6 +67,74 @@ Policy.recordOutcome(p2, richSlow, 'completed', 5)
 check('policy state is deterministic for a seed', Policy.canAssign(p1, richSlow, 5) == Policy.canAssign(p2, richSlow, 5))
 check('different seeds can prefer different job kinds',
   Policy.preference(p1, 'mine') ~= Policy.preference(Policy.Create(124), 'mine'))
+
+local riskPolicy = Policy.Create(765)
+local riskyJob = job('mine:risky', 'mine', 100, 10)
+riskyJob.risk = 1
+local safeJob = job('transport:safe', 'transport', 100, 10)
+local damagedShip = assetState({ health = 20 })
+check('low hull shifts utility away from high-risk work',
+  Policy.score(riskyJob, damagedShip, riskPolicy, 0)
+    < Policy.score(safeJob, damagedShip, riskPolicy, 0))
+
+local mineJob = job('mine:cargo', 'mine', 100, 10)
+local transportJob = job('transport:cargo', 'transport', 100, 10)
+local emptyShip = assetState({ inventoryFree = 100 })
+local fullShip = assetState({ inventoryFree = 0 })
+check('cargo load lowers utility of further mining',
+  Policy.score(mineJob, fullShip, riskPolicy, 0)
+    < Policy.score(mineJob, emptyShip, riskPolicy, 0))
+check('cargo load raises utility of delivery work',
+  Policy.score(transportJob, fullShip, riskPolicy, 0)
+    > Policy.score(transportJob, emptyShip, riskPolicy, 0))
+
+local powerJob = job('patrol:power', 'patrol', 100, 10)
+powerJob.energyDemand = 1
+local lowCharge = assetState({ charge = 10 })
+check('low capacitor discounts energy-intensive goals',
+  Policy.score(powerJob, lowCharge, riskPolicy, 0)
+    < Policy.score(powerJob, emptyShip, riskPolicy, 0))
+check('capacitor reserve also nudges normal economic travel utility',
+  Policy.score(mineJob, lowCharge, riskPolicy, 0)
+    < Policy.score(mineJob, emptyShip, riskPolicy, 0))
+
+local dutyJob = job('patrol:duty', 'patrol', 100, 10)
+dutyJob.organizationId = 'belt-miners'
+local dutyOwner = { hasOrganization = function (_, id) return id == 'belt-miners' end }
+local dutyShip = assetState({ owner = dutyOwner })
+local ordinaryShip = assetState()
+check('faction duty raises utility of matching work',
+  Policy.score(dutyJob, dutyShip, riskPolicy, 0)
+    > Policy.score(dutyJob, ordinaryShip, riskPolicy, 0))
+local industrialDuty = assetState({ owner = dutyOwner, npcRole = 'industrial' })
+local freighterDuty = assetState({ owner = dutyOwner, npcRole = 'freighter' })
+local miningDutyJob = job('mine:faction-duty', 'mine', 100, 10)
+miningDutyJob.organizationId = 'belt-miners'
+check('role duty favors an industrial ship for its faction mining work',
+  Policy.score(miningDutyJob, industrialDuty, riskPolicy, 0)
+    > Policy.score(miningDutyJob, freighterDuty, riskPolicy, 0))
+
+local protectedOwner, hostileOwner = {}, {}
+local friendlyOwner = { getDisposition = function (_, target) return target == protectedOwner and 1 or 0 end }
+local hostileRelationOwner = { getDisposition = function (_, target) return target == hostileOwner and -1 or 0 end }
+local relationJob = job('transport:relationship', 'transport', 100, 10)
+relationJob.dst = { getOwner = function () return protectedOwner end }
+local friendShip = assetState({ owner = friendlyOwner })
+local waryShip = assetState({ owner = hostileRelationOwner })
+check('relationship standing changes goal utility',
+  Policy.score(relationJob, friendShip, riskPolicy, 0)
+    > Policy.score(relationJob, waryShip, riskPolicy, 0))
+
+local committed = assetState({ job = leanFast })
+check('current route commitment receives a continuity bonus',
+  Policy.score(leanFast, committed, policy, 0)
+    > Policy.score(leanFast, assetState(), policy, 0))
+local traitsA = Policy.Personality and Policy.Personality(Policy.Create(123))
+local traitsB = Policy.Personality and Policy.Personality(Policy.Create(123))
+local traitsOther = Policy.Personality and Policy.Personality(Policy.Create(124))
+check('personality traits are deterministic and seeded', traitsA and traitsB and traitsOther
+  and traitsA.riskTolerance == traitsB.riskTolerance
+  and traitsA.riskTolerance ~= traitsOther.riskTolerance)
 
 local routes = {
   job('mine:1:10:Iron', 'mine', 1000, 10),

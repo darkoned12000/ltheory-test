@@ -27,6 +27,7 @@
 
 local Entity = require('Game.Entity')
 local Seed = require('Game.Seed')
+local ExplosionFX = require('Game.ExplosionFX')
 
 local ffi = require('ffi')
 local GPUBuffer = require('ffi.GPUBuffer')
@@ -144,9 +145,10 @@ function GPUParticles.explode (pos, baseVel, scale)
   sound:setFreeOnFinish(true)
   sound:play()
 
-  local count = math.floor(min(400, max(60, scale * 60)))
-  local speed = 6.0 + scale * 3.0
-  local size  = clamp(scale, 0.5, 4.0)
+  local fx = ExplosionFX.Parameters(scale)
+  local count = fx.count
+  local speed = fx.speed
+  local size  = fx.size
   local bx, by, bz = baseVel.x, baseVel.y, baseVel.z
   for _ = 1, count do
     local d = rng:getSphere()
@@ -157,7 +159,7 @@ function GPUParticles.explode (pos, baseVel, scale)
       vz = bz + d.z * speed * (0.3 + 0.7 * rng:getUniform()),
       size = size * (0.5 + rng:getUniform()),
       r = 2.0, g = 0.7 + 0.5 * rng:getUniform(), b = 0.15,
-      life = 0.6 + 0.9 * rng:getUniform(),
+      life = fx.life * (0.6 + 0.9 * rng:getUniform()),
     }
   end
 end

@@ -5,6 +5,7 @@ Pulse:add(CType.Int32,   'source' )
 Pulse:add(CType.Vec3f,   'pos'    )
 Pulse:add(CType.Vec3f,   'vel'    )
 Pulse:add(CType.Vec3f,   'dir'    )
+Pulse:add(CType.Float32, 'damage' )
 Pulse:add(CType.Float32, 'lifeMax')
 Pulse:add(CType.Float32, 'life'   )
 Pulse:add(CType.Float32, 'dist'   )
@@ -28,6 +29,7 @@ end)
 
 Pulse:setInitializer (function (self)
   self.matrix = Matrix.Identity()
+  self.damage = Config.game.pulseDamage
 end)
 
 Pulse:addOnDestruct(function (self)
@@ -96,7 +98,7 @@ function Pulse.UpdatePrePhysics (system, ents, dt)
     else
       self.pos:imadds(self.vel, dt)
       self.dir:ilerp(self.vel:normalize(), t)
-      self.dist = self.dist + dt * Config.game.pulseSpeed
+      self.dist = self.dist + dt * self.vel:length()
       self:refreshMatrix()
     end
   end
@@ -131,7 +133,7 @@ function Pulse.UpdatePostPhysics (system, ents, dt)
       -- don't collide with the socket that spawned me
       if hitEnt ~= source then
         -- do damage if the collidee has health
-        if hitEnt.health then hitEnt:damage(Config.game.pulseDamage, source) end
+        if hitEnt.health then hitEnt:damage(self.damage, source) end
 
         -- remove projectile
         ents[i] = ents[#ents]

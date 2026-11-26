@@ -19,6 +19,8 @@ require('Game.Content')
 local Item = require('Game.Item')
 local Production = require('Game.Production')
 local ShipArchetypes = require('Game.ShipArchetypes')
+local ShipEquipment = require('Game.ShipEquipment')
+local StableId = require('Game.StableId')
 local Communication = require('Game.Communication')
 local Directives = require('Game.Directives')
 local NpcPopulation = require('Game.NpcPopulation')
@@ -632,6 +634,9 @@ function System:spawnAI (shipCount, opts)
       seed = opts.prototypeSeed,
       variant = opts.variant,
       scale = roleDef.scale,
+      health = roleDef.health,
+      shield = roleDef.shield,
+      turrets = roleDef.turrets,
       pos = opts.pos,
       shipId = opts.shipId and (shipCount > 1 and (opts.shipId .. ':' .. i) or opts.shipId),
     })
@@ -767,7 +772,8 @@ function System:restoreNpcTransit (sectorIndex)
         self.npcPopulationActors[#self.npcPopulationActors + 1] = npc
         npc.transit, ship.npcTravel = nil, nil
         npc.npcNextTravelAt = self:getTime()
-          + ((Config and Config.game and Config.game.npcTravelInterval) or 300)
+          + (ship.npcServiceNeed and 0
+            or ((Config and Config.game and Config.game.npcTravelInterval) or 300))
         restored = restored + 1
         NpcLog.Event(ship, format('arrived sector %s at (%.0f,%.0f,%.0f); same actor/ship/job resumed',
           tostring(sectorIndex), arrival.x, arrival.y, arrival.z))
@@ -948,6 +954,44 @@ function System:npcTargets (exclude)
     if e ~= exclude and e.parent == self and owner and owner.isNpc and owner:isNpc()
        and e:isAlive() and e.body and not e.deleted then
       insert(out, e)
+    end
+  end
+  return out
+end
+
+-- Bounded candidate list for NPC perception. Scanning every streamed asteroid
+-- for every ship made local awareness O(N_ships * N_rocks); this uses the small
+-- dynamic-entity set plus only the asteroid chunks overlapping the query sphere.
+function System:queryNpcPerception (origin, range)
+  local out = {}
+  local range2 = range * range
+  local function near (entity)
+    if not (entity and entity.parent == self and not entity.deleted) then return end
+    if not (entity.body or entity.isWormhole) then return end
+    if entity.isDestroyed and entity:isDestroyed() then return end
+    local pos = entity.getPos and entity:getPos()
+    if not pos then return end
+    local dx, dy, dz = pos.x - origin.x, pos.y - origin.y, pos.z - origin.z
+    if dx*dx + dy*dy + dz*dz <= range2 then insert(out, entity) end
+  end
+
+  for _, entity in ipairs(self.children or {}) do
+    if not entity.isAsteroid then near(entity) end
+  end
+  local field = self.asteroidField
+  if field then
+    local half = field.chunkSize * 0.5
+    local steps = math.ceil((range + half) / field.chunkSize)
+    local cx, cy, cz = field:chunkOf(origin.x, origin.y, origin.z)
+    for x = cx - steps, cx + steps do
+      for y = cy - steps, cy + steps do
+        for z = cz - steps, cz + steps do
+          local chunk = field.chunks and field.chunks[field:chunkKey(x, y, z)]
+          if chunk then
+            for _, rock in ipairs(chunk.rocks or {}) do near(rock.entity) end
+          end
+        end
+      end
     end
   end
   return out
@@ -1204,9 +1248,20 @@ function System:spawnMoon (planet, index)
   return moon
 end
 
-function System.ValidateModuleEntry (entry)
-  return type(entry) == 'table' and (entry.type == 'Thruster' or entry.type == 'Turret')
-    and type(entry.index) == 'number' and entry.index >= 1 and entry.index % 1 == 0
+function System.ValidateModuleEntry (entry, shipId)
+  if type(entry) ~= 'table' or (entry.type ~= 'Thruster' and entry.type ~= 'Turret')
+     or type(entry.index) ~= 'number' or entry.index < 1 or entry.index % 1 ~= 0 then
+    return false
+  end
+  if entry.id ~= nil and (type(entry.id) ~= 'string' or type(shipId) ~= 'string'
+      or entry.id ~= StableId.Module(shipId, entry.type, entry.index)) then
+    return false
+  end
+  if entry.equipmentId ~= nil then
+    local equipment = ShipEquipment.Get(entry.equipmentId)
+    if not equipment or equipment.type ~= entry.type then return false end
+  end
+  return true
 end
 
 function System:spawnShip (kind, opts)
@@ -1216,18 +1271,23 @@ function System:spawnShip (kind, opts)
   local def = ShipArchetypes.Get(kind)
   local variant = math.max(1, math.floor(opts.variant or 1))
   local cacheKey = kind .. ':v' .. variant .. ':s' .. tostring(opts.seed or 'default')
-    .. ':z' .. tostring(opts.scale or def.scale) .. ':Type'
+    .. ':z' .. tostring(opts.scale or def.scale) .. ':h' .. tostring(opts.health or 'default')
+    .. ':s' .. tostring(opts.shield or 'default') .. ':t' .. tostring(opts.turrets or 'default')
+    .. ':Type'
   if not self[cacheKey] then
     local seed = opts.seed or self.rng:get31()
     local generator = Gen.Ship[ShipArchetypes.Generator(kind, variant)]
     assert(generator, 'Unknown ship generator for ' .. kind)
     self[cacheKey] = ShipType(seed, generator, opts.scale or def.scale, {
       kind = kind, classId = def.classId, model = def.model,
+      health = opts.health or def.health, shield = opts.shield or def.shield,
+      turrets = opts.turrets or def.turrets,
     })
   end
   local ship = self[cacheKey]:instantiate(opts.shipId)
   ship.shipKind = kind
   ship.shipVariant = variant
+  ship.turretPairs = opts.turrets or def.turrets
   ship.prototypeSeed = opts.seed or self[cacheKey].seed
   ship:setInventoryCapacity(opts.cargo or def.cargo)
   if opts.pos then
@@ -1243,7 +1303,7 @@ function System:spawnShip (kind, opts)
 
   if type(opts.modules) == 'table' then
     for _, entry in ipairs(opts.modules) do
-      if not System.ValidateModuleEntry(entry) then goto continue end
+      if not System.ValidateModuleEntry(entry, ship.stableId) then goto continue end
       local module
       if entry.type == 'Thruster' then
         module = Entities.Thruster()
@@ -1251,6 +1311,9 @@ function System:spawnShip (kind, opts)
       elseif entry.type == 'Turret' then
         module = Entities.Turret()
         module:setScale(2 * ship:getScale())
+      end
+      if module and entry.equipmentId and not ShipEquipment.Apply(module, entry.equipmentId) then
+        module:delete(); goto continue
       end
       if module and not ship:plug(module, entry.index) then module:delete() end
       ::continue::

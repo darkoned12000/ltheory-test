@@ -1,5 +1,7 @@
 local Entity = require('Game.Entity')
 local Seed = require('Game.Seed')
+local ShipEquipment = require('Game.ShipEquipment')
+local SocketType = require('Game.SocketKind')
 
 local mesh
 local meshJet
@@ -17,6 +19,7 @@ Thruster = subclass(Entity, function (self)
 
   self:addRigidBody(true, mesh)
   self:addVisibleMesh(mesh, Material.Debug())
+  ShipEquipment.Ensure(self, SocketType.Thruster)
 
   self.activation = 0
   self.activationT = 0
@@ -32,8 +35,7 @@ Thruster = subclass(Entity, function (self)
 end)
 
 function Thruster:getSocketType ()
-  local SocketType = require('Game.SocketKind')
-return SocketType.Thruster
+  return SocketType.Thruster
 end
 
 function Thruster:render (state)

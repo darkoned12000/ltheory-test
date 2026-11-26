@@ -110,7 +110,7 @@ _G.Event = Event
 local Entity = dofile(root .. '/script/Game/Entity.lua')
 package.loaded['Game.Entity'] = Entity
 for _, name in ipairs({
-  'Actions', 'Assets', 'Children', 'Dispositions', 'Dockable', 'Health', 'Inventory', 'Name', 'Owner', 'Sockets',
+  'Actions', 'Assets', 'Children', 'Credits', 'Dispositions', 'Dockable', 'Health', 'Inventory', 'Name', 'Owner', 'Sockets',
 }) do
   dofile(root .. '/script/Game/Components/' .. name .. '.lua')
 end
@@ -130,6 +130,7 @@ dofile(root .. '/script/Game/Content.lua') -- real economy anchors
 local StableId = require('Game.StableId')
 local SocketType = require('Game.SocketKind')
 local Archetypes = require('Game.ShipArchetypes')
+local ShipEquipment = require('Game.ShipEquipment')
 local Credit = Item.Credit
 
 local function makeController ()
@@ -188,6 +189,8 @@ local function makeShip (id, kind, capacity, pos)
     assert(self.body and child.body, 'fixture detach requires bodies')
     self:removeChild(child)
   end
+  function ship:hasThrustController () return true end
+  function ship:shutdownThrustController () self.thrustShutdown = true end
   return ship
 end
 
@@ -215,11 +218,13 @@ function makeModule (moduleType)
   return module
 end
 
+package.loaded['Game.Entities.Thruster'] = function () return makeModule(SocketType.Thruster) end
+package.loaded['Game.Entities.Turret'] = function () return makeModule(SocketType.Turret) end
 _G.requireAll = function (path)
   if path == 'Game.Entities' then
     return {
-      Thruster = function () return makeModule(SocketType.Thruster) end,
-      Turret = function () return makeModule(SocketType.Turret) end,
+      Thruster = package.loaded['Game.Entities.Thruster'],
+      Turret = package.loaded['Game.Entities.Turret'],
     }
   end
   return {}
@@ -232,6 +237,7 @@ local function makeStation (id, pos, shipyard)
   station:addDockable()
   station:addHealth(10000, 0)
   station:addInventory(1000000)
+  station:addCredits(500000)
   addTransform(station, pos, 800)
   return station
 end
@@ -298,49 +304,51 @@ local function hasLog (needle)
   return false
 end
 
--- Pure policy: hand-derived values use the real Content.lua price anchors.
+-- Pure policy: hand-derived values use the canonical hull/equipment economy.
 local policyShip = makeShip('ship:policy', 'fighter', 25)
 policyShip.npcRole = 'industrial'
 policyShip.health, policyShip.healthMax = 40, 100
-check('repair cost is missing hull times the machine-parts anchor rate',
-  Progression.RepairCost(policyShip) == 360, Progression.RepairCost(policyShip))
-check('refit cost includes one hour of upkeep',
-  Progression.RefitCost(policyShip, SocketType.Thruster, 3600) == 99,
+check('repair cost is the missing fraction of the hull repair allowance',
+  Progression.RepairCost(policyShip) == 1296, Progression.RepairCost(policyShip))
+check('refit cost includes equipment plus one hour of upkeep',
+  Progression.RefitCost(policyShip, SocketType.Thruster, 3600) == 904,
   Progression.RefitCost(policyShip, SocketType.Thruster, 3600))
-check('ship prices follow role hull anchors',
-  Progression.ShipCost(policyShip, 'fighter') == 2400
-  and Progression.ShipCost(policyShip, 'freighter') == 14400
-  and Progression.ShipCost(policyShip, 'industrial') == 36000
-  and Progression.ShipCost(policyShip, 'capital') == 60000)
-check('upkeep accrues by simulated hours', Progression.Upkeep(policyShip, 7200) == 5)
+check('ship prices follow the canonical hull catalog',
+  Progression.ShipCost(policyShip, 'fighter') == 18000
+  and Progression.ShipCost(policyShip, 'freighter') == 55000
+  and Progression.ShipCost(policyShip, 'industrial') == 95000
+  and Progression.ShipCost(policyShip, 'capital') == 280000)
+check('upkeep accrues by simulated hours', Progression.Upkeep(policyShip, 7200) == 8)
 check('upkeep rejects negative elapsed time', Progression.Upkeep(policyShip, -1) == 0)
 check('affordability includes the requested reserve',
   Progression.CanAfford(100, 60, 40) and not Progression.CanAfford(99, 60, 40))
 policyShip.health = 34
 check('repair threshold is strictly below 35 percent hull',
-  Progression.NeedsRepair(policyShip, 1000) and not Progression.NeedsRepair(policyShip, 398))
+  Progression.NeedsRepair(policyShip, 2000) and not Progression.NeedsRepair(policyShip, 1429))
 policyShip.health = 35
-check('repair threshold boundary does not trigger', not Progression.NeedsRepair(policyShip, 1000))
+check('repair threshold boundary does not trigger', not Progression.NeedsRepair(policyShip, 2000))
 local refitPolicyShip = makeShip('ship:refit-policy', 'industrial', 180)
 refitPolicyShip.npcRole = 'industrial'
 refitPolicyShip.health = 40
 addSocket(refitPolicyShip, SocketType.Thruster, 1, false)
-check('refit threshold prefers a missing role module',
-  Progression.NeedsRefit(refitPolicyShip, 1000) and not Progression.NeedsRefit(refitPolicyShip, 131))
+check('empty role socket is filled with Mk I before an upgrade is requested',
+  Progression.NextEquipment(refitPolicyShip, SocketType.Thruster) == 'thruster-mk1'
+  and Progression.NeedsRefit(refitPolicyShip, 1000)
+  and not Progression.NeedsRefit(refitPolicyShip, 918))
 refitPolicyShip.health = 20
-check('refit yields to urgent repair', not Progression.NeedsRefit(refitPolicyShip, 1000))
+check('refit yields to urgent repair', not Progression.NeedsRefit(refitPolicyShip, 5000))
 local buyer = makeShip('ship:buyer', 'fighter', 25)
 buyer.npcRole = 'freighter'
-check('upkeep follows the current hull rather than the desired role', Progression.Upkeep(buyer, 3600) == 3)
+check('upkeep follows the current hull rather than the desired role', Progression.Upkeep(buyer, 3600) == 4)
 check('purchase threshold requires a role upgrade and three times the price',
-  Progression.NeedsShip(buyer, 43200) and not Progression.NeedsShip(buyer, 43199))
+  Progression.NeedsShip(buyer, 165000) and not Progression.NeedsShip(buyer, 164999))
 local matchedBuyer = makeShip('ship:matched-buyer', 'freighter', 300)
 matchedBuyer.npcRole = 'freighter'
 check('matched-role ships can still progress to a capital hull',
   type(Progression.UpgradeShipKind) == 'function'
   and Progression.UpgradeShipKind(matchedBuyer) == 'capital'
-  and Progression.NeedsShip(matchedBuyer, 180000)
-  and not Progression.NeedsShip(matchedBuyer, 179999))
+  and Progression.NeedsShip(matchedBuyer, 840000)
+  and not Progression.NeedsShip(matchedBuyer, 839999))
 local capitalBuyer = makeShip('ship:capital-buyer', 'capital', 400)
 capitalBuyer.npcRole = 'freighter'
 check('capital is a terminal hull rather than a downgrade loop',
@@ -406,9 +414,21 @@ ship:setPos(dockPos)
 step(ship, 1 / 60)
 check('repair waits until docking completes', ship:getParent() == station and ship.health == 40)
 step(ship, 1 / 60)
-check('repair charges the actor and station once', actor:getItemCount(Credit) == 9640
-  and station:getItemCount(Credit) == 360 and repair.paid)
+check('repair charges the actor and station once', actor:getItemCount(Credit) == 8704
+  and station:getItemCount(Credit) == 1296 and repair.paid)
 check('repair does not instantly restore hull', ship.health > 40 and ship.health < 41)
+
+local _, saveRepairStation, saveRepairActor, saveRepairShip = makeFixture()
+saveRepairShip.health = 40
+local saveRepair = Repair(saveRepairStation)
+saveRepairShip:pushAction(saveRepair)
+step(saveRepairShip, 1 / 60)
+local settledForSave = type(Repair.SettleForSave) == 'function'
+  and Repair.SettleForSave(saveRepairShip)
+check('saving settles a paid repair and removes its unsaved action',
+  settledForSave and saveRepair.result == 'cancelled' and #saveRepairShip.actions == 0
+  and saveRepairActor:getItemCount(Credit) == 9999
+  and saveRepairStation:getItemCount(Credit) == 1)
 
 local function repairAfter (dt, frames)
   local _, _, _, testShip = makeFixture()
@@ -432,13 +452,13 @@ check('repair completes over simulation time', completed.health == 100
 check('repair logs start, progress, and completion', hasLog('repair start')
   and hasLog('repair progress') and hasLog('repair complete'))
 
-local _, poorStation, poorActor, poorShip = makeFixture({ credits = 359 })
+local _, poorStation, poorActor, poorShip = makeFixture({ credits = 1295 })
 poorShip.health = 40
 local poorRepair = Repair(poorStation)
 poorShip:pushAction(poorRepair)
 step(poorShip, 1 / 60)
 check('insufficient repair funds fail without charge or healing', poorRepair.result == 'failed'
-  and poorShip.health == 40 and poorActor:getItemCount(Credit) == 359
+  and poorShip.health == 40 and poorActor:getItemCount(Credit) == 1295
   and poorStation:getItemCount(Credit) == 0 and poorShip:getCurrentAction() == nil)
 
 local _, refundStation, refundActor, refundShip = makeFixture()
@@ -446,12 +466,12 @@ refundShip.health = 40
 local refundRepair = Repair(refundStation)
 refundShip:pushAction(refundRepair)
 step(refundShip, 1)
-step(refundShip, 5) -- ten hull points repaired: 60 credits earned
+step(refundShip, 5) -- ten hull points repaired: 216 credits earned
 refundStation:removeDocked(refundShip)
 step(refundShip, 1)
 check('undocking cancels and refunds only unperformed repair', refundRepair.result == 'cancelled'
-  and math.abs(refundShip.health - 50) < 1e-9 and refundActor:getItemCount(Credit) == 9940
-  and refundStation:getItemCount(Credit) == 60 and refundShip:getCurrentAction() == nil)
+  and math.abs(refundShip.health - 50) < 1e-9 and refundActor:getItemCount(Credit) == 9784
+  and refundStation:getItemCount(Credit) == 216 and refundShip:getCurrentAction() == nil)
 local refundBalance = refundActor:getItemCount(Credit)
 refundRepair:onStop(refundShip)
 check('repair cancellation cannot refund twice', refundActor:getItemCount(Credit) == refundBalance)
@@ -475,8 +495,8 @@ step(refitShip, 1 / 60)
 check('refit installs into a free durable slot', refit.result == 'completed'
   and freeSocket.child and freeSocket.child.stableId == 'ship:old:module:Thruster:1'
   and freeSocket.child.moduleIndex == 1)
-check('refit charges module plus upkeep', refitActor:getItemCount(Credit) == 9868
-  and refitStation:getItemCount(Credit) == 132)
+check('refit charges module plus upkeep', refitActor:getItemCount(Credit) == 9081
+  and refitStation:getItemCount(Credit) == 919)
 
 local _, occupiedStation, occupiedActor, occupiedShip = makeFixture()
 local occupiedSocket = addSocket(occupiedShip, SocketType.Turret, 1, true)
@@ -540,6 +560,37 @@ invalidShip:pushAction(invalidRefit)
 step(invalidShip, 1 / 60)
 check('invalid refit type fails safely', invalidRefit.result == 'failed'
   and invalidActor:getItemCount(Credit) == 10000)
+check('failed refit schedules a retry cooldown', invalidShip.npcNextServiceAt ~= nil)
+
+local originalRequireAll = _G.requireAll
+_G.requireAll = function () return {} end
+local _, directStation, directActor, directShip = makeFixture({ credits = 100000 })
+local directSocket = addSocket(directShip, SocketType.Turret, 1, false)
+local directRefit = Refit(directStation, SocketType.Turret, { equipment = 'turret-mk2' })
+directShip:pushAction(directRefit)
+step(directShip, 1 / 60)
+_G.requireAll = originalRequireAll
+check('refit resolves module factories without a dynamic entity-directory scan',
+  directRefit.result == 'completed' and directSocket.child
+  and directSocket.child.equipmentId == 'turret-mk2'
+  and directActor:getItemCount(Credit) == 94600)
+
+local tierSystem, tierStation, tierActor, tierShip = makeFixture({ credits = 100000 })
+local tierSocket = addSocket(tierShip, SocketType.Turret, 1, true)
+ShipEquipment.Apply(tierSocket.child, 'turret-mk1')
+local retainedModuleId = tierSocket.child.stableId
+local tierRefit = Refit(tierStation, SocketType.Turret, {
+  slot = 1, replace = true, equipment = 'turret-mk2',
+})
+tierShip:pushAction(tierRefit)
+step(tierShip, 1 / 60)
+check('selected refit installs real higher-tier weapon stats',
+  tierRefit.result == 'completed' and tierSocket.child.equipmentId == 'turret-mk2'
+  and tierSocket.child.projDamage == 60 and tierSocket.child.projRange == 1200)
+check('selected refit preserves socket identity and charges the tier price',
+  tierSocket.child.stableId == retainedModuleId
+  and tierActor:getItemCount(Credit) == 94600
+  and tierStation:getItemCount(Credit) == 5400)
 
 -- Purchase: cargo preflight, stable identity, ownership and atomic rollback.
 local purchaseSystem, purchaseStation, purchaseActor, purchaseShip = makeFixture({
@@ -564,10 +615,11 @@ check('purchase carries progression cooldowns and undock intent to the new hull'
 check('purchase transfers all cargo', newShip:getItemCount(Item.Iron) == 10
   and purchaseShip:getItemCount(Item.Iron) == 0)
 check('purchase pays station and leaves remaining credits with actor',
-  purchaseActor:getItemCount(Credit) == 85600 and purchaseStation:getItemCount(Credit) == 14400
+  purchaseActor:getItemCount(Credit) == 45000 and purchaseStation:getItemCount(Credit) == 55000
   and newShip:getItemCount(Credit) == 0)
 check('purchase docks the new ship and retires only the old hull', newShip:getParent() == purchaseStation
-  and purchaseShip.deleted and purchaseShip:getParent() == nil and purchaseShip:getOwner() == nil)
+  and purchaseShip.deleted and purchaseShip:getParent() == nil and purchaseShip:getOwner() == nil
+  and purchaseShip.thrustShutdown)
 check('purchase never kills or deletes the actor', not purchaseActor.deleted
   and purchaseActor.deleteCalls == 0 and purchaseActor:getParent() == purchaseSystem
   and purchaseSystem.destroyedCalls == 0)
@@ -622,12 +674,12 @@ check('station payment failure refunds and preserves the old ship', creditFailur
   and creditActor:getItemCount(Credit) == 100000 and creditActor:getControlling() == creditShip
   and liveChildCount(creditSystem) == 2 and not creditShip.deleted)
 
-local poorPurchaseSystem, poorPurchaseStation, poorPurchaseActor, poorPurchaseShip = makeFixture({ credits = 14399 })
+local poorPurchaseSystem, poorPurchaseStation, poorPurchaseActor, poorPurchaseShip = makeFixture({ credits = 54999 })
 local poorPurchase = PurchaseShip(poorPurchaseStation, { kind = 'freighter' })
 poorPurchaseShip:pushAction(poorPurchase)
 step(poorPurchaseShip, 1 / 60)
 check('unaffordable ship purchase does not spawn', poorPurchase.result == 'failed'
-  and poorPurchaseSystem.spawnCalls == 0 and poorPurchaseActor:getItemCount(Credit) == 14399)
+  and poorPurchaseSystem.spawnCalls == 0 and poorPurchaseActor:getItemCount(Credit) == 54999)
 
 local noYardSystem, noYard, noYardActor, noYardShip = makeFixture({ shipyard = false, credits = 100000 })
 local noYardPurchase = PurchaseShip(noYard, { kind = 'freighter' })
@@ -641,11 +693,41 @@ local firstPurchase = PurchaseShip(repeatStation, { kind = 'freighter' })
 repeatShip:pushAction(firstPurchase)
 step(repeatShip, 1 / 60)
 local firstId = repeatActor:getControlling().stableId
-local secondPurchase = PurchaseShip(repeatStation, { kind = 'freighter' })
+local secondPurchase = PurchaseShip(repeatStation, { kind = 'freighter', tradeIn = true })
 repeatActor:getControlling():pushAction(secondPurchase)
 step(repeatActor:getControlling(), 1 / 60)
 check('repeat purchases allocate distinct stable ship ids', secondPurchase.result == 'completed'
   and repeatActor:getControlling().stableId ~= firstId
   and repeatActor:getControlling().stableId == 'ship:npc:test:purchase:2')
+
+local playerSystem, playerStation, playerActor, playerShip = makeFixture({ credits = 0 })
+playerShip:addCredits(100000)
+local playerPurchase = PurchaseShip(playerStation, { kind = 'freighter' })
+playerShip:pushAction(playerPurchase)
+step(playerShip, 1 / 60)
+check('player purchase preserves remaining ship credits on the new hull',
+  playerPurchase.result == 'completed'
+  and playerActor:getControlling():getCredits() == 45000)
+
+local tradeSystem, tradeStation, tradeActor, tradeShip = makeFixture({ credits = 0 })
+tradeShip:addCredits(100000)
+local tradePurchase = PurchaseShip(tradeStation, { kind = 'freighter', tradeIn = true })
+tradeShip:pushAction(tradePurchase)
+step(tradeShip, 1 / 60)
+check('player trade-in discounts the purchase and preserves the balance',
+  tradePurchase.result == 'completed'
+  and tradeActor:getControlling():getCredits() == 51300)
+
+local downSystem, downStation, downActor, downShip = makeFixture({
+  credits = 0, kind = 'capital',
+})
+downShip:addCredits(100000)
+local downPurchase = PurchaseShip(downStation, { kind = 'fighter', tradeIn = true })
+downShip:pushAction(downPurchase)
+step(downShip, 1 / 60)
+check('downgrade trade-in excess is paid instead of silently lost',
+  downPurchase.result == 'completed'
+  and downActor:getControlling():getCredits() == 180000
+  and downStation:getCredits() == 420000)
 
 finish()

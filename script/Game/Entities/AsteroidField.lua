@@ -168,6 +168,10 @@ function AsteroidField:chunkOf (x, y, z)
   return math.floor(x / cs), math.floor(y / cs), math.floor(z / cs)
 end
 
+function AsteroidField:chunkKey (cx, cy, cz)
+  return chunkSalt(cx, cy, cz)
+end
+
 --[[ getFadeBand -- the (near, far) the renderer should use for the curtain.
 
   THE POP. A rock that is born part-way through the fade band appears at that

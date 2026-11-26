@@ -283,6 +283,20 @@ function HUD:drawLock (a)
   UI.DrawEx.Wedge(mx + box, my + box, 18, 18, 0.875, 0.34, bracket)
   UI.DrawEx.Cross(mx + box * 0.5, my + box * 0.5, 4, bracket)
 
+  -- Shield bar for locked targets that carry one.
+  if target.hasShield and target:hasShield() then
+    local ndc = camera:worldToNDC(target:getPos())
+    local ndcMax = max(abs(ndc.x), abs(ndc.y))
+    if ndcMax <= 1.0 and ndc.z > 0 then
+      local ss = camera:ndcToScreen(ndc)
+      local bw, bh = 120, 6
+      local bx, by = ss.x - bw / 2, ss.y - 18
+      local frac = target:getShieldNormalized()
+      UI.DrawEx.Rect(bx, by, bw, bh, Color(0.05, 0.12, 0.20, 0.8 * a))
+      UI.DrawEx.Rect(bx, by, bw * frac, bh, Color(0.25, 0.65, 1.0, a))
+    end
+  end
+
   -- Health bar for the locked target (only if it is damageable)
   if target.health then
     local ndc = camera:worldToNDC(target:getPos())
@@ -600,6 +614,8 @@ function HUD:drawDockPrompt (a)
     if dest and dest ~= '' then
       text = text .. '  --  ' .. dest
     end
+  elseif d and d.shipyard then
+    text = text .. '  [SHIPYARD: REPAIR / REFIT / UPGRADE]'
   end
 
   UI.DrawEx.TextAdditive(
@@ -706,11 +722,12 @@ function HUD:controlTurrets (e)
   local SocketType = require('Game.SocketKind')
 for turret in e:iterSocketsByType(SocketType.Turret) do
     if Config.game.autoTarget and targetPos then
-      turret:aimAtTarget(target, fallback)
+      local solution = turret:aimAtTarget(target, fallback)
+      turret.firing = solution and firing or 0
     else
       turret:aimAt(fallback)
+      turret.firing = firing
     end
-    turret.firing = firing
   end
 end
 

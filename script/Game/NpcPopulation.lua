@@ -1,25 +1,25 @@
 -- Deterministic sector population planning. Engine spawning consumes this plan;
 -- the planner itself is pure so sector contents can be tested without GL.
 
+local ShipArchetypes = require('Game.ShipArchetypes')
+
 local Population = {}
 
+local function role (shipType, organization, jobs, turrets)
+  local def = ShipArchetypes.Get(shipType)
+  return {
+    name = def.name, shipType = shipType, scale = def.scale, cargo = def.cargo,
+    health = def.health, shield = def.shield, turrets = turrets or def.turrets,
+    organization = organization, jobs = jobs,
+  }
+end
+
 Population.Roles = {
-  fighter = {
-    name = 'Fighter', shipType = 'fighter', scale = 4, cargo = 25,
-    organization = 'belt-miners', jobs = { patrol = true },
-  },
-  freighter = {
-    name = 'Freighter', shipType = 'freighter', scale = 28, cargo = 300,
-    organization = 'free-traders', jobs = { transport = true, patrol = true },
-  },
-  industrial = {
-    name = 'Industrial', shipType = 'industrial', scale = 36, cargo = 180,
-    organization = 'belt-miners', jobs = { mine = true, transport = true },
-  },
-  capital = {
-    name = 'Capital', shipType = 'capital', scale = 64, cargo = 400,
-    organization = 'belt-miners', jobs = { mine = true, transport = true, patrol = true },
-  },
+  -- NPC fighters retain their lighter one-pair patrol loadout.
+  fighter = role('fighter', 'belt-miners', { patrol = true }, 1),
+  freighter = role('freighter', 'free-traders', { transport = true, patrol = true }),
+  industrial = role('industrial', 'belt-miners', { mine = true, transport = true }),
+  capital = role('capital', 'belt-miners', { mine = true, transport = true, patrol = true }),
 }
 
 Population.DefaultMix = {

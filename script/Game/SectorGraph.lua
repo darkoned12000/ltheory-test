@@ -368,12 +368,20 @@ function SectorGraph.layout (galaxySeed, radius)
   -- The names and the seeds.
   for i = 0, count - 1 do
     local seed = Sector.seedFor(galaxySeed, i)
+    local serviceRegions = Sector.Region.place(seed, { x = 0, y = 0, z = 0 }, radius)
+    local hasStation = i == 0 or #serviceRegions > 0
+    local hasShipyard = i == 0 -- the main station is the origin sector's yard
+    for _, region in ipairs(serviceRegions) do
+      if region.kind == 'yard' then hasShipyard = true end
+    end
     out[i + 1] = {
       index    = i,
       seed     = seed,
       name     = NameGen.sector(seed),
       center   = placed[i + 1].off,
       radius   = radius,
+      hasStation = hasStation,
+      hasShipyard = hasShipyard,
       -- Which slot on this sector's rim each partner's gate occupies.
       gateSlot = {},
       -- The sectors this one is gated to.

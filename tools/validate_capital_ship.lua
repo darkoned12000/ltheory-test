@@ -54,9 +54,16 @@ dofile(root .. '/script/Game/Components/RigidBody.lua')
 dofile(root .. '/script/Game/Components/RegistryInfo.lua')
 
 -- Components unrelated to scale/mass construction are inert boundaries.
-for _, name in ipairs({ 'addCapacitor', 'addChildren', 'addExplodable', 'addHealth',
+for _, name in ipairs({ 'addCapacitor', 'addChildren', 'addExplodable',
   'addInventory', 'addSockets', 'addVisibleMesh', 'addThrustController' }) do
   Entity[name] = function () end
+end
+function Entity:addHealth (max, rate)
+  self.health, self.healthMax, self.healthRate = max, max, rate
+end
+function Entity:addShield (max, rate, delay)
+  self.shield, self.shieldMax = max, max
+  self.shieldRate, self.shieldDelay = rate, delay
 end
 package.loaded['Game.Material'] = { Metal = function () return {} end }
 
@@ -85,16 +92,25 @@ local function check (name, ok, detail)
   end
 end
 
-local capital = Ship({ mesh = {}, scale = 64, sockets = {} })
+local capital = Ship({ mesh = {}, scale = 64, sockets = {}, health = 150000, shield = 50000 })
 check('capital prototype scale reaches live body', capital:getScale() == 64,
   string.format('scale=%s', tostring(capital:getScale())))
 check('capital radius includes prototype scale', capital:getRadius() == 640,
   string.format('radius=%s', tostring(capital:getRadius())))
 check('capital mass is derived from scaled radius', capital:getMass() == 50 * 640^3,
   string.format('mass=%s', tostring(capital:getMass())))
+check('capital hull has capital-scale health', capital.healthMax >= 150000
+  and capital.health == capital.healthMax,
+  string.format('health=%s', tostring(capital.healthMax)))
+check('capital hull has a capital-scale shield', capital.shieldMax >= 50000
+  and capital.shield == capital.shieldMax,
+  string.format('shield=%s', tostring(capital.shieldMax)))
 
 local fighter = Ship({ mesh = {}, scale = 4, sockets = {} })
 check('fighter prototype scale also reaches live body', fighter:getScale() == 4)
+local armoredFighter = Ship({ mesh = {}, scale = 4, sockets = {}, health = 250 })
+check('explicit prototype health overrides the hull-size default',
+  armoredFighter.healthMax == 250 and armoredFighter.health == 250)
 check('fighter mass is derived from scaled radius', fighter:getMass() == 50 * 40^3)
 local proto = { seed = 42, mesh = {}, scale = 64, sockets = {} }
 local capitalA, capitalB = Ship(proto, 1), Ship(proto, 2)

@@ -5,13 +5,25 @@ local Registry = require('Game.Registry')
 local StableId = require('Game.StableId')
 local Targeting = require('Game.Targeting')
 local Knowledge = require('Game.Knowledge')
+local ShipEquipment = require('Game.ShipEquipment')
 
 local Ship = subclass(Entity, function (self, proto, instanceSerial, stableId)
   self:addActions()
   self:addCapacitor(100, 10)
   self:addChildren()
   self:addExplodable()
-  self:addHealth(100, 10)
+  -- Hull health scales with the prototype's hull size. A capital is a much
+  -- larger target than a fighter; giving every hull 100 HP meant a 40-damage
+  -- pulse killed a 600-unit capital in three shots, before its AI could react.
+  local hullScale = math.max(1, tonumber(proto.scale) or 1)
+  local gameConfig = rawget(_G, 'Config') and Config.game
+  local baseHealth = gameConfig and tonumber(gameConfig.shipHealth) or 100
+  local hullHealth = tonumber(proto.health) or math.max(baseHealth, 25 * hullScale)
+  self:addHealth(hullHealth, 10)
+  if self.addShield then
+    local shieldMax = tonumber(proto.shield) or hullHealth * 0.5
+    self:addShield(shieldMax, shieldMax / 30, 6)
+  end
   self:addInventory(100)
   -- TODO : This will create a duplicate BSP because proto & RigidBody do not
   --        share the same BSP cache. Need unified cache.
@@ -55,7 +67,8 @@ end)
 -- do -- see ThrustController's thrust constants, which are what set it.
 function Ship:getTopSpeed ()
   local cargo = self:hasInventory() and (self:getInventoryCapacity() - self:getInventoryFree()) or 0
-  return Movement.topSpeed(self:getRadius(), cargo, self:getInventoryCapacity())
+  local base = Movement.topSpeed(self:getRadius(), cargo, self:getInventoryCapacity())
+  return base * ShipEquipment.ThrustFactors(self).thrust
 end
 
 -- Targeting for NPC caps (docs/npcwork.md): the ship queries the system for

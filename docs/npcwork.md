@@ -2,17 +2,27 @@
 
 ## Status
 
-- Active branch: `npc-work`. The autonomous fleet/resource/HUD work is committed
-  as `80d18b9`; Phase 1 persistence, NPC sector travel, and the first Phase 2
-  progression slice below remain **uncommitted** until tested and approved.
+- Active branch: `npc-work`. Phase 1 persistence, NPC sector travel, and the
+  first Phase 2 progression slice are committed as `34f6ed6`. The current
+  uncommitted milestone completes the Phase 2 gameplay/services slice and adds
+  the core Phase 3 utility, perception, self-preservation, and combat behaviors.
+- **Phase 2 status:** implementation and focused tests complete; visual/economic
+  approval of repair, refit, purchase, trade-in, upkeep, and save/load remains.
+- **Phase 3 status:** core implementation is present but the phase is **not
+  closed**. Dense-field avoidance still needs tuning, and combat, retreat,
+  regroup, repair, station routing, and sector travel need real-play visual
+  validation. Global pathfinding and broader mission-driven behavior remain
+  future work.
 - NPC ship generation was **never missing**. The problems were prototype,
   scale/distance, lifecycle, targeting, and AI-policy issues.
-- Baseline verification on `npc-work`: `python3 configure.py test` passes,
-  including shader validation and the UI integration smoke test.
-- Final uncommitted verification: all 748 focused NPC/movement/mining/registry/
-  population/radar/progression checks pass; `python3 configure.py test` passes
-  including UI integration; the real save/load round-trip and a 25-second LTheory
-  boot are clean. No new commits have been made.
+- `python3 configure.py test` passes shader validation, region/sector validation,
+  and UI integration. The region/sector validators now include `libphx/script/`
+  on `package.path`, so `ffi.Resource` resolves in headless runs.
+- Focused verification totals 947 checks across NPC lifecycle/persistence,
+  movement, mining, progression, ship equipment/loadout/runtime stats, shields,
+  combat, avoidance, and dock services. The latest full
+  `python3 configure.py test` run passes, including region/sector and UI
+  integration tests; the save/load round-trip also passes.
 - Pinned-seed profiler comparison after removing duplicate NPC Economy updates:
   the original six-capital demo improved from ~4.71 ms to ~3.46 ms (about
   212 → 289 fps). The final eight-ship mixed roster with radar averages ~3.74 ms
@@ -90,7 +100,7 @@ NPC autonomy system.
 replaced in the NPC panel with the same deterministic CPU-projected mesh
 wireframe used by `NodeGraphInspector`.
 
-## Current uncommitted fixes
+## Visibility and lifecycle fixes (committed)
 
 - NPCs now use a distinct cached `Gen.Ship.ShipCapital` prototype at scale 64,
   applied before modules and mass are created.
@@ -247,7 +257,7 @@ still require user visual approval.
   deterministically regenerated brain by stable id; ship-by-ship state and
   tombstones are not yet persisted.
 
-## Phase 1 persistence complete (uncommitted, 2026-11-25)
+## Phase 1 persistence complete (committed `34f6ed6`, 2026-11-25)
 
 - Added canonical `Game.StableId`, structural `Game.RouteKey`, planned NPC ship
   IDs, and a System stable-ID index. Pooled mine templates refresh route keys on
@@ -290,7 +300,7 @@ still require user visual approval.
   refreshed after final field translation, then tombstones/deposits are applied.
   Legacy unfingerprinted asteroid overlays fail closed.
 
-### NPC sector travel and Phase 2 progression (uncommitted, 2026-11-25)
+### NPC sector travel and Phase 2 progression (committed `34f6ed6`, 2026-11-25)
 
 - NPCs route to the correct wormhole (including multi-hop mission routes) and
   approach through the existing `TravelTo`/`Wormhole` path. Gate entry puts the
@@ -323,7 +333,79 @@ still require user visual approval.
   and missions remain future work; current travel is exploration or a future
   `travelTargetSector` assignment.
 
-### Docking UI hardening (uncommitted, 2026-11-25)
+### Phase 3 utility, perception, and self-preservation (uncommitted; core implemented, phase open)
+
+- `NpcPolicy.score` blends payout/travel with deterministic seeded personality,
+  hull-vs-risk, capacitor reserve, cargo load, role/faction duty, endpoint
+  relationship, route novelty/cooldowns, and continuity with the committed job.
+  Personality is derived from the saved policy seed.
+- `Game.NpcPerception` caches short-lived nearby resources, gates, stations,
+  planets, and ships. Relationships include organization/disposition and a
+  recent damage source; the cache is ephemeral and rebuilt after load.
+- Predicted collisions push a temporary `Avoid` action above the current route.
+  It picks a deterministic side, steers past the obstacle, then pops so the
+  underlying job resumes. `DockAt` excludes its intended berth; this remains
+  local avoidance, not global pathfinding.
+- Cargo value lowers the retreat threshold, moderated by the pilot's risk
+  tolerance. Hopeless defense assignments are declined/released based on hull,
+  weapons, and nearby armed allies. Real combat threats interrupt active jobs
+  with a leashed `Defend` action and preserve the job below it.
+- When `Flee` completes, `Regroup` rejoins a nearby ally at a safe standoff.
+  Critical-hull `Repair` can preempt a job; after repair, `Undock` restores the
+  committed job.
+- Peer-review hardening: attack/dock/defend targets must have a live rigid body
+  and parent before transforms are read; terminal directives are pruned;
+  cancelled invalid jobs record a policy outcome; Avoid does not recompute or
+  overwrite state while its own action is active; hopeless-defense cleanup no
+  longer removes unrelated actions; and NPC perception uses a bounded system
+  spatial query instead of scanning every streamed asteroid. Think caches the
+  action module and keeps per-asset tables keyed weakly.
+- Tunables include `npcAvoidance*`, `npcPerception*`, `npcCargoProtectionValue`,
+  `npcRegroup*`, and `npcDefense*` under `Config.game`.
+- Ships now have regenerating shields in front of hull health. Role hull/shield
+  values are fighter 2,500/2,500, freighter 20,000/15,000, industrial
+  40,000/25,000, and capital 150,000/50,000; the player's fighter uses the same
+  fighter-scale values. Shield state is saved/restored and shown in Target Info
+  and the locked-target HUD bar. Retreat is gated by role and relative combat
+  strength: hull threshold, accumulated damage as a fraction of maximum hull,
+  and overmatch by the attacker. A capital with guns ignores a single fighter
+  hit and returns fire; fragile/non-combat hulls still withdraw after sustained
+  damage. A qualifying hull hit immediately pushes `Flee` inside the damage
+  handler, before the next AI tick; shield hits still register the attacker for
+  retaliation without counting as hull damage.
+- Combat power now consumes actual installed weapon DPS, range/projectile speed,
+  hull/shield state, and capacitor reserve instead of turret count alone.
+  Thruster/turret equipment tiers therefore change both real combat and AI threat
+  assessment. NPC roles mount different turret counts (fighter/freighter 1 pair,
+  industrial 2, capital 3), so capitals actually bring more guns to an engagement.
+  Projectiles snapshot their damage at firing, and firing requires a valid
+  in-range lead solution. Combat-capable NPCs remember the attacker and can
+  retaliate with `Attack` after retreating; non-combat hulls flee/regroup instead.
+- Explosion particles now scale in count, sprite size, debris speed, and lifetime
+  with hull scale. A capital no longer produces the same tiny burst as a fighter;
+  lethal hull damage is covered by an explosion-emission regression test.
+- The dock screen now has a **SHIP SERVICES** tab at shipyards: repair hull and
+  shields, install real Mk I–III thruster/turret upgrades, choose from all four
+  hulls, and apply condition-adjusted trade-in. A shared progression wallet
+  supports NPC actor credits and the human player's ship credits with atomic
+  payment/refund. Player purchases preserve residual credits and restore the
+  purchased hull/prototype/capacity/equipment/purchase serial on load.
+- NPC service selection now validates station capabilities. Refits and purchases
+  require a real shipyard; repairs and market needs require a usable station.
+  Failed services apply a retry cooldown instead of logging/retrying every frame.
+  If no suitable local station exists, NPCs route through the sector gate graph
+  to the nearest station/shipyard; idle carriers with goods likewise route to a
+  market. Service destination/retry state persists and arrival resumes service
+  selection immediately.
+- Focused coverage: policy — 26, jobs — 58, safety — 39, cooperation — 44,
+  travel — 16, perception — 11, Avoid — 7, Defend — 11, Regroup — 5,
+  progression — 67, save — 56, phase-one roster — 29. Shield (6), explosion FX
+  (6), progression wallet (6), dock services (14), ship equipment (13),
+  equipment runtime (10), ship loadout (7), and Phase 2 services (13) add focused
+  coverage. In-game dense-field, combat, repair, routing, and travel behavior
+  still needs visual approval and balance tuning.
+
+### Docking UI hardening (committed `34f6ed6`, 2026-11-25)
 
 - `DockAt` and `Undock` synchronize the station screen immediately through the
   app, rather than waiting solely on the next-frame watcher.
@@ -340,20 +422,20 @@ Tests added and passing:
 - `tools/validate_npc_lifecycle.lua` — 61 checks, including one-update-per-frame,
   target cleanup, ownership transfer, nested death cleanup, and social registry
   lifecycle.
-- `tools/validate_npc_policy.lua` — 15 checks.
-- `tools/validate_npc_jobs.lua` — 52 checks, including cloned assignments,
+- `tools/validate_npc_policy.lua` — 26 checks.
+- `tools/validate_npc_jobs.lua` — 58 checks, including cloned assignments,
   completion/cancellation memory, damage-driven job preemption, and pending-data
   safety/fingerprint handling.
-- `tools/validate_npc_safety.lua` — 20 checks.
-- `tools/validate_npc_cooperation.lua` — 23 checks.
+- `tools/validate_npc_safety.lua` — 39 checks.
+- `tools/validate_npc_cooperation.lua` — 44 checks.
 - `tools/validate_npc_communication.lua` — 13 checks.
 - `tools/validate_npc_trade.lua` — 10 checks.
-- `tools/validate_npc_save.lua` — 46 checks.
+- `tools/validate_npc_save.lua` — 56 checks.
 - `tools/validate_npc_actions.lua` — 16 checks.
 - `tools/validate_control_delta.lua` — 6 checks.
 - `tools/validate_camera_bracket.lua` — 4 checks.
 - `tools/validate_hud_lifecycle.lua` — 2 checks.
-- `tools/validate_docking.lua` — 14 checks.
+- `tools/validate_docking.lua` — 15 checks.
 - `tools/validate_cargo.lua` — 9 checks.
 - `tools/validate_deposits.lua` — 12 checks.
 - `tools/validate_stable_id.lua` — 32 checks.
@@ -361,9 +443,13 @@ Tests added and passing:
 - `tools/validate_tombstones.lua` — 10 checks.
 - `tools/validate_asteroid_tombstones.lua` — 4 checks.
 - `tools/validate_asteroid_fingerprints.lua` — 14 checks.
-- `tools/validate_phase1_roster.lua` — 28 checks.
-- `tools/validate_npc_travel.lua` — 10 checks.
-- `tools/validate_npc_progression.lua` — 59 checks.
+- `tools/validate_phase1_roster.lua` — 29 checks.
+- `tools/validate_npc_travel.lua` — 16 checks.
+- `tools/validate_npc_perception.lua` — 11 checks.
+- `tools/validate_npc_avoid.lua` — 7 checks.
+- `tools/validate_npc_defend.lua` — 11 checks.
+- `tools/validate_npc_regroup.lua` — 5 checks.
+- `tools/validate_npc_progression.lua` — 67 checks.
 - `tools/validate_knowledge.lua` — 14 checks.
 - `tools/validate_startup_field.lua` — 11 checks.
 - `tools/validate_player_mining.lua` — 33 checks.
@@ -371,44 +457,56 @@ Tests added and passing:
 - `tools/validate_scan_action.lua` — 10 checks.
 - `tools/validate_scan_effect.lua` — 8 checks.
 - `tools/validate_npc_scanning.lua` — 7 checks.
-- `tools/validate_npc_population.lua` — 22 checks.
+- `tools/validate_npc_population.lua` — 24 checks.
 - `tools/validate_patrol_action.lua` — 5 checks.
 - `tools/validate_ship_archetypes.lua` — 14 checks.
 - `tools/validate_ship_generator_profile.lua` — 4 checks.
 - `tools/validate_ship_type_fallback.lua` — 3 checks.
 - `tools/validate_radar.lua` — 19 checks.
-- `tools/validate_target_info.lua` — 16 checks.
+- `tools/validate_target_info.lua` — 18 checks.
 - `tools/validate_wormhole_targeting.lua` — 13 checks.
 - `tools/validate_registry_scanner.lua` — 37 checks.
 - `tools/validate_mining_beam.lua` — 12 checks.
 - `tools/validate_npc_panel.lua` — 4 checks.
-- `tools/validate_capital_ship.lua` — 9 checks.
+- `tools/validate_capital_ship.lua` — 12 checks.
+- `tools/validate_shield.lua` — 6 checks.
+- `tools/validate_explosion_fx.lua` — 6 checks.
+- `tools/validate_progression_wallet.lua` — 6 checks.
+- `tools/validate_dock_services.lua` — 14 checks.
+- `tools/validate_ship_equipment.lua` — 13 checks.
+- `tools/validate_equipment_runtime.lua` — 10 checks.
+- `tools/validate_ship_loadout.lua` — 7 checks.
+- `tools/validate_phase2_services.lua` — 13 checks.
 - `tools/validate_startup_placement.lua` — 8 checks.
 
-Phase 1 is complete. NPC gate travel/sector holds and the first Phase 2
-repair/refit/purchase/upkeep slice are implemented. Remaining work includes
-cross-sector market contracts, player-facing comms UI, salvage/gas harvesting,
-escort/rescue cooperation, and missions. Cooperation covers shared defense only.
-World-space visibility, travel, progression, and combat behavior still need the
-user's visual approval in a real play session.
+Phase 1 is complete. NPC gate travel/sector holds are implemented and tested.
+The current uncommitted work completes the Phase 2 ship-progression/services
+slice and implements the core Phase 3 autonomy/combat behaviors, but Phase 3 is
+not closed: dense-field tuning and real-play validation remain. Later work still
+includes cross-sector market contracts, player-facing comms UI, salvage/gas
+harvesting, escort/rescue cooperation, and missions. Cooperation currently covers
+shared defense only.
 
 ## Next steps (NPC standpoint)
 
-1. **Cross-sector contracts.** Generate deterministic destination-market work
+1. **Phase 3 tuning and visual sign-off.** Validate dense-field avoidance,
+   combat/retaliation, flee/regroup/defend, repair, station routing, and sector
+   travel in a real play session; tune thresholds and performance from results.
+2. **Phase 2 visual/economic sign-off.** Approve repair/refit/purchase/trade-in
+   pricing, upkeep, module upgrades, and the full mine → sell → service loop.
+3. **Cross-sector contracts.** Generate deterministic destination-market work
    so `travelTargetSector` is mission-driven rather than exploration-only.
-2. **Local perception and avoidance.** Add obstacle/avoidance steering, regroup,
-   and non-hostile combat readability; validate flee/attack/travel visually.
-3. **Cooperation beyond shared defense.** Escort, rescue, miner protection,
+4. **Cooperation beyond shared defense.** Escort, rescue, miner protection,
    pooled contracts, and shared credit/reputation using the existing directive
    and communication buses.
-4. **Player-facing communication.** Hails, mission offers, threat warnings, and
+5. **Player-facing communication.** Hails, mission offers, threat warnings, and
    discovery reports built on `Game.Communication`.
-5. **Salvage and gas harvesting.** Persistent wreck yields/forensics and
+6. **Salvage and gas harvesting.** Persistent wreck yields/forensics and
    equipment-gated `Helium3` capture, then let policy choose among mining,
    salvage, trading, and harvesting.
-6. **Missions and long-term progression.** Faction/player contracts, reputation,
+7. **Missions and long-term progression.** Faction/player contracts, reputation,
    unlocks, and recurring relationships.
-7. **Ship Generator workflow.** Rebuild/preview/export controls and direct custom
+8. **Ship Generator workflow.** Rebuild/preview/export controls and direct custom
    hull assignment; slider changes currently do not invalidate cached prototypes.
 
 ## Ship Generator tool status
@@ -483,13 +581,13 @@ Implemented foundations now available:
 Still missing or incomplete:
 
 - cross-sector market contracts and mission-driven route selection;
-- player-facing repair/refit/shipyard UI for the human player;
 - player-facing communication UI;
 - wreck salvage and nebula harvesting actions;
 - escort/rescue cooperation beyond shared defense;
-- robust local avoidance, repair/regroup behavior, and visual combat approval.
+- dense-field avoidance tuning and visual combat/travel/repair approval;
+  global pathfinding and broader mission-driven goals remain.
 
-### Phase status (2026-11-25)
+### Phase status (2026-11-26)
 
 - **Phase 0 — complete:** visibility, targeting, lifecycle, projectile, and
   movement regressions are covered; real boot and UI integration pass.
@@ -498,12 +596,18 @@ Still missing or incomplete:
   routes, simulation time, saved sector, ScannerDB/safety/knowledge memory,
   fingerprinted asteroid overlays, bounded tombstones, and last-ship actor
   retirement are implemented and tested.
-- **Phase 2 — first slice complete:** normal-speed repair/refit/purchase/upkeep,
-  role progression policy, atomic payments, cargo transfer, and purchase serial
-  persistence are implemented and tested.
-- **Phase 3 — first slice complete:** utility, route memory, cooldowns,
-  commitment, patrol, and damage-driven flee exist; avoidance/repair/regroup and
-  broader perception remain.
+- **Phase 2 — implementation complete, visual/economic sign-off pending:** canonical
+  four-hull and equipment catalogs, real thruster/turret tiers, normal-speed
+  repair/refit/purchase/upkeep, role progression policy, atomic payments,
+  condition-adjusted trade-in, cargo/credit transfer, purchase serial and
+  equipment persistence, and a player-selectable shipyard catalog are implemented
+  and tested.
+- **Phase 3 — core implementation complete, phase open:** multidimensional
+  utility, local perception, Avoid/Flee/Repair/Regroup/Defend behaviors,
+  damage/cargo-aware self-preservation, hopeless-fight avoidance, job
+  interruption, route memory, and station-service routing are implemented and
+  covered. The phase is not closed: dense-field performance/tuning and in-game
+  combat/travel/repair/routing validation remain.
 - **Phase 4 — shared defense only:** directives, capacity limits, and
   organization standing exist; escort/rescue/contracts remain.
 - **Phase 5 — backend complete:** ranged addressed/broadcast messages, TTL,
@@ -553,6 +657,30 @@ Make wealth change what the NPC can do, not just its score:
 - Add upkeep costs so self-preservation and profit both influence decisions.
 - Acceptance: an NPC can mine → sell → repair/upgrade → buy a better ship →
   take on more profitable or dangerous work.
+
+### Phase 2 implementation notes (2026-11-26)
+
+The canonical hull catalog is Fighter (18,000 CR), Freighter (55,000 CR),
+Industrial (95,000 CR), and Capital (280,000 CR). Full repairs cost 12%, 15%,
+18%, and 20% of hull value respectively; upkeep is 0.02% of hull value per
+simulated hour. Trade-in is 35% of hull value adjusted by average hull/shield
+condition. Buying replaces the current hull, applies trade-in as a discount,
+and returns any excess on a downgrade; there is no sell-last-hull state.
+
+Thrusters and pulse turrets each have Mk I–III definitions. Thruster tiers
+change force and torque; turret tiers change per-projectile damage, range, and
+speed. NPC combat power consumes actual installed DPS. Module rows persist
+`equipmentId` additively, old saves default to Mk I, and malformed/wrong-type
+IDs fail closed. Player purchases preserve residual credits and restore the
+purchased hull/prototype/capacity/modules/purchase serial on load. Actual turret
+layout and upkeep debt/partial-hour progress persist additively; legacy snapshots
+use the historical two-pair layout. Saving settles paid unfinished repairs
+through the normal refund path instead of losing their prepayment. Refits only
+select real shipyards, service failures back off instead of retrying every
+frame, and NPCs missing a required local station/shipyard route through the gate
+graph to the nearest suitable sector. Service destination/retry state persists,
+and arrival resumes service selection immediately. Idle carriers with goods
+also route to a market when their current sector has none.
 
 ### Phase 3 — Utility goals, memory, and self-preservation
 
@@ -626,22 +754,24 @@ Replace “highest payout every time” with a utility scheduler:
 1. ✅ Real capital ships are visible and move correctly.
 2. ✅ J/K/U, targeting info, and firing are stable.
 3. ✅ NPCs choose among several economy jobs without repeating one route.
-4. ◐ Damage-driven flee is implemented; robust collision avoidance, repair
-   seeking, and regroup remain.
+4. ◐ Damage-driven flee, local avoidance, repair seeking, and regroup are
+   implemented; dense-field behavior still needs visual approval.
 5. ◐ Two NPCs can cooperate on shared defense; escort/rescue remain.
 
 The core “NPC as player” architecture is proven. Durable ships, sector travel,
-and the first progression slice are implemented; the next milestone is
-mission-driven cross-sector work and broader social gameplay.
+the Phase 2 progression/services slice, and core Phase 3 autonomy are implemented.
+The next milestone is Phase 3 tuning/visual validation, followed by mission-driven
+cross-sector work and broader social gameplay.
 
 ### Execution order for `npc-work`
 
 1. **Phase 6 travel/streaming:** complete; cross-sector market contracts remain.
-2. **Phase 2 progression:** first slice complete; human-facing shipyard UI remains.
-3. **Phase 3 completion:** local avoidance, regroup, and visual combat/travel/
-   progression approval.
-4. Then escort/rescue cooperation, player comms, salvage/gas harvesting, and
-   missions as each slice is tested.
+2. **Phase 2 progression:** implementation and focused tests complete; visual and
+   economic repair/refit/purchase/trade-in approval remains.
+3. **Phase 3:** core implementation is present; tune dense-field avoidance and
+   get visual combat/travel/repair/station-routing approval before closing it.
+4. Then cross-sector contracts, escort/rescue cooperation, player comms,
+   salvage/gas harvesting, and missions as each slice is tested.
 
 Each completed slice must update this document with:
 - what changed;
@@ -654,8 +784,9 @@ Each completed slice must update this document with:
 - NPC caps are real ships using the same `Ship` archetype as the player.
 - Procedural generation, rendering, physics, actions, economy, and wormholes
   already exist.
-- Identity/lifecycle, utility policy, durable ships, sector travel, first-slice
-  progression, shared defense, and communication foundations now exist; the
-  remaining work is **cross-sector contracts and broader social gameplay**.
+- Identity/lifecycle, utility policy, durable ships, sector travel, Phase 2
+  progression/services, core Phase 3 autonomy, shared defense, and communication
+  foundations now exist. Remaining work is **Phase 3 tuning/visual validation,
+  cross-sector contracts, and broader social gameplay**.
 - Generic targeting for asteroids/stations/factories is implemented and remains
   entity-generic.

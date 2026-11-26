@@ -4,25 +4,25 @@ The GL/GLSL 4.6 core ladder, the FMOD→miniaudio audio swap, and the library-cu
 
 **This file is the ONLY tracker.** The finished design and implementation records live in `docs/` (`docs/ltheory-planets.md`, `docs/procedural-space-environment.md`, `docs/ssao-gtao-implementation.md`, `docs/fog-nebula-implementation.md`, `docs/multithreading.md`, `docs/debug-panel-update.md`, `docs/SDL_Migration.md`, `docs/ltheory-node-ui.md`, `docs/ltheory-ui-gui-research.md`) — those are the *why*, and they stay exactly as they were written. Anything still open is listed **here**, so nothing hides in a 165 KB file.
 
-## Open (genuinely remaining, as of 2026-11-25)
+## Open (genuinely remaining, as of 2026-11-26)
 The roadmap above is largely complete. What is actually still unimplemented:
 
 1. **Graphics-options parity (#14)** — motion blur, shadow-quality master + PCF radius, SSR, anamorphic lens flares, AMD CAS. (FXAA/SMAA already shipped via `postfx.fxaa`.)
 2. **Economy's last mile** — energy cells have no use (ship capacitor not wired, no upgrades); old game's **market escrow** (per-owner storage lockers, midpoint settlement) not ported (current port does instant trades).
 3. **Three SpaceField channels with no consumer** — `starVisibility` (medium's extinction of stars), `turbulence` (plume warp), `radiation` (region hazard).
 4. **Gas giants (W7d) + atmosphere entry/landing (W7e)** — explicitly deferred 2026-10-14; design in `docs/ltheory-planets.md` §11.3.
-5. **Save format phase 2** — market/belt state and missions. Phase 1 NPC actors, authoritative ship/module rosters, policy/jobs, simulation time, sector, ScannerDB/safety/knowledge memory, fingerprinted deposits, bounded tombstones, sector transit/holds, and purchase serials are now saved; see `docs/npcwork.md`.
+5. **Save format phase 2** — market/belt state and missions. Phase 1 NPC actors, authoritative ship/module rosters, policy/jobs, simulation time, sector, ScannerDB/safety/knowledge memory, fingerprinted deposits, bounded tombstones, sector transit/holds, purchase serials, equipment tiers, and purchased player hull identity are now saved; see `docs/npcwork.md`.
 6. **Procedural content (#7/#8)** — L-system stations and biome terrain. The mixed procedural NPC fleet, main menu, and settings screens are implemented on `npc-work` (pending approval).
-7. **NPC progression and social gameplay** — cross-sector market contracts, human-facing shipyard UI, player comms, escort/rescue cooperation, wreck salvage, gas harvesting, and missions. Normal-speed NPC gate travel/sector holds and the first repair/refit/purchase/upkeep slice are implemented on `npc-work`; see `docs/npcwork.md` → “Next steps”.
+7. **NPC progression and social gameplay** — cross-sector market contracts, player comms, escort/rescue cooperation, wreck salvage, gas harvesting, and missions. Phase 1 is committed as `34f6ed6`; Phase 2 implementation and Phase 3 combat/utility work are uncommitted pending visual sign-off.
 
-## Completed through `80d18b9` (2026-11-24)
+## Baseline through `34f6ed6` and current verification (2026-11-25/26)
 - **Mixed autonomous NPC fleet** — deterministic fighters, freighters, industrials, and a capital; role-specific procedural hulls, scale/mass/cargo, visible engine trails, real thrust-based movement, startup placement, and sector-roster reconciliation.
 - **NPC identity, policy, and lifecycle** — stable NPC registry/IDs, one simulation clock, route-aware utility and memory, cloned committed jobs, cooldowns, patrols, damage-driven flee, shared defense directives, and ranged organization communication. Deleted/docked actors and target locks clean up correctly. Phase 1 adds stable ship IDs, structural route keys, ship physical/cargo snapshots, policy/cooldown persistence, active-job checkpoints, saved sector/time, and bounded tombstones with spawn suppression.
 - **Resource gameplay** — 5–10 second scans, directional spectrum, persistent per-pilot ScannerDB records, active-brake mining, finite asteroid deposits randomized deterministically from **120–5,000 units** (size-weighted), remaining-deposit display, stream-reload persistence, and save/load persistence.
 - **Flight/dock HUD hardening** — ray/sphere reticle targeting, stable close-range brackets, real mesh previews, cargo/extraction readouts, radar category filters and range labels, safe dock/undock physics, per-frame input edges, and HUD visibility during scan/mine/move actions.
-- **Verification** — 748 focused checks plus the full `configure.py test` suite and UI integration pass; real boot and save/load round-trip are clean. Full implementation record and remaining limitations: `docs/npcwork.md`.
+- **Verification** — 947 focused NPC/movement/mining/registry/progression checks; `python3 configure.py test` passes, including region, sector, and UI integration validation. Coverage includes shields, class-scale hull/weapon balance, explosion scaling, canonical hull/equipment data, live module stats, shipyard catalog/trade-in, utility, self-preservation, interruption, local perception, Avoid, point-blank combat, Defend, and Regroup; see `docs/npcwork.md`.
 
-## Phase 1 persistence complete (uncommitted, 2026-11-25)
+## Phase 1 persistence complete (committed `34f6ed6`, 2026-11-25)
 - Stable structural IDs and route keys; planned NPC ship IDs are now used.
 - Ship-by-ship transform/hull/capacitor/cargo/dock snapshots, policy memory and
   cooldowns, active-job checkpoints, simulation time, and saved sector index.
@@ -39,7 +39,7 @@ The roadmap above is largely complete. What is actually still unimplemented:
   startup fingerprints are finalized after field placement. Human/NPC docking,
   string policy seeds, and malformed additive payloads restore fail-closed.
 
-## NPC travel + Phase 2 first slice (uncommitted, 2026-11-25)
+## NPC travel + Phase 2 first slice (committed `34f6ed6`, 2026-11-25)
 - Correct-gate routing and normal-speed `TravelTo` approach; no NPC-only time
   scale or automatic boost. Gate entry uses persistent sector transit without
   moving the player's sector.
@@ -50,7 +50,40 @@ The roadmap above is largely complete. What is actually still unimplemented:
 - Normal-speed repair/refit/purchase actions, hourly upkeep/debt, atomic payments,
   durable module slots, cargo transfer, role-to-capital progression, and saved
   purchase serials.
-- Cross-sector market contracts/missions and human-facing shipyard UI remain.
+- Cross-sector market contracts/missions remain; player-facing shipyard services
+  now expose repair, refit, and hull purchase.
+
+## Phase 2 completion (uncommitted; visual/economic sign-off pending)
+- Canonical four-hull catalog with explicit prices, repair allowances/times, and
+  shared NPC population stats; player-selectable shipyard rows replace the old
+  single upgrade button.
+- Three real tiers each for thrusters and pulse turrets. Installed equipment
+  changes movement force/torque, projectile damage/range/speed, NPC combat power,
+  and survives save/load additively under `SAVE_VERSION = 2`.
+- Condition-adjusted trade-in discounts purchases and returns excess on downgrades;
+  player credit balances move to the replacement hull, station payouts/refunds are
+  validated, and cargo/control/stable IDs remain atomic.
+- Purchased player hull identity, prototype, capacity, equipment, and purchase
+  serial restore correctly; stale player assets are cleared and the startup RNG
+  sequence stays deterministic.
+- NPC station services validate capabilities, back off after failures, and route
+  through the sector gate graph when no local station/shipyard can satisfy the
+  need; service routing/retry state survives save/load.
+
+## Phase 3 core implementation (uncommitted; phase open)
+- Utility weights profit/travel against seeded personality, risk/hull, capacitor,
+  cargo, role/faction duty, endpoint relationships, novelty, and commitments.
+- Local perception classifies resources, gates, stations, planets, allies, and
+  threats; temporary Avoid, Flee, Repair, Regroup, and leashed Defend behavior
+  preserves interrupted job stacks.
+- Hopeless defense assignments are declined/released; critical repair can
+  preempt work and then undock back into the saved job.
+- Ships now have regenerating shields and class-scale hull/shield values
+  (capital 150,000/50,000); combat power consumes installed weapon DPS and
+  equipment tiers, and capitals mount more guns than fighters. Explosion effects
+  scale with hull size.
+- Phase 3 remains open: dense-field performance/tuning and in-game
+  avoidance/combat/repair/station-routing validation remain. See `docs/npcwork.md`.
 
 ## Completed (recent, 2026-10-27)
 - **cascadedmaps merged to main** — single-pass CSM box culling + cached/pooled economy mining jobs (commit `bd7d5e0`).

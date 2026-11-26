@@ -44,8 +44,10 @@ local Item = require('Game.Item')
 local NpcPolicy = require('Game.NpcPolicy')
 local RouteKey = require('Game.RouteKey')
 local ScannerDB = require('Game.ScannerDB')
+local ShipArchetypes = require('Game.ShipArchetypes')
 local NpcSafety = require('Game.NpcSafety')
 local Knowledge = require('Game.Knowledge')
+local DockService = require('Game.DockService')
 
 local SaveGame = {}
 
@@ -125,7 +127,8 @@ local function captureModules (ship)
   for _, socket in ipairs(ship.sockets or {}) do
     if socket.child then
       modules[#modules + 1] = { id = socket.moduleId, type = socket.type,
-        index = socket.typeIndex }
+        index = socket.typeIndex,
+        equipmentId = socket.child.equipmentId or nil }
     end
   end
   table.sort(modules, function (a, b)
@@ -174,17 +177,53 @@ local function captureKnowledge (ship)
   return Knowledge.Capture(state)
 end
 
+local function savedTurretPairs (snapshot)
+  local value = finite(snapshot.turrets)
+  if value and value >= 0 then return math.floor(value) end
+  local legacy = Config and Config.gen and tonumber(Config.gen.nTurrets) or 2
+  return math.max(0, math.floor(legacy))
+end
+
+function SaveGame.PlayerSpawnOptions (data)
+  local snapshot = type(data) == 'table' and type(data.playerShip) == 'table'
+    and data.playerShip or nil
+  if not snapshot then return { kind = 'fighter', shipId = 'ship:player' } end
+  local kind = type(snapshot.kind) == 'string' and ShipArchetypes.Defs[snapshot.kind]
+    and snapshot.kind or 'fighter'
+  local opts = {
+    kind = kind,
+    shipId = type(snapshot.id) == 'string' and snapshot.id ~= '' and snapshot.id or 'ship:player',
+    modules = type(snapshot.modules) == 'table' and snapshot.modules or nil,
+    turrets = savedTurretPairs(snapshot),
+  }
+  local seed = finite(snapshot.seed)
+  if seed then opts.seed = seed end
+  local variant = finite(snapshot.variant)
+  if variant and variant >= 1 then opts.variant = math.floor(variant) end
+  local scale = finite(snapshot.scale)
+  if scale and scale > 0 then opts.scale = scale end
+  local capacity = finite(snapshot.capacity)
+  if capacity and capacity > 0 then opts.cargo = capacity end
+  return opts
+end
+
 function SaveGame.CaptureShip (ship)
   if not ship then return nil end
+  DockService.SettlePaidRepairs(ship)
   local id = ship.stableId or (ship.getRegistryId and ship:getRegistryId())
   if not id or id == '' then return nil end
   local rot = ship.getRot and ship:getRot()
   local dockedAt = ship.getParent and ship:getParent()
+  local turretSockets = 0
+  for _, socket in ipairs(ship.sockets or {}) do
+    if socket.type == 'Turret' then turretSockets = turretSockets + 1 end
+  end
   return {
     id = id,
     kind = ship.shipKind or ship.npcRole,
     role = ship.npcRole,
     variant = ship.shipVariant,
+    turrets = ship.turretPairs or math.ceil(turretSockets / 2),
     seed = ship.prototypeSeed,
     scale = ship.getScale and ship:getScale() or nil,
     capacity = ship.hasInventory and ship:hasInventory() and ship:getInventoryCapacity() or nil,
@@ -197,12 +236,21 @@ function SaveGame.CaptureShip (ship)
       value = ship:getHealth(), max = ship.healthMax, rate = ship.healthRate } or nil,
     charge = ship.hasCharge and ship:hasCharge() and {
       value = ship:getCharge(), max = ship:getChargeMax(), rate = ship.chargeRate } or nil,
+    shield = ship.hasShield and ship:hasShield() and {
+      value = ship:getShield(), max = ship:getShieldMax(), rate = ship.shieldRate,
+      delay = ship.shieldDelay } or nil,
     items = captureItems(ship),
     modules = captureModules(ship),
     dockedAt = dockedAt and RouteKey.Entity(dockedAt) or nil,
     policy = ship.npcPolicy and NpcPolicy.Capture(ship.npcPolicy) or nil,
     safety = ship.npcSafety and NpcSafety.Capture(ship.npcSafety) or nil,
     knowledge = captureKnowledge(ship),
+    npcUpkeepDebt = tonumber(ship.npcUpkeepDebt),
+    npcUpkeepElapsed = tonumber(ship.npcUpkeepElapsed),
+    travelTargetSector = tonumber(ship.travelTargetSector),
+    npcServiceNeed = ship.npcServiceNeed,
+    npcNextServiceAt = tonumber(ship.npcNextServiceAt),
+    npcNextTravelAt = tonumber(ship.npcNextTravelAt),
     job = SaveGame.CaptureJob(ship) or ship.pendingJob,
   }
 end
@@ -216,6 +264,19 @@ function SaveGame.RestoreShip (ship, data)
     ship.npcRole = data.kind -- legacy snapshots only stored the hull kind
   end
   if type(data.variant) == 'number' then ship.shipVariant = data.variant end
+  local turrets = finite(data.turrets)
+  if turrets and turrets >= 0 then ship.turretPairs = math.floor(turrets) end
+  local upkeepDebt, upkeepElapsed = finite(data.npcUpkeepDebt), finite(data.npcUpkeepElapsed)
+  if upkeepDebt and upkeepDebt >= 0 then ship.npcUpkeepDebt = upkeepDebt end
+  if upkeepElapsed and upkeepElapsed >= 0 then ship.npcUpkeepElapsed = upkeepElapsed end
+  local targetSector = finite(data.travelTargetSector)
+  if targetSector and targetSector >= 0 then ship.travelTargetSector = math.floor(targetSector) end
+  if data.npcServiceNeed == 'station' or data.npcServiceNeed == 'shipyard' then
+    ship.npcServiceNeed = data.npcServiceNeed
+  end
+  local nextServiceAt, nextTravelAt = finite(data.npcNextServiceAt), finite(data.npcNextTravelAt)
+  if nextServiceAt and nextServiceAt >= 0 then ship.npcNextServiceAt = nextServiceAt end
+  if nextTravelAt and nextTravelAt >= 0 then ship.npcNextTravelAt = nextTravelAt end
   if type(data.seed) == 'number' or type(data.seed) == 'string' then
     ship.prototypeSeed = data.seed
   end
@@ -234,6 +295,13 @@ function SaveGame.RestoreShip (ship, data)
     local max = finite(data.charge.max, ship:getChargeMax())
     local rate = finite(data.charge.rate, ship.chargeRate)
     if value and max and max > 0 and rate then ship:setCharge(value, max, rate) end
+  end
+  if type(data.shield) == 'table' and ship.hasShield and ship:hasShield() then
+    local value = finite(data.shield.value)
+    local max = finite(data.shield.max, ship:getShieldMax())
+    local rate = finite(data.shield.rate, ship.shieldRate)
+    local delay = finite(data.shield.delay, ship.shieldDelay)
+    if value and max and max > 0 and rate and delay then ship:setShield(value, max, rate, delay) end
   end
   local capacity = finite(data.capacity)
   if capacity and capacity > 0 and ship.hasInventory and ship:hasInventory() then
@@ -396,6 +464,7 @@ function SaveGame.RestoreNpcs (system, data)
             if not ship and not retired and system.spawnShip then
               ship = system:spawnShip(snapshot.kind or 'fighter', {
                 shipId = snapshot.id, seed = snapshot.seed, variant = snapshot.variant,
+                turrets = savedTurretPairs(snapshot), pos = Vec3f(0, 0, 0),
                 scale = snapshot.scale, cargo = snapshot.capacity,
                 modules = type(snapshot.modules) == 'table' and snapshot.modules or nil,
               })
@@ -523,6 +592,9 @@ function SaveGame.Capture (ship, meta, system)
   if ship ~= nil then
     data.playerShip = SaveGame.CaptureShip(ship)
     local owner = ship.getOwner and ship:getOwner()
+    if owner and owner.npcProgression then
+      data.playerShip.purchaseSerial = owner.npcProgression.purchaseSerial
+    end
     if owner and owner.getScannerDB then
       data.playerScannerDB = ScannerDB.Capture(owner:getScannerDB())
     end
@@ -590,7 +662,18 @@ function SaveGame.Restore (ship, data, system)
     if value and max and max > 0 and rate then ship:setHealth(value, max, rate) end
   end
   local credits = finite(data.playerCredits)
-  if credits and credits > 0 then ship:addCredits(credits) end
+  if credits and credits >= 0 then
+    local current = ship.getCredits and ship:getCredits() or 0
+    if current > credits then ship:removeCredits(current - credits)
+    elseif credits > current then ship:addCredits(credits - current) end
+  end
+  if type(data.playerShip) == 'table' and type(data.playerShip.purchaseSerial) == 'number' then
+    owner = owner or (ship.getOwner and ship:getOwner())
+    if owner then
+      owner.npcProgression = owner.npcProgression or {}
+      owner.npcProgression.purchaseSerial = math.max(0, math.floor(data.playerShip.purchaseSerial))
+    end
+  end
   -- `playerShip.items` is the authoritative cargo snapshot. The top-level
   -- `items` array is the legacy mirror; applying both duplicates small stacks.
   if type(data.items) == 'table' and not data.playerShip then

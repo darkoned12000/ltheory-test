@@ -40,6 +40,10 @@ end
 function Entity:damage (amount, source)
   assert(self.health)
   if self.health <= 0 then return end          -- already dead, ignore further hits
+  local incoming = amount
+  if self.absorbShieldDamage then amount = self:absorbShieldDamage(amount) end
+  if incoming > amount then self:send(Event.ShieldDamaged(incoming - amount, source)) end
+  if amount <= 0 then return end
   self.health = max(0, self.health - amount)
   -- Flip `Config.debug.damageLog` to true in Config.App.lua to print every hit
   -- to the console (great for verifying which entity is taking damage).

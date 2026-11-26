@@ -1,7 +1,8 @@
--- Pure NPC progression policy. Costs are derived from the same commodity price
--- anchors as the live economy; decisions never mutate ships or actors.
+-- Pure NPC progression policy. Costs come from the canonical hull/equipment
+-- catalog; decisions never mutate ships or actors.
 
-local Item = require('Game.Item')
+local ShipArchetypes = require('Game.ShipArchetypes')
+local ShipEquipment = require('Game.ShipEquipment')
 local SocketType = require('Game.SocketKind')
 
 local Progression = {}
@@ -34,25 +35,12 @@ local function nonnegative (value)
   return math.max(0, finite(value, 0))
 end
 
+local function clamp01 (value)
+  return math.max(0, math.min(1, value))
+end
+
 local function credits (value)
   return math.max(0, math.ceil(nonnegative(value) - 1e-9))
-end
-
-local function anchor (item, fallback)
-  local prices = Item.Price
-  return prices and nonnegative(finite(prices[item], fallback)) or fallback
-end
-
-local function machineParts ()
-  return anchor(Item.MachineParts, 24)
-end
-
-local function electronics ()
-  return anchor(Item.Electronics, 30)
-end
-
-local function weaponComponents ()
-  return anchor(Item.WeaponComponents, 45)
 end
 
 function Progression.Role (ship)
@@ -79,42 +67,70 @@ end
 
 function Progression.ShipCost (ship, kind)
   kind = kind or Progression.PreferredShipKind(Progression.Role(ship))
-  if kind == 'freighter' then return credits(600 * machineParts()) end
-  if kind == 'industrial' then return credits(800 * weaponComponents()) end
-  if kind == 'capital' then return credits(2000 * electronics()) end
-  return credits(100 * machineParts())
+  return credits(ShipArchetypes.Get(kind).price)
 end
 
--- Upkeep is 0.1% of the current hull's purchase value per simulated hour.
+-- Upkeep is 0.02% of the current hull's purchase value per simulated hour.
 function Progression.Upkeep (ship, elapsed)
   local hours = nonnegative(elapsed) / 3600
   local kind = type(ship) == 'table' and roleShips[ship.shipKind] and ship.shipKind or nil
-  return credits(Progression.ShipCost(ship, kind) * 0.001 * hours)
+  return credits(Progression.ShipCost(ship, kind) * 0.0002 * hours)
 end
 
 function Progression.RepairCost (ship)
   if type(ship) ~= 'table' or not ship.hasHealth or not ship:hasHealth() then return 0 end
+  local def = ShipArchetypes.Get(ship.shipKind)
   local maximum = nonnegative(ship.healthMax)
   local missing = math.max(0, maximum - nonnegative(ship.health))
-  return credits(missing * machineParts() / 4)
+  if ship.hasShield and ship:hasShield() then
+    local shieldMax = nonnegative(ship:getShieldMax())
+    maximum = maximum + shieldMax
+    missing = missing + math.max(0, shieldMax - nonnegative(ship:getShield()))
+  end
+  if maximum <= 0 then return 0 end
+  return credits(def.price * def.repairFraction * missing / maximum)
 end
 
 function Progression.RepairRate (ship)
   if type(ship) ~= 'table' or not ship.hasHealth or not ship:hasHealth() then return 0 end
-  return nonnegative(ship.healthMax) / 60
+  local def = ShipArchetypes.Get(ship.shipKind)
+  local rate = nonnegative(ship.healthMax)
+  if ship.hasShield and ship:hasShield() then
+    rate = math.max(rate, nonnegative(ship:getShieldMax()))
+  end
+  return rate / def.repairSeconds
 end
 
-function Progression.RefitCost (ship, moduleType, upkeepElapsed)
+function Progression.RefitCost (ship, moduleType, upkeepElapsed, equipmentId)
   moduleType = moduleType or Progression.PreferredModule(Progression.Role(ship))
-  local base
-  if moduleType == SocketType.Thruster then
-    base = 4 * machineParts()
-  elseif moduleType == SocketType.Turret then
-    base = 6 * electronics()
-  else
-    return 0
+  equipmentId = equipmentId or ShipEquipment.DefaultId(moduleType)
+  local def = ShipEquipment.Get(equipmentId)
+  if not def or def.type ~= moduleType then return 0 end
+  return credits(def.cost) + Progression.Upkeep(ship, upkeepElapsed)
+end
+
+function Progression.TradeInValue (ship)
+  if type(ship) ~= 'table' or not ShipArchetypes.Defs[ship.shipKind] then return 0 end
+  local def = ShipArchetypes.Get(ship.shipKind)
+  local maximum = math.max(1, nonnegative(ship.healthMax))
+  local condition = clamp01(nonnegative(ship.health) / maximum)
+  if ship.hasShield and ship:hasShield() then
+    local shieldMax = nonnegative(ship:getShieldMax())
+    if shieldMax > 0 then
+      condition = (condition + clamp01(nonnegative(ship:getShield()) / shieldMax)) * 0.5
+    end
   end
-  return credits(base) + Progression.Upkeep(ship, upkeepElapsed)
+  return credits(def.price * 0.35 * condition)
+end
+
+function Progression.PurchaseQuote (ship, kind, tradeIn)
+  if not ShipArchetypes.Defs[kind] then return nil end
+  local price = Progression.ShipCost(ship, kind)
+  local trade = tradeIn and Progression.TradeInValue(ship) or 0
+  return {
+    kind = kind, price = price, tradeIn = trade,
+    due = math.max(0, price - trade), excess = math.max(0, trade - price),
+  }
 end
 
 function Progression.CanAfford (available, cost, reserve)
@@ -129,17 +145,25 @@ function Progression.NeedsRepair (ship, available)
   return cost > 0 and Progression.CanAfford(available, cost, Progression.Upkeep(ship, 3600))
 end
 
-local function hasPreferredModule (ship, moduleType)
-  local sockets = ship.getSockets and ship:getSockets() or ship.sockets
-  if type(sockets) ~= 'table' then return false, false end
+function Progression.NextEquipment (ship, moduleType)
+  moduleType = moduleType or Progression.PreferredModule(Progression.Role(ship))
+  local sockets = ship and (ship.getSockets and ship:getSockets() or ship.sockets)
+  if type(sockets) ~= 'table' then return nil end
   local matching = false
+  local lowestTier, lowestId = math.huge, nil
   for _, socket in ipairs(sockets) do
     if socket.type == moduleType then
       matching = true
-      if socket.child and not socket.child.deleted then return true, true end
+      local child = socket.child
+      if not child or child.deleted then return ShipEquipment.DefaultId(moduleType) end
+      local id = ShipEquipment.Get(child.equipmentId) and child.equipmentId
+        or ShipEquipment.DefaultId(moduleType)
+      local tier = ShipEquipment.TierOf(child)
+      if tier < lowestTier then lowestTier, lowestId = tier, id end
     end
   end
-  return matching, false
+  if not matching then return nil end
+  return ShipEquipment.NextId(lowestId)
 end
 
 function Progression.NeedsRefit (ship, available)
@@ -147,9 +171,9 @@ function Progression.NeedsRefit (ship, available)
   local maximum = nonnegative(ship.healthMax)
   if maximum <= 0 or ship.health < maximum * REFIT_HEALTH then return false end
   local moduleType = Progression.PreferredModule(Progression.Role(ship))
-  local matching, occupied = hasPreferredModule(ship, moduleType)
-  if not matching or occupied then return false end
-  local cost = Progression.RefitCost(ship, moduleType)
+  local equipmentId = Progression.NextEquipment(ship, moduleType)
+  if not equipmentId then return false end
+  local cost = Progression.RefitCost(ship, moduleType, nil, equipmentId)
   return cost > 0 and Progression.CanAfford(available, cost, Progression.Upkeep(ship, 3600))
 end
 

@@ -72,6 +72,12 @@ function LTheory:generate ()
 
   local rng = Seed.rng('ltheory.generate'):managed()
 
+  if self.player then
+    local staleAssets = {}
+    for asset in self.player:iterAssets() do staleAssets[#staleAssets + 1] = asset end
+    for _, asset in ipairs(staleAssets) do self.player:removeAsset(asset) end
+    self.player:setControlling(nil)
+  end
   if self.system then self.system:delete() end
   self.system = Entities.System(self.seed)
   self.system.app = self
@@ -82,12 +88,17 @@ function LTheory:generate ()
 
   local ship
   do -- Player Ship
-    ship = self.system:spawnShip('fighter', {
-      shipId = 'ship:player',
-      modules = pending and type(pending.playerShip) == 'table'
-        and type(pending.playerShip.modules) == 'table' and pending.playerShip.modules or nil,
-    })
-    ship:setInventoryCapacity(100) -- player retains the original cargo rating
+    local playerSpawn = SaveGame.PlayerSpawnOptions(pending)
+    -- Keep the original startup RNG draw sequence: rebuilding a saved prototype
+    -- explicitly must not shift every asteroid, NPC, and planet generated after it.
+    if playerSpawn.seed then self.system.rng:get31() end
+    ship = self.system:spawnShip(playerSpawn.kind, playerSpawn)
+    if not ship then
+      printf('[LOAD] saved player hull could not be spawned; creating a fresh fighter')
+      playerSpawn = { kind = 'fighter', shipId = 'ship:player' }
+      ship = self.system:spawnShip('fighter', playerSpawn)
+    end
+    ship:setInventoryCapacity(playerSpawn.cargo or 100) -- original player cargo rating
     ship:setPos(Config.gen.origin)
     ship:setFriction(0)
     ship:setSleepThreshold(0, 0)
@@ -1042,6 +1053,13 @@ function LTheory:buildGates ()
     local place = self:buildPlace(r, sectorName)
     if place then self.sectorPlaces[#self.sectorPlaces + 1] = place end
   end
+  -- NPC routing uses the live local capabilities when it is already here and
+  -- this deterministic metadata for sectors that have not been materialized.
+  here.hasStation = self.sectorIndex == 0 or #self.sectorPlaces > 0
+  here.hasShipyard = self.sectorIndex == 0
+  for _, place in ipairs(self.sectorPlaces) do
+    if place.shipyard then here.hasShipyard = true end
+  end
 
   -- The HUB: the sector's own centre, and the one place every lane starts
   -- from. It is where the player spawns, so the roads all lead back to
@@ -1661,12 +1679,15 @@ function LTheory:onUpdate (dt)
             and savedScan.fingerprint == scanFingerprint
             and self.player:getScannerDB().contacts[scanKey] ~= nil)
           local rosterOk = #self.system.npcs.list == npcCount
+          local assetCount = #self.player:getAssets()
           local restoredOk = math.abs(p3.x - p.x) < 1 and math.abs(p3.y - p.y) < 1
             and math.abs(p3.z - p.z) < 1 and s2:getCredits() == 1234
             and silver and s2:getItemCount(silver) == 42 and memoryOk and rosterOk
+            and assetCount == 1
           printf('[SAVE TEST] position + credits + cargo restored = %s', tostring(restoredOk))
           printf('[SAVE TEST] scan memory + scanner contact + roster restored = %s / %s',
             tostring(memoryOk), tostring(rosterOk))
+          printf('[SAVE TEST] player asset roster restored = %d', assetCount)
           printf('[SAVE TEST] scan detail: rock=%s record=%s contact=%s fpMatch=%s',
             tostring(restoredRock ~= nil), tostring(savedScan ~= nil),
             tostring(scanKey and self.player:getScannerDB().contacts[scanKey] ~= nil),

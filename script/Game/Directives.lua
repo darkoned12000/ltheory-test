@@ -18,6 +18,7 @@ function Directives.create (manager, issuer, kind, target, opts)
     issuerId = issuer:getActorId(),
     organizationId = opts.organizationId,
     target = target,
+    protected = opts.protected,
     capacity = math.max(1, opts.capacity or 2),
     members = {},
     memberCount = 0,
@@ -59,6 +60,21 @@ function Directives.activeFor (manager, actor)
   return nil
 end
 
+function Directives.release (manager, id, actor)
+  local directive = manager.byId[id]
+  if not directive or (directive.status ~= 'active' and directive.status ~= 'open') then
+    return false
+  end
+  local actorId = actor:getActorId()
+  if directive.members[actorId] ~= actor then return false end
+  directive.members[actorId] = nil
+  directive.memberCount = math.max(0, directive.memberCount - 1)
+  if directive.memberCount == 0 and directive.status == 'active' then
+    directive.status = 'open'
+  end
+  return true
+end
+
 function Directives.availableFor (manager, actor)
   for i = #manager.list, 1, -1 do
     local directive = manager.list[i]
@@ -94,8 +110,13 @@ function Directives.fail (manager, id)
   return true
 end
 
+local function terminal (status)
+  return status == 'completed' or status == 'failed'
+end
+
 function Directives.update (manager, now)
-  for i = #manager.list, 1, -1 do
+  local write = 1
+  for i = 1, #manager.list do
     local directive = manager.list[i]
     if directive.status == 'open' or directive.status == 'active' then
       local target = directive.target
@@ -103,7 +124,14 @@ function Directives.update (manager, now)
         Directives.fail(manager, directive.id)
       end
     end
+    if terminal(directive.status) then
+      manager.byId[directive.id] = nil
+    else
+      manager.list[write] = directive
+      write = write + 1
+    end
   end
+  for i = #manager.list, write, -1 do manager.list[i] = nil end
 end
 
 return Directives

@@ -52,6 +52,24 @@ function Action:flyToward (e, targetPos, targetForward, targetUp)
   -- requested heading (for example, when a fast ship is almost on its target).
   -- Keep the current heading in that degenerate case instead of normalizing 0.
   if forward:length() < 1e-6 then forward = e:getForward() end
+  local owner = e.getOwner and e:getOwner()
+  local current = e.getCurrentAction and e:getCurrentAction()
+  local avoidActive = current and current.isAvoidAction
+  if owner and owner.isNpc and owner:isNpc() and not avoidActive
+     and Config.game and Config.game.npcAvoidance == true then
+    local Perception = require('Game.NpcPerception')
+    local contacts = Perception.Local(e, Perception.Range(e))
+    local intendedObstacle = self.avoidTarget and self.target or nil
+    forward = Perception.AvoidCourse(e, forward, contacts, intendedObstacle) or forward
+    local avoidance = e.npcAvoidanceState
+    if avoidance and not self.isAvoidAction and not avoidance.actionPushed
+       and e.pushAction and e.getCurrentAction and e:getCurrentAction() == self then
+      avoidance.actionPushed = true
+      local Avoid = require('Game.Actions.Avoid')
+      e:pushAction(Avoid(avoidance.obstacle, avoidance.side,
+        avoidance.safeRadius, avoidance.courseDirection, targetUp))
+    end
+  end
   forward = forward:normalize()
   local yawPitch = e:getForward():cross(forward)
   local roll     = e:getUp():cross(targetUp)

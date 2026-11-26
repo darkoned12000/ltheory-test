@@ -207,6 +207,13 @@ function NpcInfoPanel.Create (ltheory)
   end)
   row(function ()
     local e = liveSubject()
+    return e and e.hasShield and e:hasShield() and 'Shield' or ''
+  end, function ()
+    local e = liveSubject()
+    return e and TargetInfo.Shield(e) or ''
+  end)
+  row(function ()
+    local e = liveSubject()
     return e and e.isAsteroid and 'Composition' or ''
   end, function ()
     local e = liveSubject()

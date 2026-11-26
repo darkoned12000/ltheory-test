@@ -77,6 +77,33 @@ function NpcTravel.SelectGate (root, asset, targetSector)
   return best, route
 end
 
+-- Breadth-first search for the nearest sector that can satisfy a station
+-- service. The current sector is excluded; callers use this only after live
+-- local station lookup failed. Unknown legacy metadata is not assumed to have
+-- a shipyard, while an absent hasStation flag remains a conservative maybe.
+function NpcTravel.ServiceSector (root, shipyardOnly)
+  local sectors = root and type(root.sectors) == 'table' and root.sectors or nil
+  local origin = root and tonumber(root.sectorIndex)
+  if not sectors or not origin or not sectors[origin + 1] then return nil end
+  local queue, seen = { origin }, { [origin] = true }
+  local head = 1
+  while head <= #queue do
+    local current = queue[head]; head = head + 1
+    local sector = sectors[current + 1]
+    for _, neighbour in ipairs(sector and sector.neighbours or {}) do
+      if not seen[neighbour] and sectors[neighbour + 1] then
+        seen[neighbour] = true
+        local candidate = sectors[neighbour + 1]
+        local available = shipyardOnly and candidate.hasShipyard == true
+          or (not shipyardOnly and candidate.hasStation ~= false)
+        if available then return neighbour end
+        queue[#queue + 1] = neighbour
+      end
+    end
+  end
+  return nil
+end
+
 function NpcTravel.NormalEta (asset, gate)
   local d = distance(asset, gate)
   local speed = asset and asset.getTopSpeed and asset:getTopSpeed() or 0

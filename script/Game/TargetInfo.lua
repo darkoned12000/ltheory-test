@@ -48,6 +48,11 @@ function TargetInfo.Destination (entity)
     or nil
 end
 
+function TargetInfo.Shield (entity)
+  if not (entity and entity.hasShield and entity:hasShield()) then return nil end
+  return string.format('%d / %d', entity:getShield(), entity:getShieldMax())
+end
+
 function TargetInfo.HasDisposition (entity)
   return entity and not entity.isAsteroid and not entity.isPlanet and not entity.isWormhole
 end

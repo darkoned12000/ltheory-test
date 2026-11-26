@@ -36,6 +36,14 @@ function Event.Damaged (amount, source)
   }
 end
 
+function Event.ShieldDamaged (amount, source)
+  return {
+    type = Event.ShieldDamaged,
+    amount = amount,
+    source = source,
+  }
+end
+
 function Event.Debug (context)
   return {
     type = Event.Debug,

@@ -9,16 +9,23 @@ local NpcPopulation = require('Game.NpcPopulation')
 local NpcProgression = require('Game.NpcProgression')
 local NpcSafety = require('Game.NpcSafety')
 local NpcTravel = require('Game.NpcTravel')
+local DockService = require('Game.DockService')
 local RouteKey = require('Game.RouteKey')
 local Seed = require('Game.Seed')
 
 local kJobIterations = 100
 local nextId = 0
+local Actions
+
+local function getActions ()
+  Actions = Actions or requireAll('Game.Actions')
+  return Actions
+end
 
 local Think = subclass(Action, function (self)
   self.timer = 0
-  self.policies = {}
-  self.safety = {}
+  self.policies = setmetatable({}, { __mode = 'k' })
+  self.safety = setmetatable({}, { __mode = 'k' })
   -- Per-instance stream (was clock-seeded): two NPCs thinking in the same tick
   -- no longer interleave draws from one sequence.
   nextId = nextId + 1
@@ -111,7 +118,7 @@ function Think:restorePendingJob (asset)
   local actionName = type(data.action) == 'string' and data.action:match('^%S+') or nil
   local jobName = job:getName():match('^%S+')
   if actionName and actionName ~= jobName then
-    local Actions = requireAll('Game.Actions')
+    local Actions = getActions()
     local target = data.actionTarget and root:resolveStableId(data.actionTarget)
     if actionName == 'MoveTo' and target then
       asset:pushAction(Actions.MoveTo(target, 100))
@@ -139,22 +146,53 @@ function Think:getSafety (asset)
     asset.npcSafety = state
   end
   self.safety[asset] = state
+  local brain = self
   if not asset.npcSafetyHandler then
     asset.npcSafetyHandler = true
-    asset:register(Event.Damaged, function (self, event)
-      local root = self:getRoot()
-      local now = root and root.getTime and root:getTime() or 0
-      local safety = self.npcSafety or state
-      NpcSafety.recordDamage(safety, event.amount, event.source, now)
-      local owner = self:getOwner()
+    local function registerAttacker (ship, source, now, safety)
+      if not (source and NpcSafety.IsCombatant(source)) then return end
+      safety.retaliationTarget = source
+      safety.retaliationUntil = now + 60
+      local owner = ship:getOwner()
+      local sourceOwner = source.getOwner and source:getOwner()
+      if owner and sourceOwner and owner ~= sourceOwner and owner.modDisposition then
+        owner:modDisposition(sourceOwner, -1)
+      end
       local organizationId = owner and owner.getOrganization and owner:getOrganization()
-      if root and root.comms and organizationId and event.source
-         and event.source.isAlive and event.source:isAlive()
+      local root = ship:getRoot()
+      if root and root.comms and organizationId
          and now - (safety.lastThreatAt or -math.huge) >= 10 then
         safety.lastThreatAt = now
         local range = (Config.game and Config.game.commRange) or 20000
         Communication.sendToOrganization(root.comms, owner, organizationId, 'threat',
-          { target = event.source }, { now = now, range = range })
+          { target = source, protected = ship }, { now = now, range = range })
+      end
+    end
+    asset:register(Event.ShieldDamaged, function (ship, event)
+      local root = ship:getRoot()
+      local now = root and root.getTime and root:getTime() or 0
+      registerAttacker(ship, event.source, now, ship.npcSafety or state)
+    end)
+    asset:register(Event.Damaged, function (ship, event)
+      local root = ship:getRoot()
+      local now = root and root.getTime and root:getTime() or 0
+      local safety = ship.npcSafety or state
+      NpcSafety.recordDamage(safety, event.amount, event.source, now)
+      registerAttacker(ship, event.source, now, safety)
+
+      -- Weapon bursts can land many hits before the next AI tick. Retreat has
+      -- to begin on the hit itself; waiting for manageSafety lets a capital
+      -- die with a perfectly good Flee decision still unexecuted.
+      if not ship.isAlive or not ship:isAlive() then return end
+      local current = ship.getCurrentAction and ship:getCurrentAction()
+      if current and current.getName and current:getName() == 'Flee' then return end
+      local personality = NpcPolicy.Personality(brain:getPolicy(ship))
+      local riskTolerance = tonumber(ship.npcRiskTolerance) or personality.riskTolerance
+      if NpcSafety.shouldFlee(safety, ship, now,
+          NpcSafety.CargoValue(ship), riskTolerance) then
+        NpcSafety.beginFlee(safety, now)
+        NpcLog.Event(ship, 'safety retreat started on damage')
+        ship:pushAction(getActions().Flee(safety.source, NpcSafety.duration))
       end
     end)
   end
@@ -172,12 +210,100 @@ function Think:manageSafety (asset)
   local root = asset:getRoot()
   local now = root and root.getTime and root:getTime() or 0
   local state = self:getSafety(asset)
-  if NpcSafety.shouldFlee(state, asset:getHealthNormalized(), now) then
+  local personality = NpcPolicy.Personality(self:getPolicy(asset))
+  local riskTolerance = tonumber(asset.npcRiskTolerance) or personality.riskTolerance
+  local cargoValue = NpcSafety.CargoValue(asset)
+  if NpcSafety.shouldFlee(state, asset, now,
+      cargoValue, riskTolerance) then
     NpcSafety.beginFlee(state, now)
     NpcLog.Event(asset, 'safety retreat started')
-    local Actions = requireAll('Game.Actions')
+    local Actions = getActions()
     asset:pushAction(Actions.Flee(state.source, NpcSafety.duration))
   end
+end
+
+function Think:manageRetaliation (asset)
+  if not asset:isAlive() or asset.pendingJob or asset.afterProgression then return end
+  local root = asset:getRoot()
+  local now = root and root.getTime and root:getTime() or 0
+  local state = self:getSafety(asset)
+  local target = state.retaliationTarget
+  if not target then return end
+  if now >= (state.retaliationUntil or -math.huge)
+     or (target.isAlive and not target:isAlive()) then
+    state.retaliationTarget, state.retaliationUntil = nil, -math.huge
+    return
+  end
+  local current = asset:getCurrentAction()
+  local name = current and current.getName and current:getName() or ''
+  if name == 'Flee' or name:sub(1, 6) == 'Avoid' or name:sub(1, 6) == 'Repair'
+     or name:sub(1, 5) == 'Refit' or name:sub(1, 12) == 'PurchaseShip'
+     or name == 'Undock' or name:sub(1, 6) == 'Defend'
+     or name:sub(1, 6) == 'Attack' then
+    return
+  end
+  if not NpcSafety.IsCombatant(asset) or NpcSafety.HopelessFight(asset, target, 0) then
+    return
+  end
+  for _, action in ipairs(asset.actions or {}) do
+    if action.target == target and action.getName and action:getName():sub(1, 6) == 'Attack' then
+      return
+    end
+  end
+  NpcLog.Event(asset, 'retaliating against ' .. tostring(target.getName and target:getName() or 'attacker'))
+  state.retaliationTarget, state.retaliationUntil = nil, -math.huge
+  asset:pushAction(getActions().Attack(target))
+end
+
+function Think:manageRegroup (asset)
+  if not asset.npcNeedsRegroup or asset.pendingJob or asset.afterProgression then return end
+  local root = asset:getRoot()
+  if not root then return end
+  local now = root.getTime and root:getTime() or 0
+  local untilTime = tonumber(asset.npcRegroupUntil)
+    or (now + ((Config.game and Config.game.npcRegroupTimeout) or 45))
+  asset.npcRegroupUntil = untilTime
+  if now >= untilTime then
+    asset.npcNeedsRegroup, asset.npcRegroupUntil = nil, nil
+    return
+  end
+
+  local current = asset:getCurrentAction()
+  local name = current and current.getName and current:getName() or ''
+  if name == 'Flee' or name == 'Undock' or name:sub(1, 6) == 'Repair'
+     or name:sub(1, 5) == 'Refit' or name:sub(1, 12) == 'PurchaseShip'
+     or name:sub(1, 6) == 'Defend' or name:sub(1, 6) == 'Attack'
+     or name:sub(1, 7) == 'Regroup' then
+    return
+  end
+
+  local owner = asset:getOwner()
+  local range = (Config.game and Config.game.npcRegroupScanRange) or 12000
+  local range2 = range * range
+  local best, bestDistance2
+  local allies = root.npcTargets and root:npcTargets(asset) or {}
+  for _, ally in ipairs(allies) do
+    local allyOwner = ally.getOwner and ally:getOwner()
+    if owner and allyOwner and owner.sharesOrganization
+       and owner:sharesOrganization(allyOwner)
+       and (not ally.isAlive or ally:isAlive()) then
+      local delta = ally:getPos() - asset:getPos()
+      local distance2 = delta:dot(delta)
+      if distance2 <= range2 and (not best or distance2 < bestDistance2) then
+        best, bestDistance2 = ally, distance2
+      end
+    end
+  end
+
+  if not best then return end
+  local joinDistance = (Config.game and Config.game.npcRegroupDistance) or 1000
+  if bestDistance2 <= joinDistance * joinDistance then
+    asset.npcNeedsRegroup, asset.npcRegroupUntil = nil, nil
+    return
+  end
+  local Actions = getActions()
+  NpcLog.Event(asset, 'regrouping with ' .. tostring(best.getName and best:getName() or 'ally'))
+  asset:pushAction(Actions.Regroup(best, joinDistance, untilTime - now))
 end
 
 function Think:drainMessages (e)
@@ -189,7 +315,7 @@ function Think:drainMessages (e)
     if message.kind == 'threat' or message.kind == 'defend.offer' then
       local target = message.payload.target
       local organizationId = e:getOrganization()
-      if target and target.isAlive and target:isAlive() and organizationId
+      if NpcSafety.IsCombatant(target) and organizationId
          and not Directives.activeFor(root.directives, e) then
         local exists = false
         for _, directive in ipairs(root.directives.list) do
@@ -202,11 +328,13 @@ function Think:drainMessages (e)
         if not exists then
           if root.createDefendDirective then
             root:createDefendDirective(e, target, {
-              organizationId = organizationId, capacity = 2, now = now, expiresAt = now + 60,
+              organizationId = organizationId, protected = message.payload.protected,
+              capacity = 2, now = now, expiresAt = now + 60,
             })
           else
             Directives.create(root.directives, e, 'defend', target, {
-              organizationId = organizationId, capacity = 2, now = now, expiresAt = now + 60,
+              organizationId = organizationId, protected = message.payload.protected,
+              capacity = 2, now = now, expiresAt = now + 60,
             })
           end
         end
@@ -220,7 +348,7 @@ function Think:managePatrol (asset)
   local root = asset:getRoot()
   local center = root and root.getPatrolCenter and root:getPatrolCenter()
   if not center then return end
-  local Actions = requireAll('Game.Actions')
+  local Actions = getActions()
   local radius = (Config.game and Config.game.patrolRadius) or 5000
   asset:pushAction(Actions.Patrol(center, radius))
 end
@@ -247,7 +375,7 @@ function Think:manageScan (asset)
   local target = root:findScanTarget(asset)
   if not target then return end
   NpcLog.Event(asset, 'scan target ' .. target:getName())
-  local Actions = requireAll('Game.Actions')
+  local Actions = getActions()
   local range = (Config.game and Config.game.scanRange) or 2000
   -- Scan sits below MoveTo: it stays hidden while approaching, then becomes
   -- active when the ship reaches scanning range.
@@ -256,21 +384,71 @@ function Think:manageScan (asset)
 end
 
 function Think:manageDirective (asset)
-  if asset.pendingJob or not asset:isIdle() then return end
+  if asset.pendingJob or asset.afterProgression then return end
   local root = asset:getRoot()
   local manager = root and root.directives
   local owner = asset:getOwner()
   if not manager or not owner then return end
+  local current = asset:getCurrentAction()
+  local currentName = current and current.getName and current:getName() or ''
+  if currentName == 'Flee' or currentName:sub(1, 6) == 'Avoid' then return end
 
   local directive = Directives.activeFor(manager, owner)
+  local alreadyActive = directive ~= nil
   if not directive then
     directive = Directives.availableFor(manager, owner)
-    if directive and not Directives.accept(manager, directive.id, owner) then return end
   end
-  if directive and directive.target.isAlive and directive.target:isAlive() then
-    local Actions = requireAll('Game.Actions')
-    asset:pushAction(Actions.Attack(directive.target))
+  if not directive or not NpcSafety.IsCombatant(directive.target) then return end
+
+  local support = 0
+  local supportRange = (Config.game and Config.game.npcDefenseSupportRange) or 12000
+  local siblings = root.npcTargets and root:npcTargets(asset) or root.children or {}
+  for _, ally in ipairs(siblings) do
+    local allyOwner = ally.getOwner and ally:getOwner()
+    if ally ~= asset and ally.parent == root and allyOwner
+       and NpcSafety.IsCombatant(ally)
+       and owner.sharesOrganization and owner:sharesOrganization(allyOwner) then
+      local a, b = ally:getPos(), asset:getPos()
+      local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+      if dx*dx + dy*dy + dz*dz <= supportRange * supportRange then
+        support = support + 1
+      end
+    end
   end
+  if NpcSafety.HopelessFight(asset, directive.target, support) then
+    if alreadyActive then Directives.release(manager, directive.id, owner) end
+    for _, action in ipairs(asset.actions or {}) do
+      if action.directive == directive then
+        action.directive = nil
+      end
+    end
+    for index = #asset.actions, 1, -1 do
+      local name = asset.actions[index].getName and asset.actions[index]:getName() or ''
+      if name:sub(1, 6) == 'Defend' then
+        asset:popAction()
+        break
+      end
+    end
+    return
+  end
+  if not alreadyActive and not Directives.accept(manager, directive.id, owner) then return end
+
+  current = asset:getCurrentAction()
+  currentName = current and current.getName and current:getName() or ''
+  if current and (currentName == 'Flee' or currentName:sub(1, 6) == 'Avoid'
+      or currentName:sub(1, 6) == 'Repair'
+      or currentName:sub(1, 5) == 'Refit' or currentName:sub(1, 12) == 'PurchaseShip'
+      or currentName == 'Undock' or currentName:sub(1, 6) == 'Defend'
+      or currentName:sub(1, 6) == 'Attack') then
+    return
+  end
+  for _, action in ipairs(asset.actions or {}) do
+    if action.directive == directive then return end
+  end
+  local Actions = getActions()
+  local protected = directive.protected
+    or (owner.getPrimaryShip and owner:getPrimaryShip()) or asset
+  asset:pushAction(Actions.Defend(protected, directive.target, directive))
 end
 
 function Think:manageJobValidity (asset)
@@ -281,6 +459,9 @@ function Think:manageJobValidity (asset)
     or (job.dst and job.dst.getParent and not job.dst:getParent())
   if invalid then
     NpcLog.Event(asset, 'job cancelled: endpoint left the active sector')
+    local root = asset:getRoot()
+    local now = root and root.getTime and root:getTime() or 0
+    NpcPolicy.recordOutcome(self:getPolicy(asset), job, 'cancelled', now)
     asset:clearActions()
     asset.job, asset.jobState, asset.tradeCount = nil, nil, nil
   end
@@ -295,6 +476,14 @@ local function actorCredits (asset)
   local owner = asset:getOwner()
   if not owner or not owner.getItemCount then return 0 end
   return owner:getItemCount(Item.Credit) or 0
+end
+
+local function hasGoods (asset)
+  if not asset.hasInventory or not asset:hasInventory() then return false end
+  for item, count in pairs(asset:getInventory()) do
+    if item ~= Item.Credit and count > 0 then return true end
+  end
+  return false
 end
 
 local function goalSlotAvailable (asset)
@@ -336,11 +525,21 @@ local function findStation (root, asset, shipyardOnly)
 end
 
 function Think:manageDockExit (asset)
-  if not asset:isAlive() or not asset.afterProgression or not asset:isIdle() then return end
+  if not asset:isAlive() or not asset.afterProgression then return end
+  for _, action in ipairs(asset.actions or {}) do
+    local name = action.getName and action:getName() or ''
+    if name:sub(1, 6) == 'Repair' or name:sub(1, 5) == 'Refit'
+       or name:sub(1, 12) == 'PurchaseShip' then
+      return
+    end
+  end
   local parent = parentOf(asset)
   if parent and parent.hasDockable and parent:hasDockable() then
-    local Actions = requireAll('Game.Actions')
-    asset:pushAction(Actions.Undock())
+    local current = asset:getCurrentAction()
+    if not (current and current.getName and current:getName() == 'Undock') then
+      local Actions = getActions()
+      asset:pushAction(Actions.Undock())
+    end
   end
   asset.afterProgression = nil
 end
@@ -370,56 +569,113 @@ function Think:manageUpkeep (asset, dt)
   end
 end
 
-function Think:manageProgression (asset)
-  if not asset:isAlive() or asset.pendingJob or not goalSlotAvailable(asset) then return end
+local function serviceLog (asset, message)
   local root = asset:getRoot()
+  local now = root and root.getTime and root:getTime() or 0
+  local interval = (Config and Config.game and tonumber(Config.game.npcServiceLogInterval)) or 10
+  if now - (asset.npcLastServiceLogAt or -math.huge) < interval then return end
+  asset.npcLastServiceLogAt = now
+  NpcLog.Event(asset, message)
+end
+
+function Think:manageProgression (asset)
+  if not asset:isAlive() or asset.pendingJob or asset.afterProgression then return end
+  local root = asset:getRoot()
+  local now = root and root.getTime and root:getTime() or 0
+  if now < (asset.npcNextServiceAt or 0) then return end
+  local current = asset:getCurrentAction()
+  if current and current.getName and current:getName() == 'Flee' then return end
+  local canReplaceCurrent = goalSlotAvailable(asset)
   local available = actorCredits(asset)
-  local station = findStation(root, asset, false)
-  local Actions
-  local function actionSet ()
-    Actions = Actions or requireAll('Game.Actions')
-    return Actions
+  local needsRepair = NpcProgression.NeedsRepair(asset, available)
+  local needsRefit = canReplaceCurrent and NpcProgression.NeedsRefit(asset, available)
+  local kind = canReplaceCurrent and NpcProgression.UpgradeShipKind(asset) or nil
+  local needsShip = kind and NpcProgression.NeedsShip(asset, available)
+  local needsMarket = canReplaceCurrent and hasGoods(asset)
+  if not needsRepair and not needsRefit and not needsShip and not needsMarket then return end
+  local shipyardOnly = needsRefit or needsShip
+  local station = findStation(root, asset, shipyardOnly)
+  if not station then
+    local target = NpcTravel.ServiceSector(root, shipyardOnly)
+    if target and target ~= root.sectorIndex then
+      asset.travelTargetSector = target
+      asset.npcServiceNeed = shipyardOnly and 'shipyard' or 'station'
+      asset.npcNextTravelAt = now
+      serviceLog(asset, format('no local %s; routing to sector %d for service',
+        asset.npcServiceNeed, target))
+    else
+      DockService.DelayRetry(asset)
+      serviceLog(asset, 'no reachable sector offers the required station service')
+    end
+    return
   end
-  local function start (name, action)
-    claimGoalSlot(asset)
+  if asset.npcServiceNeed then
+    asset.travelTargetSector, asset.npcServiceNeed = nil, nil
+    asset.npcNextTravelAt = now
+  end
+  local function actionSet ()
+    return getActions()
+  end
+  local function start (name, action, interrupt)
+    if not asset:isIdle() then
+      local top = asset:getCurrentAction()
+      if top and top:getName() == 'Patrol' then
+        claimGoalSlot(asset)
+      elseif not interrupt then
+        return false
+      else
+        NpcLog.Event(asset, name .. ' preempted ' .. top:getName())
+      end
+    end
     asset.afterProgression = 'undock'
+    DockService.ClearRetry(asset)
     NpcLog.Event(asset, name .. ' selected at ' .. station:getName())
     asset:pushAction(action)
+    return true
   end
-  if station and NpcProgression.NeedsRepair(asset, available) then
-    start('repair', actionSet().Repair(station))
-  elseif station and NpcProgression.NeedsRefit(asset, available) then
-    start('refit', actionSet().Refit(station, NpcProgression.PreferredModule(NpcProgression.Role(asset))))
-  else
-    local kind = NpcProgression.UpgradeShipKind(asset)
-    local yard = kind and findStation(root, asset, true)
-    if yard and NpcProgression.NeedsShip(asset, available) then
-      claimGoalSlot(asset)
-      asset.afterProgression = 'undock'
-      NpcLog.Event(asset, 'ship purchase selected: ' .. kind .. ' at ' .. yard:getName())
-      asset:pushAction(actionSet().PurchaseShip(yard, { kind = kind }))
-    end
+  if needsRepair then
+    start('repair', actionSet().Repair(station), true)
+  elseif needsRefit then
+    local equipment = NpcProgression.NextEquipment(asset)
+    start('refit', actionSet().Refit(station,
+      NpcProgression.PreferredModule(NpcProgression.Role(asset)),
+      { equipment = equipment, replace = true }))
+  elseif needsShip then
+    start('ship purchase', actionSet().PurchaseShip(station, { kind = kind }), false)
   end
 end
 
 function Think:manageTravel (asset)
-  if asset.pendingJob or not goalSlotAvailable(asset) then return end
+  if asset.pendingJob or (not goalSlotAvailable(asset) and not asset.npcServiceNeed) then return end
   local root = asset:getRoot()
   if not root or type(root.sectors) ~= 'table' or root.sectorIndex == nil then return end
   local now = root.getTime and root:getTime() or 0
+  if asset.npcServiceNeed then
+    local station = findStation(root, asset, asset.npcServiceNeed == 'shipyard')
+    if station then
+      asset.travelTargetSector, asset.npcServiceNeed = nil, nil
+      asset.npcNextTravelAt = now
+      return
+    end
+  end
   asset.npcNextTravelAt = asset.npcNextTravelAt
     or now + ((Config.game and Config.game.npcTravelDelay) or 180)
   if now < asset.npcNextTravelAt then return end
   local targetSector = asset.travelTargetSector
   local gate = NpcTravel.SelectGate(root, asset, targetSector)
-  if not gate then return end
+  if not gate then
+    asset.npcNextTravelAt = now + ((Config.game and Config.game.npcTravelInterval) or 300)
+    serviceLog(asset, 'station-service travel has no usable gate; will retry')
+    return
+  end
   asset.npcNextTravelAt = now + ((Config.game and Config.game.npcTravelInterval) or 300)
   local distance, speed, eta = NpcTravel.NormalEta(asset, gate)
+  local reason = asset.npcServiceNeed and 'station-service' or targetSector and 'mission' or 'exploration'
   NpcLog.Event(asset, format('travel selected %s -> sector %s dist=%.0f normalSpeed=%.0f eta=%.1fs',
     gate:getName(), tostring(gate:getPartnerSector()), distance, speed, eta))
-  local Actions = requireAll('Game.Actions')
+  local Actions = getActions()
   claimGoalSlot(asset)
-  asset:pushAction(Actions.TravelTo(gate, targetSector and 'mission' or 'exploration'))
+  asset:pushAction(Actions.TravelTo(gate, reason))
 end
 
 function Think:manageAsset (asset)
@@ -475,6 +731,8 @@ function Think:onUpdateActive (e, dt)
       self:manageJobValidity(asset)
       if not asset.pendingJob then
         self:manageProgression(asset)
+        self:manageRetaliation(asset)
+        self:manageRegroup(asset)
         self:manageTravel(asset)
         self:managePatrol(asset)
         self:manageScan(asset)
