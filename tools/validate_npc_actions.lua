@@ -107,6 +107,7 @@ local function check (name, ok, detail)
 end
 
 local target = {
+  body = {},
   getName = function () return 'Rock' end,
   getPos = function () return vec(1000, 0, 0) end,
   getRadius = function () return 10 end,

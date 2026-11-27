@@ -1,8 +1,109 @@
 # Limit Theory Reboot: Nodal UI / Holo Node Plan — Verified Revision 2
 
-**Date:** 2026-11-26  
-**Status:** implementation plan only; no Holo files have been added and no F10 behavior has changed.  
+**Date:** 2026-11-26
+
+**Status:** Phase A standalone demo implemented and visually approved on branch `nodeui2`; uncommitted. Phase B1 density/provider foundations and the Phase B2 real-entity provider, mesh-preview, and command-router core are implemented. Live F10 wiring and navigation hardening remain pending. F10 `NodeGraph` and the renderer pipeline remain unchanged.
 **Supersedes:** the original drop-in `HoloNodeDemo` snippets in this document. Those snippets were a useful visual sketch, but they were not runnable or safe to integrate as written.
+
+## Phase A implementation status (2026-11-26)
+
+The standalone demo is now runnable:
+
+```bash
+./run.sh HoloNodeDemo
+```
+
+Automated runtime smoke test:
+
+```bash
+tools/run_holo_test.sh
+# or: python3 configure.py test
+```
+
+Implemented files:
+
+- `script/UI/HoloLayout.lua`
+- `script/UI/HoloField.lua`
+- `script/UI/HoloRenderer.lua`
+- `script/UI/HoloGraph.lua`
+- `script/UI/HoloInfoPanel.lua`
+- `script/App/HoloNodeDemo.lua`
+- `res/shader/fragment/ui/holonode.glsl`
+- `tools/validate_holo_layout.lua`
+- `tools/validate_holo_input.lua`
+- `tools/validate_holo_renderer.lua`
+- `tools/validate_holo_field.lua`
+- `tools/validate_holo_info.lua`
+- `tools/validate_holo_demo.lua`
+- `tools/validate_holo_runner.py`
+- `tools/validate_ring_edge.py`
+- `tools/run_holo_test.sh`
+
+Controls:
+
+- Single click: select a node and open its base actions
+- Double click / Enter / Gamepad A: drill or edit
+- Right-click / Backspace / Mouse X1 / Gamepad B: back
+- Middle mouse: pan
+- Wheel: cursor-anchored zoom
+- Arrow keys or right-drag: tilt/yaw
+- F1 / F2 / F3: 0° / 15° / 25° tilt presets
+- Tab: cycle layout
+- Left stick: angular selection
+- Select a node: open the upper-right preview and context-action menu
+- Escape / Gamepad B: cancel editor, then back, then quit
+
+The demo includes five layouts, 0–25 degree tilt, semantic zoom, cached one-level previews, an opt-in 45-second star-system preview orbit, preview-to-child expansion, crimson active paths, tooltips, live mock values, and a numeric editor. Components, inventory previews, and asteroid previews remain stationary. Normal nodes/edges/previews are batched; only active accents use the custom shader. Screenshots are written to `./screenshot/` by `PHX_HOLOTEST=1`.
+
+### Review hardening
+
+- Camera pan is restored on drill/back; screen unprojection rejects non-finite, near-plane, and near-horizon rays.
+- Gamepad Y follows the engine's positive-up convention, and confirm retains the last selection after mouse hover clears.
+- Slow right drags accumulate total displacement instead of being misclassified as clicks; outside mouse presses cannot pan or drill back.
+- Nested/sibling UI uses focus-gated input; only a sole Canvas child runs in standalone input mode.
+- Invalid or rejected numeric edits keep the editor open and display an error; records without setters are read-only.
+- Preview snapshots retain at most 32 points and switch between 8/20/32 rendered points with zoom.
+- Graph drawing is clipped to its widget, tooltips are vertically clamped, and custom active beams are capped at eight per frame.
+- Runtime stages assert every context, stack depth, editor transition, and committed value. Both runners require a clean zero exit status, even after seeing the PASS marker.
+
+### Completed visual/density fixes
+
+- ✅ Opt-in star-system preview orbit: only descriptors with `preview.orbit = true` rotate; the root system preview completes one revolution in 45 seconds.
+- ✅ Non-system previews stay stationary: components, inventory, research, and asteroid previews do not rotate.
+- ✅ Shared ring shader fades to zero at its square quad edge, removing the faint background square beneath nodes.
+- ✅ Demo asteroids are marked minor and no longer receive default system-hub spokes.
+- ✅ Upper-right selected-node preview card with procedural live schematic, description, stats, and context-action menu.
+- ✅ Mock actions are interactive and node-specific: Inspect/Open, Goto, Target, Dock, Trade, Factory, Scan, Mine, Hail, Configure, and Edit.
+- ✅ Nested menus support station commodity buy/sell and refinery production controls with Back navigation.
+- ✅ Provider-owned structural snapshots prevent reused scratch arrays/records from changing an open Holo context.
+- ✅ Major graph nodes are separated from a batched minor asteroid/debris field.
+- ✅ Deterministic spatial clusters unpack into selectable points with zoom; selected minors remain individually visible.
+- ✅ 2,000-point renderer batching and 10,000-asteroid field/LOD contracts pass without minor spokes, labels, or custom shader starts.
+- ✅ Asteroid field markers render at 75% radius while retaining a usable hit target.
+- ✅ Single-click selects; double-click drills. Enter/Gamepad A remain explicit drill/edit actions.
+- ✅ Player ship uses a yellow-gold node identity distinct from NPC ships.
+- ✅ Mock Scan, Dock, and Trade actions are distance-gated and display `You are not within range to perform action.` when unavailable.
+- ✅ Preview descriptors accept `{ kind, entity }` live references; the mock still draws a procedural schematic until the Phase-B2 adapter lands.
+- ⏳ Live-map wiring for the real-provider adapters and remaining navigation hardening are pending.
+
+### Phase B2 core added
+
+- `UI.HoloProvider`: real-entity identity, description, live stats, exact mesh preview descriptor, and capability/range-aware actions.
+- `UI.HoloPreview`: cached, normalized CPU wireframe rendered from the selected entity's real mesh.
+- `Game.HoloCommands`: app-level Goto, Target, Scan, Mine, Dock, Trade, Travel, and factory-info command routing.
+- `LTheory.holoCommands`: command service is constructed with the real app/player; Holo UI wiring remains Phase C.
+
+Phase B1 is complete. Phase B2's provider/preview/command core is implemented and unit-tested; wiring it into the live F10 selection path remains pending. Before that wiring, the adapter must continue supplying stable owned snapshots (or revision keys), because the existing `GraphProvider` reuses scratch arrays.
+
+A 500-node stress mode is available for profiling:
+
+```bash
+PHX_MUTE=1 PHX_WINDOWED=1 PHX_FIXED_SIZE=1280,800 \
+  PHX_FIXED_DT=0.016 PHX_HOLO_STRESS=500 PHX_PERF=60 PHX_PERF_EXIT=300 \
+  ./run.sh HoloNodeDemo
+```
+
+Measured on the development host after warm-up: approximately **0.50–0.58 ms mean frame time** with 500 mock nodes.
 
 **Reference material:**
 - Limit Theory Development Update #10 — `KN3tKT0E0t8`
@@ -210,9 +311,19 @@ NodeGraph controller
 | `script/App/HoloNodeDemo.lua` | Standalone mock look-and-feel demo | A |
 | `res/shader/fragment/ui/holonode.glsl` | Selected/hovered node and active beam shader | A |
 | `script/UI/GraphProvider.lua` | Provider v2 contract and layout invocation support | B |
+| `script/UI/HoloField.lua` | Batched minor-entity field, deterministic clustering, and LOD | B1 |
+| `script/UI/HoloInfoPanel.lua` | Selected-object preview/action card | B2 |
+| `script/UI/HoloProvider.lua` | Real-entity info, mesh-preview descriptor, and action adapter | B2 |
+| `script/UI/HoloPreview.lua` | Cached CPU-projected live mesh preview | B2 |
+| `script/Game/HoloCommands.lua` | App-level Goto/Target/Scan/Mine/Dock/Trade command router | B2 |
+| `script/UI/HoloActions.lua` | Proposed UI action contract and validation | B |
+| `script/App/LTheory.lua` | Proposed app-level Goto command routing | B |
 | `script/UI/NodeGraph.lua` | Optional Holo mode and `z`/layout/preview records | C |
 | `tools/validate_holo_layout.lua` | Projection, pan, layout, preview, and camera tests | A |
 | `tools/validate_holo_input.lua` | Duplicate-input, editor, and gamepad tests | A |
+| `tools/validate_holo_info.lua` | Preview-panel layout, action, and close contracts | B |
+| `tools/validate_holo_field.lua` | 2,000/10,000-asteroid clustering, LOD, and selection contracts | B1 |
+| `tools/validate_holo_actions.lua` | Proposed selection, info, and Goto command contracts | B |
 | `script/UI/HoloReflection.lua` | Read-first schema-driven developer provider | D |
 | `res/shader/fragment/filter/holo_overlay.glsl` | Optional dedicated HDR Holo composite | D |
 | `script/phx/util/Renderer.lua` | Optional `holoBuffer` lifecycle | D |
@@ -235,6 +346,10 @@ local unit = {
 
   major = true,
   cat = 'ship',
+  field = false,                -- proposed: minor point, no default spoke/label
+  cluster = nil,                -- proposed: { count, bounds, summary }
+  info = nil,                   -- proposed: provider key/descriptor
+  actions = nil,                -- proposed: provider key or action descriptors
 
   -- World coordinates remain untouched.
   wx = ship:getPos().x,
@@ -262,6 +377,10 @@ Rules:
 - `tx/ty/tz` are interpolation targets.
 - `preview` is a provider key or descriptor, not an eagerly retained child array.
 - `getValue`/`setValue` are optional validated adapters.
+- `major` nodes participate in the relationship graph; `field` minors are rendered by the batched field layer.
+- Cluster records are virtual nodes with stable IDs, member counts, bounds, and deterministic summaries.
+- `info` and `actions` are provider-owned descriptors; the UI must not invent gameplay policy.
+- `HoloGraph.Create` owns structural snapshots of context/child/edge/preview/info/action arrays so providers may reuse scratch arrays after entry; live entity handles and getter/setter functions remain references.
 - Virtual contexts have stable IDs even when `entity == nil`.
 
 ### 5.2 Provider methods
@@ -291,6 +410,21 @@ provider.preview(ctx, node, budget)
 provider.resolveContext(id)
   -> context object or nil
 ```
+
+Proposed Phase B additions:
+
+```text
+provider.field(ctx, budget)
+  -> { points = {...}, clusters = {...} }
+
+provider.info(node)
+  -> { image, title, subtitle, description, stats = {...} } | nil
+
+provider.actions(node)
+  -> { { id, label, enabled, reason }, ... }
+```
+
+`field` supplies aggregate/budgeted minor-entity data. `info` feeds the shared detail card. `actions` advertises context-sensitive commands such as Goto, Target, Dock, Mine, Trade, or Interact; the app remains responsible for executing them safely.
 
 Current contract problems to fix:
 
@@ -684,13 +818,14 @@ Required fixes embodied above:
 ### 8.1 Rendering order
 
 1. Cull to widget rect plus margin.
-2. Clip long edges to the widget rect.
-3. Sort elevated nodes far-to-near.
-4. Draw normal edges with batched `DrawEx.Line`.
-5. Draw preview dots with batched ring widgets.
-6. Draw normal nodes with batched ring widgets.
-7. Draw selected/hovered nodes and active beams with `holonode.glsl`.
-8. Draw crisp labels, tooltips, editor, and breadcrumb in the normal UI pass.
+2. Draw the batched minor-entity field and aggregate clusters.
+3. Clip long edges to the widget rect.
+4. Sort elevated nodes far-to-near.
+5. Draw normal edges with batched `DrawEx.Line`; never draw default spokes to field minors.
+6. Draw preview dots with batched ring widgets; only opt-in star-system groups orbit.
+7. Draw normal nodes with batched ring widgets.
+8. Draw selected/hovered nodes and active beams with `holonode.glsl`.
+9. Draw crisp labels, tooltips, editor, inspector, and breadcrumb in the normal UI pass.
 
 ### 8.2 Batched ring helper
 
@@ -779,6 +914,30 @@ Only a handful of active nodes/beams should use this path. If profiling shows na
 - Previews use a smaller point budget at low zoom.
 - Off-screen nodes use the existing `NodeGraph` indicator system rather than custom Holo indicators in Phase A.
 - Minor caps remain owned by `NodeGraph`, not duplicated in `HoloRenderer`.
+
+### 8.6 Opt-in star-system preview orbit
+
+Only preview descriptors with `orbit = true` rotate. The demo opts in the `KAMW-3533X` region's five star-system micro-nodes; component, inventory, research, and asteroid previews remain stationary.
+
+The default speed is `2π / 45 rad/s`: exactly one revolution every 45 seconds.
+
+Implementation contract:
+
+- Animation is renderer-only; preview IDs and drill-origin descriptors remain stable.
+- Parent nodes, labels, and graph edges stay stationary.
+- Z/elevation is preserved while preview X/Y offsets rotate.
+- `Renderer.Create({ previewOrbitSpeed = 0 })` disables the motion for reduced-motion or deterministic capture modes.
+- `tools/validate_holo_renderer.lua` asserts opt-in motion, a 45-second revolution, stationary non-system previews, a fixed parent, and zero-speed disablement.
+
+### 8.7 Selected-node preview and action panel
+
+`HoloInfoPanel` is an upper-right `Container` that opens for the current `NodeGraph`/Holo selection. It draws a procedural holographic schematic, provider-supplied title/subtitle/description, live stats, status text, and up to four context actions.
+
+The standalone mock now supplies `info` and `actions` descriptors for regions, systems, stations, ships, asteroids, weapons, inventory, research, and editable values. Buttons use the normal UI focus/click path plus Holo styling; disabled actions display their reason. Actions can open nested submenus with a Back button. The panel closes without clearing the graph selection and reopens when selection changes.
+
+`info.preview` accepts either the mock's procedural kind string or a live descriptor such as `{ kind = 'mesh', entity = node.entity }`. Phase B2's preview adapter will resolve that exact entity/image, so a selected asteroid, ship, station, factory, or planet can display its own real mesh/image. The current standalone demo intentionally remains procedural.
+
+Real images/meshes and real action execution remain provider/app integration work. Mock Goto/Target/Dock/Trade/Scan/Mine/Hail actions only update mock state and panel feedback; they do not move a ship.
 
 ---
 
@@ -1063,7 +1222,7 @@ Font scaling should move to `onResize` so the resizable demo does not keep stale
 
 ## 12. Phase B — real-provider demo
 
-Before F10 integration, the same widget must run against real data:
+The approved density, inspector, action, and navigation structure is tracked in section 19. Before F10 integration, the same widget must run against real data:
 
 - sectors and jumpgates;
 - current sector/region state;
@@ -1324,6 +1483,7 @@ Stub only the input boundary and assert graph behavior:
 - Return activates `__parent`;
 - angular selection uses projected screen directions;
 - mouse wheel is ignored outside the widget;
+- single-click selects without drilling and double-click drills;
 - no duplicate editor characters.
 
 ### 16.3 Extend `tools/validate_nodegraph.lua`
@@ -1354,12 +1514,12 @@ The validator cannot verify blend conventions, uniform names, render-target bind
 
 Add `PHX_HOLOTEST=1` stages to the demo:
 
-1. boot;
-2. open root;
-3. cycle all layouts;
-4. drill into a preview node;
-5. back restores camera/focus;
-6. hover activates SDF path;
+1. boot and open the selected region preview;
+2. cycle all layouts;
+3. drill into a preview node;
+4. open a station preview, exercise Goto, then open Trade and sell ore through the nested menu;
+5. back restores camera/focus and the root preview;
+6. hover activates the SDF path;
 7. editor applies and cancels;
 8. gamepad selection/confirm/back;
 9. resize;
@@ -1393,6 +1553,33 @@ Targets:
 - no full-tree rebuild per visible node per frame;
 - no obvious focus/input regression at 100 nodes.
 
+Profile the Phase B field separately with 2,000 and 10,000 asteroids. Targets are batched field geometry, no default minor spokes/labels, deterministic cluster IDs, and graceful point/cluster LOD rather than linear UI-record growth.
+
+Runtime stress command:
+
+```bash
+PHX_MUTE=1 PHX_WINDOWED=1 PHX_FIXED_SIZE=1280,800 \
+  PHX_FIXED_DT=0.016 PHX_HOLO_ASTEROIDS=10000 PHX_HOLOTEST=1 \
+  PHX_PERF=60 PHX_PERF_EXIT=300 ./run.sh HoloNodeDemo
+```
+
+Development-host runs completed without crashes: approximately **0.9–1.3 ms mean** in early/root stages and **1.1–2.1 ms mean** while the 10,000-asteroid system field was active. Pure tests also verify the 4,096-point close-up cap and selected-minor retention.
+
+### 16.7 Phase B feature tests
+
+Add focused contracts as these features land:
+
+- `tools/validate_holo_field.lua`: major/minor partition, no minor spokes, deterministic clustering, selected-minor promotion, point/cluster budgets, and 2,000-asteroid smoke coverage.
+- `tools/validate_holo_provider.lua`: real-entity identity, stats, exact preview entity, capability-aware actions, market submenus, and range reasons.
+- `tools/validate_holo_preview.lua`: missing-mesh fallback and normalized real-mesh wireframe projection/drawing.
+- `tools/validate_holo_commands.lua`: Goto/Target/Scan/Mine/Dock/Trade/Travel routing, range rejection, docking requirements, and market-screen handoff.
+- `tools/validate_holo_info.lua`: selected-node preview data, live entity preview descriptors, upper-right layout, bottom action menu, disabled/range reasons, nested submenus/Back, action callbacks, and close behavior.
+- `tools/validate_holo_actions.lua`: selection opens the shared info data, actions are provider-owned and validated, virtual nodes cannot receive physical Goto commands, and each target type routes to the correct action.
+- Navigation tests: destroyed/removed targets cancel safely, navigation cancellation clears thrust, arrival completes once, and replacing an existing action has explicit semantics.
+- Inspector tests: `NodeGraphInspector.show/hide` and `NpcInfoPanel.setSubject` remain compatible with classic mode; Holo styling does not fork entity data.
+- Renderer tests: only opt-in star-system previews orbit; the default revolution is 45 seconds; `previewOrbitSpeed = 0` is deterministic; minor nodes receive no default hub spokes.
+- `tools/validate_ring_edge.py`: headless pixel test proving the shared ring shader is transparent at every square quad edge while the ring band remains visible.
+
 ---
 
 ## 17. Acceptance criteria
@@ -1406,6 +1593,7 @@ Phase A is complete when:
 - spatial fallback prevents origin collapse;
 - drill/back restores camera and focus;
 - preview children expand from the clicked node;
+- only opt-in star-system previews orbit, with a 45-second revolution and no change to parent position or drill identity;
 - mouse/keyboard/gamepad interactions agree;
 - the 100-node demo has no obvious frame-rate or focus problems;
 - screenshots demonstrate the intended Update #10/#11 feel.
@@ -1416,7 +1604,12 @@ Phase B is complete when:
 - no static mock tree is required;
 - live values update;
 - validated edits affect real data;
-- provider scratch/lifetime issues are covered by tests.
+- provider scratch/lifetime issues are covered by tests;
+- sector views separate major relationship nodes from the batched asteroid/minor field;
+- dense asteroid fields cluster and unpack through semantic zoom without per-asteroid spokes or labels;
+- selecting a field point or major node opens shared image/description/stat data;
+- provider-owned actions route Goto, Target, Dock, Mine, Trade, and Interact through app-level command handlers;
+- Goto uses the existing action stack, handles standoff/arrival/cancellation, and never teleports or mutates transforms directly.
 
 Phase C is complete when:
 
@@ -1450,20 +1643,233 @@ Phase D is optional and complete when:
 | HDR pass changes world appearance | Dedicated `holoBuffer` and independent composite; do not reuse scene bloom blindly |
 | Provider scratch data invalidates previews | Owned snapshots or provider revision keys |
 | Layout mode lacks required data | Explicit fallback policy and tests |
+| Asteroid density turns the map into a hairball | Major graph + batched field layer; no default minor spokes; cluster/point LOD |
+| UI Goto corrupts movement or leaves stale thrust | App-level command handler; action-stack replacement rules; validity checks; explicit thrust cleanup |
+| Info panel forks entity data or breaks classic mode | Shared normalized info adapter; preserve existing inspector/NPC panel contracts |
 
 ---
 
-## 19. Final recommendation
+## 19. Interaction structure and implementation tracking
 
-**Proceed with a corrected Phase-A demo.** Do not replace F10 `NodeGraph` and do not modify the renderer yet.
+**Decision status (2026-11-26):** the Phase-A visual direction is approved. The standalone demo, opt-in 45-second system orbit, ring-edge cleanup, provider snapshots, major/minor split, batched asteroid field, deterministic clustering/LOD, and mock selected-node preview/action panel are implemented. Real info/action adapters, Goto, F10 integration, navigation, and renderer-pipeline work remain unstarted.
 
-Build the demo as:
+### 19.1 Status board
 
-1. `HoloLayout` for tested camera/layout math;
-2. `HoloRenderer` for batched nodes/edges/previews plus active SDF accents;
-3. a small standalone mock app;
-4. layout/input/shader validators.
+| Feature | Status | Notes |
+|---|---|---|
+| Standalone Holo demo and validators | ✅ Implemented | Phase A; visually approved |
+| Opt-in star-system preview orbit | ✅ Implemented | 45-second revolution; non-system previews stationary |
+| Faint square ring-background removal | ✅ Implemented | Shared ring shader fades to zero at quad edges |
+| No default asteroid hub spokes | ✅ Implemented | Minors are excluded from the relationship graph |
+| Stable provider-owned snapshots | ✅ Implemented | Structural records/arrays copied on context entry |
+| Major graph + batched minor field split | ✅ Implemented | Ships/stations/planets remain graph nodes; asteroids enter the field |
+| Asteroid clustering and semantic-zoom LOD | ✅ Implemented | Deterministic clusters, zoom unpacking, selected-minor promotion |
+| Selected-node preview/action panel | ✅ Mock implemented | Upper-right schematic, description, stats, and interactive menu |
+| Real image/description/stat adapter | ✅ Core implemented | `HoloProvider` + cached real-mesh `HoloPreview`; live F10 wiring pending |
+| Provider-owned action contract | ✅ Core implemented | Capability/range-aware `HoloProvider`; live F10 wiring pending |
+| Goto command routing | ✅ Core implemented | `LTheory.holoCommands` routes real actions; UI wiring pending |
+| Navigation cancellation/validity/thrust hardening | ⏳ Pending | Required before shipping Goto |
+| Optional F10 Holo mode | ⏸ Deferred | Phase C; preserve classic `NodeGraph` |
+| Dedicated HDR Holo layer and audio polish | ⏸ Deferred | Phase D |
 
-Once the look and interaction are approved, move the same renderer/layout behind an optional `NodeGraph.visualMode`, connect the real providers, and only then evaluate a dedicated HDR Holo layer.
+### 19.2 Sector display: relationship graph + population field
+
+The sector view uses two distinct layers:
+
+- **Graph layer:** ships, stations, outposts, bases, factories, suns, planets, wormholes, and important player assets. These receive icons, labels, previews, and meaningful spokes/links.
+- **Field layer:** asteroids, debris, dust, and minor contacts. These are batched points and aggregate clusters, not full graph nodes with default labels or hub spokes.
+
+Design rule:
+
+> Lines explain connections. Dots show what is out there.
+
+An asteroid belt is one region containing thousands of objects, not thousands of relationships to the sector hub. `GraphProvider` already classifies rocks as minor and named asteroid fields/zones as major; Holo should consume that policy rather than inventing a second classification system. Existing dense-minor and economy-edge caps remain owned by `NodeGraph`.
+
+Fallback hub spokes are limited to `major ~= false`. Explicit provider links may still describe meaningful minor relationships when required.
+
+### 19.3 Asteroid clustering and LOD
+
+Implemented behavior:
+
+- **Far zoom:** dense belts become softly glowing clusters with stable virtual IDs, member counts, bounds, and deterministic summaries.
+- **Mid zoom:** clusters unpack into individual batched blue points without labels or spokes.
+- **Close zoom:** points become selectable; hover/selection promotes one to a ring, label, tooltip, and optional single accent line.
+- **Selected minor:** remains individually visible even while its surrounding cluster is aggregated.
+- **Transitions:** crossfade cluster/point representations instead of popping.
+
+Implemented contracts:
+
+- Deterministic spatial hash clustering; no first-N truncation of live scratch arrays.
+- Structural context/child snapshots are owned by Holo; live entity handles and getter/setter functions remain references.
+- Cluster/point identities stay stable for a context; selected minors are forced into the visible LOD.
+- Hit-testing considers clusters and points; selected field data feeds the same info/action panel.
+- Close-up points are capped at 4,096 and clusters at 256 per frame; selected objects are retained.
+- Field geometry uses batched widget rings; only the selected/hovered field object uses the custom accent shader.
+- `PHX_HOLO_ASTEROIDS=2000|10000` supplies a runtime stress count for the first mock system.
+
+### 19.4 Shared selected-object info card
+
+The existing map already has reusable detail systems:
+
+- `script/UI/NodeGraphInspector.lua` draws the selected entity's mesh/wireframe or fallback plus identity, live stats, distance, and bearing. Its public API is `show(node)` / `hide()`, driven by `NodeGraph.focus = node.id`.
+- `script/Game/GUI/NpcInfoPanel.lua` is a `Container` with `setSubject(entity)`, an actual mesh preview, and compact live rows. It is the easier base for an interactive card.
+- There is no generic prose-description contract yet. Ship archetype descriptions, region `desc`, and system descriptions exist but are not propagated through a common info adapter.
+
+The standalone mock implements `HoloInfoPanel` with procedural schematics and mock `info`/`actions`. Phase B2 now adds `HoloProvider`, which enriches real entity nodes with identity, description, live stats, capability/range-aware actions, and `info.preview = { kind = 'mesh', entity = ... }`. `HoloPreview` caches and draws the selected entity's actual normalized mesh wireframe. The live F10 selection path still needs to pass its player/app context into the panel.
+
+The real-provider version should reuse the same normalized entity data and selection identity, then restyle the shell:
+
+- sliding holographic detail panel;
+- existing image/mesh preview with a restrained scan/frame treatment;
+- name, classification, description, live stats, distance, and bearing;
+- context-sensitive action buttons;
+- gamepad navigation and explicit close/back behavior;
+- procedural type emblem when no image exists.
+
+Classic mode keeps its current inspector. Holo mode must not fork health, cargo, market, or equipment data.
+
+### 19.5 Actions and Goto
+
+The UI emits intent; the app executes gameplay policy. The standalone mock currently routes menu callbacks through `HoloNodeDemo:onHoloAction` and updates mock target/status state only; it does not push real actions or move a ship.
+
+Mock availability rules demonstrate the intended distance gating: Scan uses a 3,000-unit range, while Dock and Trade use a 1,600-unit service range. Unavailable actions are disabled and display `You are not within range to perform action.` Real providers compute these values from actual ship/target positions and gameplay ranges.
+
+Phase B2 adds `Game.HoloCommands`, constructed as `LTheory.holoCommands`. It validates real targets, enforces Scan/Mine/Dock/Trade ranges, routes Goto/Target/Scan/Mine/Dock/Travel through the existing action stack, and opens the existing market screen for docked Trade. Factory start/stop remains disabled because production is automatic. Navigation cancellation and target-loss hardening remain Phase B3.
+
+Existing movement APIs:
+
+- `Actions.MoveTo(target, range)` steers toward a live target and completes at a **surface-gap** range. `range` is required.
+- `Actions.TravelTo(gate)` approaches and automatically warps.
+- `Actions.DockAt(station)` approaches an exterior berth and docks automatically.
+- `Actions.Stop()` actively brakes, but does not cancel an action underneath it.
+- `CommandControl` already routes a “Move To” command through `sendAction` and `pushAction`.
+- `Targeting.IsTargetable` and `Actions.TargetValidity.Usable` provide target eligibility checks.
+
+Proposed command path:
+
+```text
+Holo action button
+  -> NodeGraph/Holo selection callback(node)
+  -> LTheory:commandGoto(node)
+  -> resolve entity + validate target
+  -> controlling ship:pushAction(...)
+```
+
+Routing:
+
+| Target | Action |
+|---|---|
+| Asteroid / ship / planet | `MoveTo(target, standoff)` |
+| Station Goto | `MoveTo(station, standoff)` |
+| Station Dock | `DockAt(station)` |
+| Wormhole | `TravelTo(gate)`; Jump/confirmation remains explicit |
+| Sector / region / far-gate virtual node | Reject physical Goto unless resolved to a real waypoint |
+
+Optional HUD targeting uses `ship:setTarget(target)`; targeting alone does not command movement.
+
+Required navigation hardening before release:
+
+- `MoveTo` currently lacks target-validity checks and `onStop` thrust cleanup; destroyed/removed targets need safe cancellation.
+- Cancelling navigation must remove only the navigation action and clear the `ThrustController`. Push `Stop` after removing `MoveTo` if braking is desired.
+- Define replacement semantics instead of blindly stacking Goto over mining, docking, travel, or another move.
+- Add arrival/cancellation state for route display, ETA, and target-loss handling.
+- Never teleport, call raw `setPos`, or mutate transforms from UI code.
+
+UI feedback should include a route preview, target marker, distance/ETA, and a visible cancel action. Recommended default: setting course closes/minimizes the map and returns to space; this remains an open preference decision.
+
+### 19.6 Universal interaction grammar
+
+Each provider supplies classification, children, links, field summaries, previews, info, and actions. The UI remains generic.
+
+| Object | Drill/preview | Example actions |
+|---|---|---|
+| Asteroid | Composition and deposit clusters | Goto, Scan, Mine |
+| Station / mining rig | Market, services, docking layout | Goto, Dock, Trade → buy/sell, Factory → production |
+| Factory | Inputs, production flow, outputs | Goto, Manage, Inspect |
+| NPC ship | Faction, cargo, equipment, relations | Target, Goto, Hail |
+| Ship system | Component stats and connections | Toggle, Repair, Configure |
+| Inventory item | Attributes and compatible slots | Use, Equip, Drop |
+| Wormhole | Destination preview and route | Goto, Align, Jump |
+
+### 19.6.1 Mock menu behavior by node and level
+
+Single-click selects a drillable node and opens its base menu; double-click drills. Enter/Gamepad A remain explicit drill/edit controls.
+
+- **Region:** Open Region, Scan, Routes.
+- **Star system:** Open System, Goto, Scan, Jumpgates.
+- **Mining rig / station / factory:** Goto, Dock, Trade, Factory.
+  - **Trade:** Buy Energy Cells, Buy Machine Parts, Sell Rochalite Ore, Sell Isotopes.
+  - **Factory:** View Inputs, View Outputs, Start Production, Stop Production.
+- **Ship:** Inspect Ship, Goto, Target, Hail.
+- **Asteroid:** Goto, Scan, Mine, Composition.
+- **Weapon:** Configure, Edit Value, Reload.
+- **Inventory:** Open Cargo, Use / Equip, Drop.
+- **Research:** Open Research, Research, View Modifiers.
+- **Editable scalar:** Edit Value.
+
+Nested menus use the same selected-node identity and return through Back. Mock trade actions update cargo/credits; factory controls toggle mock production state. Scan, Dock, and Trade are distance-gated in the mock. Real market and production adapters remain pending.
+
+### 19.7 Style and “wow” guidelines
+
+The wow factor should come from coherence, density, and purposeful motion—not uniform extra glow.
+
+- **Cluster unpacking:** a blue asteroid cloud separates into selectable rocks as the camera approaches.
+- **Preview expansion:** stations reveal markets/services; ships reveal systems; asteroids reveal composition.
+- **Continuous identity:** objects keep stable symbols and colors from galaxy view down to inventory.
+- **Focus mode:** the selected subgraph stays bright while unrelated content recedes.
+- **Object lenses:** the info card feels like examining an object through a holographic instrument.
+- **Route motion:** restrained flowing dashes communicate active navigation.
+- **Slow system orbit:** opt-in star-system micro-nodes complete one revolution every 45 seconds; parent nodes, non-system previews, and drill identity remain fixed.
+- **Sound:** subtle selection ticks, drill transitions, confirmation chirps, and quiet ambience.
+- **Readability:** keep text and inspector content in the crisp normal UI layer; reserve bloom for Holo geometry.
+- **Accessibility:** retain 0° tilt, reduced-motion/zero-orbit support, high contrast, and type shapes rather than color alone.
+- **Color semantics:** do not reuse the crimson interaction accent as the only hostile/faction signal.
+
+### 19.8 Implementation sequence
+
+1. **B1 — provider snapshots + graph/field split**
+   - ✅ Owned structural records/arrays.
+   - ✅ Major/minor partition and no default asteroid spokes.
+   - ✅ Batched asteroid field, deterministic clusters, selected-minor promotion.
+   - ✅ 2,000- and 10,000-asteroid validation.
+2. **B2 — shared info card + action contract**
+   - ✅ Mock normalized info/action descriptors and Holo-styled interactive panel.
+   - ✅ Real-entity info/action provider and cached mesh preview core.
+   - ✅ App-level command router for Goto/Target/Scan/Mine/Dock/Trade/Travel.
+   - ⏳ Wire the real provider/panel/commands into the live F10 selection path.
+3. **B3 — Goto and navigation hardening**
+   - Command routing, validity checks, action replacement, thrust cleanup, arrival/cancel state.
+4. **C — optional F10 Holo mode**
+   - `NodeGraph.visualMode = 'classic' | 'holo'`.
+   - Preserve all existing controller behavior and 88 checks.
+5. **D — HDR/audio polish**
+   - Dedicated Holo buffer/bloom only after real-data approval.
+
+### 19.9 Open decisions to resolve during implementation
+
+- Final cluster thresholds and point/cluster budgets.
+- Whether the interactive info card wraps `NpcInfoPanel` or uses a new widget over `NodeGraphInspector` data.
+- Single-click behavior: resolved — select + info; double-click drills. Cluster unpack remains an explicit action.
+- Whether Goto closes the map automatically or leaves a minimized route panel open.
+- Navigation replacement policy when another action is already active.
+- Wormhole flow: Goto/align versus automatic `TravelTo` warp confirmation.
+
+---
+
+## 20. Final recommendation
+
+**Phase A is implemented and visually approved.** Do not replace F10 `NodeGraph` and do not modify the renderer pipeline yet.
+
+The standalone demo now provides:
+
+1. tested camera/layout math in `HoloLayout`;
+2. owned structural snapshots plus deterministic minor-field clustering/LOD in `HoloField`;
+3. batched nodes/edges/previews, opt-in 45-second system orbit, ring-edge cleanup, and active SDF accents in `HoloRenderer`;
+4. an upper-right selected-node preview and mock context-action menu in `HoloInfoPanel`;
+5. real-entity info/action and mesh-preview adapters plus `LTheory.holoCommands`;
+6. a full mock hierarchy and interaction app in `HoloNodeDemo`;
+7. layout/input/renderer/field/provider/preview/commands/info/demo validators and a runtime smoke test.
+
+Finish Phase B2 by wiring the real provider, preview panel, and command service into the live F10 selection path while preserving classic behavior. Then proceed to Phase B3 navigation cancellation/target-loss hardening. Only after the real-provider demo is approved should Holo become an optional `NodeGraph.visualMode`; dedicated HDR/audio polish remains last.
 
 That sequence captures the old Limit Theory ambition without discarding the working map or turning a visual experiment into a risky rewrite.

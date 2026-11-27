@@ -37,6 +37,15 @@ def run_shader_tests():
         return 0
     return subprocess.run([VALIDATOR_PY, exe, current_glsl_version()]).returncode
 
+def run_ring_edge_tests():
+    print('[configure.py] Validating UI ring quad-edge transparency')
+    exe = os.path.join('tools', 'validate_ring_edge.py')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_ring_edge.py found - skipping')
+        return 0
+    return subprocess.run([VALIDATOR_PY, exe]).returncode
+
+
 def run_bytes_tests():
     print('[configure.py] Validating Bytes LZ4 round-trip (safe decompress)')
     exe = os.path.join('tools', 'validate_bytes.lua')
@@ -165,6 +174,15 @@ def run_npc_tests():
                 os.path.join('tools', 'validate_mining_beam.lua'),
                 os.path.join('tools', 'validate_npc_panel.lua'),
                 os.path.join('tools', 'validate_capital_ship.lua'),
+                os.path.join('tools', 'validate_holo_layout.lua'),
+                os.path.join('tools', 'validate_holo_input.lua'),
+                os.path.join('tools', 'validate_holo_renderer.lua'),
+                os.path.join('tools', 'validate_holo_field.lua'),
+                os.path.join('tools', 'validate_holo_provider.lua'),
+                os.path.join('tools', 'validate_holo_preview.lua'),
+                os.path.join('tools', 'validate_holo_commands.lua'),
+                os.path.join('tools', 'validate_holo_info.lua'),
+                os.path.join('tools', 'validate_holo_demo.lua'),
                 os.path.join('tools', 'validate_startup_placement.lua')]:
         if os.path.exists(exe):
             result |= subprocess.run([luajit, exe]).returncode
@@ -290,6 +308,51 @@ def run_ui_integration_test():
     return 0
 
 
+def run_holo_integration_test():
+    exe = 'bin/lt64.exe' if os.name == 'nt' else 'bin/lt64r'
+    if not os.path.exists(exe):
+        print('[configure.py] No game binary found - skipping Holo integration test')
+        return 0
+    print('[configure.py] Running HoloNodeDemo interaction test')
+    env = dict(os.environ)
+    env['PHX_MUTE'] = '1'
+    env['PHX_WINDOWED'] = '1'
+    env['PHX_FIXED_SIZE'] = '1280,800'
+    env['PHX_FIXED_DT'] = '0.016'
+    env['PHX_HOLOTEST'] = '1'
+    out = ''
+    returncode = None
+    try:
+        p = subprocess.run([exe, 'HoloNodeDemo'], env=env, timeout=40,
+                          capture_output=True, text=True)
+        returncode = p.returncode
+        out = (p.stdout or '') + (getattr(p, 'stderr', '') or '')
+    except subprocess.TimeoutExpired as e:
+        for raw in (e.stdout, e.stderr):
+            if raw is None:
+                continue
+            out += raw.decode('utf-8', 'replace') if isinstance(raw, bytes) else str(raw)
+    if returncode != 0 or '[HOLOTEST] FAIL:' in out \
+            or '[HOLOTEST] ALL CHECKS PASSED' not in out:
+        print('[configure.py] Holo integration test FAILED')
+        print(out[-500:])
+        return 1
+    for line in out.splitlines():
+        if '[HOLOTEST]' in line:
+            print(line)
+    print('[configure.py] Holo integration test PASSED')
+    return 0
+
+
+def run_holo_runner_tests():
+    print('[configure.py] Validating Holo integration runner status contracts')
+    exe = os.path.join('tools', 'validate_holo_runner.py')
+    if not os.path.exists(exe):
+        print('[configure.py] No tools/validate_holo_runner.py found - skipping')
+        return 0
+    return subprocess.run([sys.executable, exe]).returncode
+
+
 def run_tests():
     result = 0
     exe = os.path.join('build', 'test', 'lte_tests')
@@ -307,6 +370,7 @@ def run_tests():
     else:
         print('[configure.py] No test executable found - skipping')
     result |= run_shader_tests()
+    result |= run_ring_edge_tests()
     result |= run_bytes_tests()
     result |= run_drawbatch_tests()
     result |= run_immdraw_tests()
@@ -323,7 +387,9 @@ def run_tests():
     result |= run_hud_tests()
     result |= run_nodegraph_tests()
     # Integration tests (require the game binary; run headlessly).
+    result |= run_holo_runner_tests()
     result |= run_ui_integration_test()
+    result |= run_holo_integration_test()
     return result
 
 def validate_shaders():
@@ -399,4 +465,4 @@ def main():
         subprocess.call(['cmake', '-S', './', '-B', './build'])
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

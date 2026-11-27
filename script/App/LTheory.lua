@@ -20,6 +20,7 @@ local Sector = require('Game.Region')
 local SectorGraph = require('Game.SectorGraph')
 local NpcPopulation = require('Game.NpcPopulation')
 local StartupPlacement = require('Game.StartupPlacement')
+local HoloCommands = require('Game.HoloCommands')
 
 local LTheory = Application()
 
@@ -266,6 +267,7 @@ end
 
 function LTheory:onInit ()
   self.player = Entities.Player()
+  self.holoCommands = HoloCommands.Create(self)
 
   -- THE VERSION IS THE COMMIT COUNT.
   --

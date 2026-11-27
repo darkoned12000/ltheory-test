@@ -14,6 +14,10 @@ void main() {
   float d = abs(r - radius);
   alpha += 0.5 * exp(-max(0.0, d - 0.5));
   alpha += 0.4 * exp(-pow(max(1e-5, 0.2 * d), 0.75));
+  // The glow is broader than the ring padding. Fade it to zero before the
+  // square quad boundary so circular nodes do not reveal their bounding box.
+  float quadEdge = max(abs(uvp.x), abs(uvp.y)) * 2.0;
+  alpha *= 1.0 - smoothstep(0.82, 1.0, quadEdge);
   vec3 c = 2.0 * color.xyz;
   vec4 outCol = alpha * color.w * vec4(c.xyz, 1.0);
 
